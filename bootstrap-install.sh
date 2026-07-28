@@ -255,30 +255,19 @@ say "Verifying and applying commit-addressed installer overlays"
 OVERLAY_FILES=(
   install.sh
   install.base.sh
+  tools/harden_install.py
   tools/harden_install_runtime.py
-  release-hotfixes/install/php9_probe.py
-  release-hotfixes/app/dbcompat.py
 )
 for overlay in "${OVERLAY_FILES[@]}"; do verify_commit_file "$overlay"; done
 install -m 0755 "$CHECKOUT/install.sh" "$SOURCE_ROOT/install.sh"
 install -m 0755 "$CHECKOUT/install.base.sh" "$SOURCE_ROOT/install.base.sh"
 install -d -m 0755 "$SOURCE_ROOT/tools"
+install -m 0755 "$CHECKOUT/tools/harden_install.py" "$SOURCE_ROOT/tools/harden_install.py"
 install -m 0755 "$CHECKOUT/tools/harden_install_runtime.py" "$SOURCE_ROOT/tools/harden_install_runtime.py"
-
-# Apply the two reviewed compatibility overlays to the preserved base/app tree.
-python3 "$CHECKOUT/release-hotfixes/install/php9_probe.py" "$SOURCE_ROOT/install.base.sh" \
-  || die "Could not apply the reviewed PHP 9 installer probe hotfix"
-python3 - "$CHECKOUT/release-hotfixes/app/dbcompat.py" <<'PYHOTFIX'
-import pathlib
-import sys
-path = pathlib.Path(sys.argv[1])
-compile(path.read_text(encoding="utf-8"), str(path), "exec")
-PYHOTFIX
-install -m 0644 "$CHECKOUT/release-hotfixes/app/dbcompat.py" "$SOURCE_ROOT/app/dbcompat.py"
 
 # Validate the exact generated root installer before any server mutation.
 GENERATED_CHECK="$WORK_DIR/install.generated.sh"
-python3 "$SOURCE_ROOT/tools/harden_install_runtime.py" \
+python3 "$SOURCE_ROOT/tools/harden_install.py" \
   "$SOURCE_ROOT/install.base.sh" "$GENERATED_CHECK" \
   || die "Could not derive the hardened installer during bootstrap validation"
 bash -n "$SOURCE_ROOT/install.sh" \
