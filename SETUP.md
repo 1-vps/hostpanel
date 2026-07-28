@@ -5,7 +5,7 @@ This guide installs `3.4.0-hardened-r6` from the signed
 commit:
 
 ```text
-65d7f54b4c08edef65b2c13389b0a036c6a56b5b
+01f171b489bc9971eab4e3ebe7aad58f10255124
 ```
 
 The same full commit SHA must be used in the download URL and in `HP_REPO_REF`.
@@ -86,7 +86,7 @@ sudo dnf install -y ca-certificates curl git openssl python3
 Do not run an unpinned branch URL as root.
 
 ```bash
-REVIEWED_COMMIT_SHA=65d7f54b4c08edef65b2c13389b0a036c6a56b5b
+REVIEWED_COMMIT_SHA=01f171b489bc9971eab4e3ebe7aad58f10255124
 
 sudo curl -fsSL \
   "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
@@ -96,8 +96,9 @@ sudo bash -n /root/bootstrap-install.sh
 ```
 
 This commit passed deterministic installer generation, Bash syntax, ShellCheck,
-all nine supported-OS preflight jobs, signed-archive verification, and the
-Ubuntu 26.04/Python 3.14 locked-runtime installation test.
+all nine supported-OS preflight jobs, signed-archive verification, the Ubuntu
+26.04/Python 3.14 locked-runtime installation test, and the production-VM
+validation harness tests.
 
 ## 4. Run the preflight
 
@@ -223,15 +224,25 @@ Inspect the root-only installer log:
 /var/log/hostpanel-install.log
 ```
 
-Reboot and repeat the service and doctor checks. Verify that the configured SSH
-port remains reachable and that firewall rules persist.
+Download and syntax-check the production VM validator from the same commit:
+
+```bash
+sudo curl -fsSL \
+  "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/tools/validate-production-vm.sh" \
+  -o /root/validate-production-vm.sh
+sudo chmod 700 /root/validate-production-vm.sh
+sudo bash -n /root/validate-production-vm.sh
+```
+
+Run its non-destructive checks before and after a verified reboot as described in
+[`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md).
 
 ## 9. Production acceptance
 
 Before serving customers:
 
 1. install on a disposable systemd VM of the exact target OS;
-2. reboot and verify all selected services;
+2. run the production VM validator before and after reboot;
 3. test panel login, web, database, DNS, mail, backup, and restore paths selected for the node;
 4. confirm quota behavior on the actual customer-data filesystem;
 5. replace self-signed certificates with trusted certificates;
