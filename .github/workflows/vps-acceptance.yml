@@ -1,0 +1,396 @@
+name: VPS acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type ERASE-AND-INSTALL to authorize a destructive disposable-VM installation
+        required: true
+        type: string
+      reinstall:
+        description: Permit reinstall when /opt/hostpanel already exists
+        required: true
+        default: false
+        type: boolean
+      panel_host:
+        description: Panel FQDN; blank derives panel.<VPS IPv4>.nip.io
+        required: false
+        default: ''
+        type: string
+      mta:
+        description: Mail transfer agent
+        required: true
+        default: postfix
+        type: choice
+        options:
+          - postfix
+          - exim
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-acceptance-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    if: ${{ inputs.confirm == 'ERASE-AND-INSTALL' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: vps-acceptance
+    env:
+      REVIEWED_COMMIT_SHA: 01f171b489bc9971eab4e3ebe7aad58f10255124
+      EXPECTED_VERSION: 3.4.0-hardened-r6
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_IPV6: ${{ secrets.VPS_IPV6 }}
+      VPS_SSH_PORT: ${{ secrets.VPS_SSH_PORT }}
+      VPS_ROOT_PASSWORD: ${{ secrets.VPS_ROOT_PASSWORD }}
+      VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+      VPS_PROVIDER_SNAPSHOT_CONFIRMED: ${{ secrets.VPS_PROVIDER_SNAPSHOT_CONFIRMED }}
+      PANEL_HOST_INPUT: ${{ inputs.panel_host }}
+      REINSTALL: ${{ inputs.reinstall }}
+      MTA: ${{ inputs.mta }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Validate authorization, inputs, and secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.confirm }}" == ERASE-AND-INSTALL ]]
+          [[ "$VPS_PROVIDER_SNAPSHOT_CONFIRMED" == yes ]] || {
+            echo 'VPS_PROVIDER_SNAPSHOT_CONFIRMED must be the environment secret yes.' >&2
+            exit 1
+          }
+          for name in VPS_HOST VPS_ROOT_PASSWORD VPS_SSH_KNOWN_HOSTS; do
+            [[ -n "${!name:-}" ]] || { echo "Missing required environment secret: $name" >&2; exit 1; }
+          done
+
+          VPS_PORT="${VPS_SSH_PORT:-22}"
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && ((VPS_PORT >= 1 && VPS_PORT <= 65535))
+          case "$MTA" in postfix|exim) ;; *) echo 'Unsupported MTA.' >&2; exit 1 ;; esac
+
+          python3 - "$VPS_HOST" "$VPS_IPV6" "$PANEL_HOST_INPUT" <<'PY'
+          import ipaddress
+          import re
+          import sys
+
+          host, ipv6, panel = sys.argv[1:]
+          try:
+              address = ipaddress.ip_address(host)
+          except ValueError as exc:
+              raise SystemExit(f"VPS_HOST must be a literal IP address: {exc}")
+          if ipv6:
+              parsed_v6 = ipaddress.ip_address(ipv6)
+              if parsed_v6.version != 6:
+                  raise SystemExit("VPS_IPV6 must be an IPv6 literal")
+
+          if panel:
+              if len(panel) > 253 or not re.fullmatch(
+                  r"(?=.{1,253}\Z)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?",
+                  panel,
+              ):
+                  raise SystemExit("panel_host must be a valid FQDN")
+          elif address.version != 4:
+              raise SystemExit("panel_host is required when VPS_HOST is IPv6")
+          PY
+
+          PANEL_HOST="$PANEL_HOST_INPUT"
+          if [[ -z "$PANEL_HOST" ]]; then
+            PANEL_HOST="panel.${VPS_HOST}.nip.io"
+          fi
+          RUNNER_IPV4="$(curl -4fsS --retry 4 --connect-timeout 10 https://api.ipify.org)"
+          python3 - "$RUNNER_IPV4" <<'PY'
+          import ipaddress, sys
+          address = ipaddress.ip_address(sys.argv[1])
+          if address.version != 4:
+              raise SystemExit('GitHub runner did not return an IPv4 address')
+          PY
+
+          {
+            printf 'VPS_PORT=%s\n' "$VPS_PORT"
+            printf 'PANEL_HOST=%s\n' "$PANEL_HOST"
+            printf 'ADMIN_CIDR=%s/32\n' "$RUNNER_IPV4"
+          } >> "$GITHUB_ENV"
+
+      - name: Install SSH and probe dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openssh-client sshpass curl dnsutils netcat-openbsd
+
+      - name: Configure strict SSH host verification
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          [[ -s "$HOME/.ssh/known_hosts" ]]
+          mkdir -p evidence
+
+      - name: Inventory the disposable VM
+        env:
+          SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SSH=(sshpass -e ssh -p "$VPS_PORT"
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o PreferredAuthentications=password
+            -o PubkeyAuthentication=no
+            -o ConnectTimeout=20
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=4)
+          "${SSH[@]}" root@"$VPS_HOST" '
+            set -euo pipefail
+            printf "== operating system ==\n"
+            cat /etc/os-release
+            printf "== kernel ==\n"
+            uname -a
+            printf "== boot id ==\n"
+            cat /proc/sys/kernel/random/boot_id
+            printf "== pid 1 ==\n"
+            cat /proc/1/comm
+            printf "== disks ==\n"
+            df -hT
+            printf "== memory ==\n"
+            free -h
+            printf "== addresses ==\n"
+            ip -brief address
+            printf "== existing hostpanel ==\n"
+            test ! -e /opt/hostpanel || find /opt/hostpanel -maxdepth 2 -mindepth 1 -printf "%p\n" | sed -n "1,100p"
+          ' | tee evidence/pre-install-inventory.txt
+
+      - name: Install HostPanel and prepare reboot validation
+        env:
+          SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SSH=(sshpass -e ssh -p "$VPS_PORT"
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o PreferredAuthentications=password
+            -o PubkeyAuthentication=no
+            -o ConnectTimeout=20
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=4)
+          SCP=(sshpass -e scp -P "$VPS_PORT"
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o PreferredAuthentications=password
+            -o PubkeyAuthentication=no
+            -o ConnectTimeout=20)
+
+          umask 077
+          {
+            printf 'HP_PANEL_HOST=%q\n' "$PANEL_HOST"
+            printf 'HP_PANEL_ADMIN_CIDR=%q\n' "$ADMIN_CIDR"
+            printf 'HP_EXPECTED_PUBLIC_IP=%q\n' "$VPS_HOST"
+            printf 'HP_EXPECTED_VERSION=%q\n' "$EXPECTED_VERSION"
+            printf 'HP_REVIEWED_COMMIT_SHA=%q\n' "$REVIEWED_COMMIT_SHA"
+            printf 'HP_MTA=%q\n' "$MTA"
+            printf 'HP_REINSTALL=%q\n' "$REINSTALL"
+          } > /tmp/hostpanel-acceptance.env
+
+          cat > /tmp/hostpanel-acceptance-remote.sh <<'REMOTE'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+          umask 077
+          source /root/hostpanel-acceptance.env
+
+          EVIDENCE=/root/hostpanel-acceptance-evidence
+          PRIVATE_LOG=/root/hostpanel-acceptance-private-install.log
+          install -d -o root -g root -m 700 "$EVIDENCE"
+          : > "$PRIVATE_LOG"
+          chmod 600 "$PRIVATE_LOG"
+          trap 'status=$?; echo "Acceptance setup failed at line $LINENO. Inspect the root-only private log on the VPS." >&2; exit "$status"' ERR
+
+          [[ "$(cat /proc/1/comm 2>/dev/null || true)" == systemd ]] || {
+            echo 'A real systemd VM is required.' >&2
+            exit 1
+          }
+          if [[ -e /opt/hostpanel && "$HP_REINSTALL" != true ]]; then
+            echo '/opt/hostpanel already exists; rerun with reinstall enabled only after reviewing the host.' >&2
+            exit 1
+          fi
+
+          echo 'Installing bootstrap prerequisites; detailed output remains root-only on the VPS.'
+          if command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq >> "$PRIVATE_LOG" 2>&1
+            apt-get install -y -qq ca-certificates curl git openssl python3 >> "$PRIVATE_LOG" 2>&1
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y ca-certificates curl git openssl python3 >> "$PRIVATE_LOG" 2>&1
+          else
+            echo 'Unsupported package manager.' >&2
+            exit 1
+          fi
+
+          curl -fsSL --retry 4 --connect-timeout 15 \
+            "https://raw.githubusercontent.com/1-vps/hostpanel/${HP_REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
+            -o /root/bootstrap-install.sh >> "$PRIVATE_LOG" 2>&1
+          chmod 700 /root/bootstrap-install.sh
+          bash -n /root/bootstrap-install.sh
+
+          install_args=(--mta "$HP_MTA")
+          if [[ "$HP_REINSTALL" == true ]]; then
+            install_args=(--reinstall "${install_args[@]}")
+          fi
+          common_env=(
+            HP_REPO_REF="$HP_REVIEWED_COMMIT_SHA"
+            HP_PANEL_HOST="$HP_PANEL_HOST"
+            HP_PANEL_ADMIN_CIDR="$HP_PANEL_ADMIN_CIDR"
+            HP_MULTI_PHP_REPO=off
+            HP_RSPAMD_REPO=off
+          )
+
+          echo 'Running installer preflight; detailed output remains root-only on the VPS.'
+          env "${common_env[@]}" bash /root/bootstrap-install.sh --check "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
+          echo 'Running full installation; generated credentials remain root-only on the VPS.'
+          env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
+
+          test "$(cat /opt/hostpanel/VERSION)" = "$HP_EXPECTED_VERSION"
+          curl -fsSL --retry 4 --connect-timeout 15 \
+            "https://raw.githubusercontent.com/1-vps/hostpanel/${HP_REVIEWED_COMMIT_SHA}/tools/validate-production-vm.sh" \
+            -o /root/validate-production-vm.sh
+          chmod 700 /root/validate-production-vm.sh
+          bash -n /root/validate-production-vm.sh
+
+          echo 'Running non-sensitive VM validation.'
+          env \
+            HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
+            HP_PANEL_HOST="$HP_PANEL_HOST" \
+            HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
+            bash /root/validate-production-vm.sh --check | tee "$EVIDENCE/pre-reboot-validator.txt"
+          env \
+            HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
+            HP_PANEL_HOST="$HP_PANEL_HOST" \
+            HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
+            bash /root/validate-production-vm.sh --prepare-reboot | tee "$EVIDENCE/prepare-reboot-validator.txt"
+
+          cat /etc/os-release > "$EVIDENCE/os-release.txt"
+          uname -a > "$EVIDENCE/uname.txt"
+          cat /proc/sys/kernel/random/boot_id > "$EVIDENCE/pre-reboot-boot-id.txt"
+          cat /opt/hostpanel/VERSION > "$EVIDENCE/version.txt"
+          systemctl --failed --no-legend --plain > "$EVIDENCE/failed-units-pre-reboot.txt" || true
+          echo 'Pre-reboot installation and validation completed.'
+          REMOTE
+
+          chmod 700 /tmp/hostpanel-acceptance-remote.sh
+          "${SCP[@]}" /tmp/hostpanel-acceptance.env /tmp/hostpanel-acceptance-remote.sh root@"$VPS_HOST":/root/
+          "${SSH[@]}" root@"$VPS_HOST" 'chmod 600 /root/hostpanel-acceptance.env && chmod 700 /root/hostpanel-acceptance-remote.sh && /root/hostpanel-acceptance-remote.sh'
+          rm -f /tmp/hostpanel-acceptance.env
+
+      - name: Reboot and wait for SSH
+        env:
+          SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SSH=(sshpass -e ssh -p "$VPS_PORT"
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o PreferredAuthentications=password
+            -o PubkeyAuthentication=no
+            -o ConnectTimeout=15)
+          "${SSH[@]}" root@"$VPS_HOST" 'systemctl reboot' || true
+
+          port_open(){ nc -z -w 3 "$VPS_HOST" "$VPS_PORT" >/dev/null 2>&1; }
+          went_down=false
+          for _ in $(seq 1 60); do
+            if ! port_open; then went_down=true; break; fi
+            sleep 5
+          done
+          [[ "$went_down" == true ]] || { echo 'SSH did not close for reboot.' >&2; exit 1; }
+
+          for _ in $(seq 1 180); do
+            if port_open; then sleep 10; exit 0; fi
+            sleep 5
+          done
+          echo 'SSH did not return after reboot.' >&2
+          exit 1
+
+      - name: Run post-reboot validation
+        env:
+          SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SSH=(sshpass -e ssh -p "$VPS_PORT"
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o PreferredAuthentications=password
+            -o PubkeyAuthentication=no
+            -o ConnectTimeout=20
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=4)
+          "${SSH[@]}" root@"$VPS_HOST" '
+            set -euo pipefail
+            source /root/hostpanel-acceptance.env
+            EVIDENCE=/root/hostpanel-acceptance-evidence
+            env \
+              HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
+              HP_PANEL_HOST="$HP_PANEL_HOST" \
+              HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
+              bash /root/validate-production-vm.sh --post-reboot | tee "$EVIDENCE/post-reboot-validator.txt"
+            cat /proc/sys/kernel/random/boot_id > "$EVIDENCE/post-reboot-boot-id.txt"
+            systemctl --failed --no-legend --plain > "$EVIDENCE/failed-units-post-reboot.txt" || true
+            /opt/hostpanel/venv/bin/python /opt/hostpanel/app/hostpanel-doctor --quiet \
+              > "$EVIDENCE/doctor-post-reboot.txt" 2>&1
+          '
+
+      - name: Run external network probes
+        run: |
+          set -euo pipefail
+          {
+            echo '== DNS =='
+            getent ahosts "$PANEL_HOST" || true
+            dig +short A "$PANEL_HOST" || true
+            echo '== HTTPS headers =='
+            curl -kfsSI --connect-timeout 15 --max-time 30 "https://${PANEL_HOST}/" || true
+            echo '== TCP listeners from runner over IPv4 =='
+            for port in 22 25 53 80 443 465 587 993; do
+              if nc -z -w 8 "$VPS_HOST" "$port"; then
+                echo "OPEN $port"
+              else
+                echo "CLOSED_OR_FILTERED $port"
+              fi
+            done
+            if [[ -n "$VPS_IPV6" ]]; then
+              echo '== TCP listeners from runner over IPv6 =='
+              for port in 22 80 443; do
+                if nc -6 -z -w 8 "$VPS_IPV6" "$port"; then
+                  echo "OPEN_IPV6 $port"
+                else
+                  echo "CLOSED_OR_FILTERED_IPV6 $port"
+                fi
+              done
+            fi
+          } | tee evidence/external-probes.txt
+
+      - name: Collect root-only validation evidence
+        if: always()
+        env:
+          SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/remote
+          sshpass -e scp -r -P "${VPS_PORT:-22}" \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
+            -o ConnectTimeout=20 \
+            root@"$VPS_HOST":/root/hostpanel-acceptance-evidence/. evidence/remote/ || true
+          find evidence -type f -exec chmod 600 {} +
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hostpanel-vps-acceptance-${{ github.run_id }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 14
