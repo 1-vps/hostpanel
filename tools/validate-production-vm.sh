@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# Validate a HostPanel installation on a real systemd VM.
+# Normal checks are read-only. Operator hooks require explicit opt-in.
+set -euo pipefail
+
+usage(){
+  cat <<'HELP'
+Usage: sudo validate-production-vm.sh [--check|--prepare-reboot|--post-reboot]
+
+Optional environment:
+  HP_EXPECTED_VERSION, HP_PANEL_HOST, HP_PANEL_PORT, HP_EXPECTED_PUBLIC_IP
+  HP_DESTRUCTIVE_TESTS=yes
+  HP_PROVIDER_SNAPSHOT_CONFIRMED=yes
+  HP_BACKUP_TEST_SCRIPT, HP_RESTORE_TEST_SCRIPT, HP_FAILURE_INJECTION_SCRIPT
+HELP
+}
+
+MODE="${1:---check}"
+case "$MODE" in
+  --check|--prepare-reboot|--post-reboot) ;;
+  --help|-h) usage; exit 0 ;;
+  *) printf 'Unknown mode: %s\n' "$MODE" >&2; usage >&2; exit 2 ;;
+esac
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || { printf 'Error: run as root.\n' >&2; exit 1; }
+
+EXPECTED_VERSION="${HP_EXPECTED_VERSION:-3.4.0-hardened-r6}"
+STATE_DIR="${HP_VALIDATION_STATE_DIR:-/var/lib/hostpanel-validation}"
+REPORT_DIR="${HP_VALIDATION_REPORT_DIR:-/var/log}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+REPORT="$REPORT_DIR/hostpanel-production-validation-$STAMP.log"
+REBOOT_STATE="$STATE_DIR/pre-reboot.boot-id"
+PASS_COUNT=0
+WARN_COUNT=0
+FAIL_COUNT=0
+
+install -d -o root -g root -m 700 "$STATE_DIR"
+install -d -o root -g root -m 755 "$REPORT_DIR"
+: >"$REPORT"
+chown root:root "$REPORT"
+chmod 600 "$REPORT"
+exec > >(tee -a "$REPORT") 2>&1
+
+pass(){ PASS_COUNT=$((PASS_COUNT + 1)); printf '[PASS] %s\n' "$*"; }
+warn(){ WARN_COUNT=$((WARN_COUNT + 1)); printf '[WARN] %s\n' "$*"; }
+fail(){ FAIL_COUNT=$((FAIL_COUNT + 1)); printf '[FAIL] %s\n' "$*"; }
+run_required(){ local label="$1"; shift; if "$@"; then pass "$label"; else fail "$label"; fi; }
+
+config_value(){
+  local key="$1" value="" file=/opt/hostpanel/config.env
+  [[ -r "$file" ]] || return 1
+  value="$(awk -F= -v wanted="$key" '$1 == wanted {sub(/^[^=]*=/, ""); print; exit}' "$file")"
+  value="${value%\"}"; value="${value#\"}"; value="${value%\'}"; value="${value#\'}"
+  [[ -n "$value" ]] || return 1
+  printf '%s\n' "$value"
+}
+
+unit_exists(){ systemctl list-unit-files "$1.service" --no-legend 2>/dev/null | grep -q .; }
+check_unit(){
+  local unit="$1" state=""
+  unit_exists "$unit" || return 0
+  systemctl is-active --quiet "$unit.service" && pass "$unit.service is active" || fail "$unit.service is not active"
+  state="$(systemctl is-enabled "$unit.service" 2>/dev/null || true)"
+  case "$state" in
+    enabled|static|indirect|generated|alias|linked|linked-runtime|transient) pass "$unit.service boot state: $state" ;;
+    *) warn "$unit.service boot state: ${state:-unknown}" ;;
+  esac
+}
+
+check_systemd(){
+  local failed="" unit=""
+  [[ "$(cat /proc/1/comm 2>/dev/null || true)" == systemd ]] && pass 'systemd is PID 1' || fail 'systemd is not PID 1'
+  failed="$(systemctl --failed --no-legend --plain 2>/dev/null || true)"
+  if [[ -z "$failed" ]]; then pass 'no failed systemd units'; else fail 'systemd has failed units'; printf '%s\n' "$failed"; fi
+  for unit in hostpanel nginx apache2 httpd postgresql redis-server redis dovecot rspamd postfix exim4 named bind9 fail2ban firewalld; do
+    check_unit "$unit"
+  done
+}
+
+check_os(){
+  local id="" version=""
+  [[ -r /etc/os-release ]] && id="$(awk -F= '$1=="ID" {gsub(/\"/,"",$2); print $2}' /etc/os-release)"
+  [[ -r /etc/os-release ]] && version="$(awk -F= '$1=="VERSION_ID" {gsub(/\"/,"",$2); print $2}' /etc/os-release)"
+  case "$id:$version" in
+    ubuntu:22.04|ubuntu:24.04|ubuntu:26.04|debian:12|debian:13|rocky:9*|rocky:10*|almalinux:9*|almalinux:10*) pass "supported OS: $id $version" ;;
+    *) fail "unsupported or unidentified OS: ${id:-unknown} ${version:-unknown}" ;;
+  esac
+}
+
+check_version(){
+  local actual=""
+  [[ -r /opt/hostpanel/VERSION ]] && actual="$(tr -d '[:space:]' </opt/hostpanel/VERSION)"
+  [[ "$actual" == "$EXPECTED_VERSION" ]] && pass "installed version is $EXPECTED_VERSION" || fail "installed version '${actual:-missing}' does not match $EXPECTED_VERSION"
+}
+
+check_path(){
+  local path="$1" exact_mode="${2:-}" owner="" mode="" value=0
+  [[ -e "$path" ]] || { fail "$path is missing"; return; }
+  owner="$(stat -c '%U' "$path")"; mode="$(stat -c '%a' "$path")"
+  [[ "$owner" == root ]] && pass "$path owner is root" || fail "$path owner is $owner"
+  if [[ -n "$exact_mode" ]]; then
+    [[ "$mode" == "$exact_mode" ]] && pass "$path mode is $exact_mode" || fail "$path mode is $mode, expected $exact_mode"
+  else
+    value=$((8#$mode))
+    (( (value & 0022) == 0 )) && pass "$path is not group/world writable" || fail "$path is group/world writable (mode $mode)"
+  fi
+}
+
+check_files(){
+  check_path /var/backups/hostpanel-install 700
+  check_path /opt/hostpanel/config.env
+  check_path /etc/hostpanel
+  [[ ! -d /opt/hostpanel/credentials ]] || check_path /opt/hostpanel/credentials
+}
+
+check_doctor(){
+  local py=/opt/hostpanel/venv/bin/python doctor=/opt/hostpanel/app/hostpanel-doctor
+  if [[ -x "$py" && -f "$doctor" ]]; then run_required 'hostpanel-doctor passed' "$py" "$doctor" --quiet; else fail 'hostpanel-doctor runtime is missing'; fi
+}
+
+check_configs(){
+  command -v nginx >/dev/null 2>&1 && run_required 'nginx configuration is valid' nginx -t
+  command -v apache2ctl >/dev/null 2>&1 && run_required 'Apache configuration is valid' apache2ctl configtest
+  if ! command -v apache2ctl >/dev/null 2>&1 && command -v httpd >/dev/null 2>&1; then run_required 'Apache configuration is valid' httpd -t; fi
+  command -v postfix >/dev/null 2>&1 && run_required 'Postfix configuration is valid' postfix check
+  command -v dovecot >/dev/null 2>&1 && run_required 'Dovecot configuration is readable' dovecot -n
+  command -v rspamadm >/dev/null 2>&1 && run_required 'Rspamd configuration is valid' rspamadm configtest
+  command -v named-checkconf >/dev/null 2>&1 && run_required 'DNS configuration is valid' named-checkconf
+}
+
+listener(){ local port="$1"; ss -lntH 2>/dev/null | awk -v wanted=":$port" '$4 ~ wanted "$" {found=1} END {exit !found}'; }
+check_listeners(){
+  local panel_port="${HP_PANEL_PORT:-}" panel_host="${HP_PANEL_HOST:-}" ssh_ports="" port=""
+  [[ -n "$panel_port" ]] || panel_port="$(config_value HP_PANEL_PORT 2>/dev/null || true)"
+  [[ -n "$panel_port" ]] || panel_port="$(config_value PANEL_PORT 2>/dev/null || true)"
+  [[ -n "$panel_port" ]] || panel_port=2222
+  [[ -n "$panel_host" ]] || panel_host="$(config_value HP_PANEL_HOST 2>/dev/null || true)"
+  [[ -n "$panel_host" ]] || panel_host="$(config_value PANEL_HOST 2>/dev/null || true)"
+  listener "$panel_port" && pass "panel port $panel_port is listening" || fail "panel port $panel_port is not listening"
+  ssh_ports="$(sshd -T 2>/dev/null | awk '$1=="port" {print $2}' | sort -u || true)"; [[ -n "$ssh_ports" ]] || ssh_ports=22
+  while IFS= read -r port; do [[ -n "$port" ]] || continue; listener "$port" && pass "SSH port $port is listening" || fail "SSH port $port is not listening"; done <<<"$ssh_ports"
+  if command -v curl >/dev/null 2>&1; then
+    if curl -ksS --max-time 8 -o /dev/null "https://127.0.0.1:$panel_port/" || curl -sS --max-time 8 -o /dev/null "http://127.0.0.1:$panel_port/"; then pass "panel endpoint responds locally on $panel_port"; else fail "panel endpoint does not respond locally on $panel_port"; fi
+  else warn 'curl is unavailable'; fi
+  if [[ -n "$panel_host" ]]; then
+    getent ahosts "$panel_host" >/dev/null 2>&1 && pass "panel hostname resolves: $panel_host" || fail "panel hostname does not resolve: $panel_host"
+    if [[ -n "${HP_EXPECTED_PUBLIC_IP:-}" ]]; then getent ahosts "$panel_host" | awk '{print $1}' | grep -Fxq "$HP_EXPECTED_PUBLIC_IP" && pass 'panel DNS includes expected address' || fail 'panel DNS lacks expected address'; fi
+  else warn 'panel hostname was not found'; fi
+}
+
+check_firewall(){
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    firewall-cmd --state >/dev/null 2>&1 && pass 'firewalld is active' || fail 'firewalld is inactive'
+    firewall-cmd --list-all || fail 'firewalld rules could not be listed'
+  elif command -v ufw >/dev/null 2>&1; then
+    local status=""; status="$(ufw status 2>/dev/null || true)"
+    grep -q '^Status: active' <<<"$status" && pass 'ufw is active' || fail 'ufw is inactive'; printf '%s\n' "$status"
+  else fail 'neither firewalld nor ufw is available'; fi
+}
+
+check_redis_acl(){
+  local paths=(/etc/redis /etc/redis.conf /etc/hostpanel)
+  grep -RhsE '^[[:space:]]*user[[:space:]]+default[[:space:]]+off([[:space:]]|$)' "${paths[@]}" 2>/dev/null | grep -q . && pass 'Redis default ACL user is disabled' || fail 'Redis default ACL user disablement was not found'
+  grep -RhsE '^[[:space:]]*user[[:space:]]+hostpanel[[:space:]]+on([[:space:]]|$)' "${paths[@]}" 2>/dev/null | grep -q . && pass 'Redis hostpanel ACL user is configured' || fail 'Redis hostpanel ACL user was not found'
+}
+
+check_mail(){
+  if unit_exists postfix || unit_exists exim4; then listener 25 && pass 'SMTP port 25 is listening' || fail 'SMTP port 25 is not listening'; fi
+  if unit_exists dovecot; then
+    if listener 143 || listener 993; then pass 'IMAP service is listening'; else fail 'IMAP service is not listening'; fi
+  fi
+}
+
+check_cert(){
+  local cert=""
+  command -v openssl >/dev/null 2>&1 && cert="$(find /opt/hostpanel/tls /etc/hostpanel -type f \( -name '*.crt' -o -name '*.pem' \) -print -quit 2>/dev/null || true)"
+  if [[ -n "$cert" ]]; then openssl x509 -in "$cert" -noout -checkend 86400 >/dev/null 2>&1 && pass "certificate is parseable: $cert" || fail "certificate is invalid or near expiry: $cert"; else warn 'no HostPanel certificate was found'; fi
+}
+
+validate_hook(){
+  local path="$1" owner="" mode="" value=0
+  case "$path" in /*) ;; *) fail "hook path must be absolute: $path"; return 1 ;; esac
+  [[ -f "$path" && -x "$path" && ! -L "$path" ]] || { fail "hook is unsafe: $path"; return 1; }
+  owner="$(stat -c '%U' "$path")"; mode="$(stat -c '%a' "$path")"; value=$((8#$mode))
+  if [[ "$owner" != root ]] || (( (value & 0022) != 0 )); then fail "hook must be root-owned and not group/world writable: $path"; return 1; fi
+}
+run_hook(){ local label="$1" path="$2"; validate_hook "$path" && run_required "$label" "$path"; }
+run_hooks(){
+  local backup="${HP_BACKUP_TEST_SCRIPT:-}" restore="${HP_RESTORE_TEST_SCRIPT:-}" injection="${HP_FAILURE_INJECTION_SCRIPT:-}"
+  [[ -n "$backup$restore$injection" ]] || { warn 'backup, restore, and failure-injection hooks were not supplied'; return; }
+  [[ "${HP_DESTRUCTIVE_TESTS:-no}" == yes ]] || { fail 'hooks require HP_DESTRUCTIVE_TESTS=yes'; return; }
+  [[ -z "$backup" ]] || run_hook 'operator backup test passed' "$backup"
+  if [[ -n "$restore$injection" && "${HP_PROVIDER_SNAPSHOT_CONFIRMED:-no}" != yes ]]; then fail 'restore/failure injection requires HP_PROVIDER_SNAPSHOT_CONFIRMED=yes'; return; fi
+  [[ -z "$restore" ]] || run_hook 'operator restore test passed' "$restore"
+  [[ -z "$injection" ]] || run_hook 'operator failure-injection rollback test passed' "$injection"
+}
+
+check_reboot(){
+  local previous="" current=""
+  [[ -r "$REBOOT_STATE" ]] || { fail 'pre-reboot state is missing'; return; }
+  previous="$(tr -d '[:space:]' <"$REBOOT_STATE")"; current="$(tr -d '[:space:]' </proc/sys/kernel/random/boot_id)"
+  [[ -n "$previous" && "$previous" != "$current" ]] && pass 'boot ID changed; reboot was verified' || fail 'boot ID did not change'
+}
+
+run_checks(){ check_os; check_systemd; check_version; check_files; check_doctor; check_configs; check_listeners; check_firewall; check_redis_acl; check_mail; check_cert; run_hooks; }
+
+printf 'HostPanel production VM validation\nMode: %s\nReport: %s\nUTC start: %s\n\n' "$MODE" "$REPORT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+[[ "$MODE" != --post-reboot ]] || check_reboot
+run_checks
+if [[ "$MODE" == --prepare-reboot && $FAIL_COUNT -eq 0 ]]; then
+  tr -d '[:space:]' </proc/sys/kernel/random/boot_id >"$REBOOT_STATE"; chown root:root "$REBOOT_STATE"; chmod 600 "$REBOOT_STATE"; pass "pre-reboot boot ID recorded at $REBOOT_STATE"
+fi
+printf '\nSummary: %d passed, %d warnings, %d failed\nReport saved to %s\n' "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT" "$REPORT"
+((FAIL_COUNT == 0))
