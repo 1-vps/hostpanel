@@ -18,9 +18,9 @@ class Ubuntu2604InstallerTests(unittest.TestCase):
         self.assertIn("Ondrej PHP PPA has no Resolute suite", installer)
         self.assertIn("rspamd.com has no Resolute APT suite", installer)
         self.assertIn(
-    "debian:13|debian:13.*|ubuntu:26.04|ubuntu:26.04.*",
-    installer,
-)
+            "debian:13|debian:13.*|ubuntu:26.04|ubuntu:26.04.*",
+            installer,
+        )
 
     def test_setup_and_matrix_are_consistent(self):
         setup = (ROOT / "SETUP.md").read_text(encoding="utf-8")
