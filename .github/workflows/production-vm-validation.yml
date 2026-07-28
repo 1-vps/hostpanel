@@ -1,0 +1,44 @@
+name: Production VM validation harness
+
+on:
+  pull_request:
+    paths:
+      - tools/validate-production-vm.sh
+      - tests/test_production_vm_validation.py
+      - PRODUCTION_READINESS.md
+      - .github/workflows/production-vm-validation.yml
+  push:
+    branches: [main]
+    paths:
+      - tools/validate-production-vm.sh
+      - tests/test_production_vm_validation.py
+      - PRODUCTION_READINESS.md
+      - .github/workflows/production-vm-validation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-vm-validation-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  validate-harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Bash syntax and focused tests
+        run: |
+          set -euo pipefail
+          bash -n tools/validate-production-vm.sh
+          python3 -m unittest tests.test_production_vm_validation -v
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -S error tools/validate-production-vm.sh
