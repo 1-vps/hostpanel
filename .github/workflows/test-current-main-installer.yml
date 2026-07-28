@@ -33,7 +33,7 @@ jobs:
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
 
       - name: Existing static matrix
-        run: ./test-matrix.sh --check-only
+        run: bash test-matrix.sh --check-only
 
       - name: Ubuntu 26.04 preflight and dry-run
         run: |
