@@ -74,16 +74,20 @@ jobs:
           [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && ((VPS_PORT >= 1 && VPS_PORT <= 65535))
           case "$MTA" in postfix|exim) ;; *) echo 'Unsupported MTA.' >&2; exit 1 ;; esac
 
-          python3 - "$VPS_HOST" "$PANEL_HOST_INPUT" <<'PY'
+          python3 - "$VPS_HOST" "$VPS_IPV6" "$PANEL_HOST_INPUT" <<'PY'
           import ipaddress
           import re
           import sys
 
-          host, panel = sys.argv[1:]
+          host, ipv6, panel = sys.argv[1:]
           try:
               address = ipaddress.ip_address(host)
           except ValueError as exc:
               raise SystemExit(f"VPS_HOST must be a literal IP address: {exc}")
+          if ipv6:
+              parsed_v6 = ipaddress.ip_address(ipv6)
+              if parsed_v6.version != 6:
+                  raise SystemExit("VPS_IPV6 must be an IPv6 literal")
 
           if panel:
               if len(panel) > 253 or not re.fullmatch(
@@ -158,7 +162,7 @@ jobs:
             printf "== addresses ==\n"
             ip -brief address
             printf "== existing hostpanel ==\n"
-            test ! -e /opt/hostpanel || find /opt/hostpanel -maxdepth 2 -mindepth 1 -printf "%p\n" | head -100
+            test ! -e /opt/hostpanel || find /opt/hostpanel -maxdepth 2 -mindepth 1 -printf "%p\n" | sed -n "1,100p"
           ' | tee evidence/pre-install-inventory.txt
 
       - name: Install HostPanel and prepare reboot validation
@@ -199,8 +203,11 @@ jobs:
           source /root/hostpanel-acceptance.env
 
           EVIDENCE=/root/hostpanel-acceptance-evidence
+          PRIVATE_LOG=/root/hostpanel-acceptance-private-install.log
           install -d -o root -g root -m 700 "$EVIDENCE"
-          exec > >(tee -a "$EVIDENCE/install-and-pre-reboot.txt") 2>&1
+          : > "$PRIVATE_LOG"
+          chmod 600 "$PRIVATE_LOG"
+          trap 'status=$?; echo "Acceptance setup failed at line $LINENO. Inspect the root-only private log on the VPS." >&2; exit "$status"' ERR
 
           [[ "$(cat /proc/1/comm 2>/dev/null || true)" == systemd ]] || {
             echo 'A real systemd VM is required.' >&2
@@ -211,12 +218,13 @@ jobs:
             exit 1
           fi
 
+          echo 'Installing bootstrap prerequisites; detailed output remains root-only on the VPS.'
           if command -v apt-get >/dev/null 2>&1; then
             export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq ca-certificates curl git openssl python3
+            apt-get update -qq >> "$PRIVATE_LOG" 2>&1
+            apt-get install -y -qq ca-certificates curl git openssl python3 >> "$PRIVATE_LOG" 2>&1
           elif command -v dnf >/dev/null 2>&1; then
-            dnf install -y ca-certificates curl git openssl python3
+            dnf install -y ca-certificates curl git openssl python3 >> "$PRIVATE_LOG" 2>&1
           else
             echo 'Unsupported package manager.' >&2
             exit 1
@@ -224,7 +232,7 @@ jobs:
 
           curl -fsSL --retry 4 --connect-timeout 15 \
             "https://raw.githubusercontent.com/1-vps/hostpanel/${HP_REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
-            -o /root/bootstrap-install.sh
+            -o /root/bootstrap-install.sh >> "$PRIVATE_LOG" 2>&1
           chmod 700 /root/bootstrap-install.sh
           bash -n /root/bootstrap-install.sh
 
@@ -240,8 +248,10 @@ jobs:
             HP_RSPAMD_REPO=off
           )
 
-          env "${common_env[@]}" bash /root/bootstrap-install.sh --check "${install_args[@]}"
-          env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}"
+          echo 'Running installer preflight; detailed output remains root-only on the VPS.'
+          env "${common_env[@]}" bash /root/bootstrap-install.sh --check "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
+          echo 'Running full installation; generated credentials remain root-only on the VPS.'
+          env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
 
           test "$(cat /opt/hostpanel/VERSION)" = "$HP_EXPECTED_VERSION"
           curl -fsSL --retry 4 --connect-timeout 15 \
@@ -250,22 +260,24 @@ jobs:
           chmod 700 /root/validate-production-vm.sh
           bash -n /root/validate-production-vm.sh
 
+          echo 'Running non-sensitive VM validation.'
           env \
             HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
             HP_PANEL_HOST="$HP_PANEL_HOST" \
             HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
-            bash /root/validate-production-vm.sh --check
+            bash /root/validate-production-vm.sh --check | tee "$EVIDENCE/pre-reboot-validator.txt"
           env \
             HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
             HP_PANEL_HOST="$HP_PANEL_HOST" \
             HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
-            bash /root/validate-production-vm.sh --prepare-reboot
+            bash /root/validate-production-vm.sh --prepare-reboot | tee "$EVIDENCE/prepare-reboot-validator.txt"
 
           cat /etc/os-release > "$EVIDENCE/os-release.txt"
           uname -a > "$EVIDENCE/uname.txt"
           cat /proc/sys/kernel/random/boot_id > "$EVIDENCE/pre-reboot-boot-id.txt"
           cat /opt/hostpanel/VERSION > "$EVIDENCE/version.txt"
           systemctl --failed --no-legend --plain > "$EVIDENCE/failed-units-pre-reboot.txt" || true
+          echo 'Pre-reboot installation and validation completed.'
           REMOTE
 
           chmod 700 /tmp/hostpanel-acceptance-remote.sh
@@ -338,7 +350,7 @@ jobs:
             dig +short A "$PANEL_HOST" || true
             echo '== HTTPS headers =='
             curl -kfsSI --connect-timeout 15 --max-time 30 "https://${PANEL_HOST}/" || true
-            echo '== TCP listeners from runner =='
+            echo '== TCP listeners from runner over IPv4 =='
             for port in 22 25 53 80 443 465 587 993; do
               if nc -z -w 8 "$VPS_HOST" "$port"; then
                 echo "OPEN $port"
@@ -346,6 +358,16 @@ jobs:
                 echo "CLOSED_OR_FILTERED $port"
               fi
             done
+            if [[ -n "$VPS_IPV6" ]]; then
+              echo '== TCP listeners from runner over IPv6 =='
+              for port in 22 80 443; do
+                if nc -6 -z -w 8 "$VPS_IPV6" "$port"; then
+                  echo "OPEN_IPV6 $port"
+                else
+                  echo "CLOSED_OR_FILTERED_IPV6 $port"
+                fi
+              done
+            fi
           } | tee evidence/external-probes.txt
 
       - name: Collect root-only validation evidence
@@ -355,7 +377,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p evidence/remote
-          sshpass -e scp -r -P "$VPS_PORT" \
+          sshpass -e scp -r -P "${VPS_PORT:-22}" \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o PreferredAuthentications=password \
