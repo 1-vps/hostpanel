@@ -2,7 +2,7 @@
 
 **Audit date:** 2026-07-28  
 **Target:** Ubuntu 26.04 LTS (Resolute Raccoon)  
-**Scope:** `install.sh`, maintained setup documentation, package mapping, locked runtime, and installer test matrices
+**Scope:** `install.sh`, maintained setup documentation, package mapping, and installer test matrices
 
 ## Changes
 
@@ -28,9 +28,9 @@
 | Bash syntax, focused regression tests, and static matrix | success |
 | Ubuntu 26.04 Docker preflight/dry-run matrix | success |
 | Mapped Ubuntu 26.04 required-package candidate audit | success |
-| Locked Python runtime installation on Python 3.14 | failure |
 | ShellCheck error-level audit | success |
+| Signed-release `requirements.lock` installation on Ubuntu 26.04 / Python 3.14 | not completed; GitHub Actions did not register the follow-up run |
 
 ## Production validation still required
 
-Before declaring a release production-ready, run a full installation on a disposable Ubuntu 26.04 VM with systemd, reboot it, run `hostpanel-doctor`, test every selected role, and perform a backup/restore test. Container preflight cannot validate service startup, kernel quota behavior, firewall persistence, mail delivery, or DNS delegation end to end.
+Before declaring a release production-ready, run a full installation on a disposable Ubuntu 26.04 VM with systemd, reboot it, run `hostpanel-doctor`, test every selected role, and perform a backup/restore test. This validation must also install the signed release archive's locked Python runtime under Ubuntu 26.04's Python 3.14. Container preflight cannot validate service startup, kernel quota behavior, firewall persistence, mail delivery, or DNS delegation end to end.
