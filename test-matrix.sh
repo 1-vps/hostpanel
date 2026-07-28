@@ -115,7 +115,10 @@ run_expect_success(){
     printf 'FAIL %s; see %s\n' "$name" "$LOG_DIR/${name}.log" >&2
     return 1
   fi
-  [[ "$VERBOSE" == yes ]] && printf '%s\n' "$output" >&2
+  if [[ "$VERBOSE" == yes ]]; then
+    printf '%s\n' "$output" >&2
+  fi
+  return 0
 }
 
 run_container_test(){
