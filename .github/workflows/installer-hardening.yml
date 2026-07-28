@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: installer-hardening-${{ github.ref }}
-  cancel-in-progress: true
+  group: installer-hardening-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   deterministic-and-static:
