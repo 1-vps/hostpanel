@@ -5,8 +5,7 @@ databases, backups, certificates, firewall policy, monitoring, and infrastructur
 operations.
 
 **Signed base release:** `3.4.0-hardened-r5`  
-**Reviewed installer overlay:** replace `REVIEWED_COMMIT_SHA` with an audited,
-resolvable full commit SHA  
+**Validated installer overlay:** `65d7f54b4c08edef65b2c13389b0a036c6a56b5b`  
 **License:** MIT
 
 > HostPanel changes operating-system packages, service configuration, firewall
@@ -45,11 +44,12 @@ packages.
 
 ## Download the pinned bootstrap
 
-First choose a full commit SHA that exists and whose changes you have reviewed.
-Use that exact value in both places below:
+The commands below use the installer commit that passed deterministic generation,
+ShellCheck, all supported-OS preflights, signed-archive verification, and the
+Ubuntu 26.04/Python 3.14 locked-runtime test.
 
 ```bash
-REVIEWED_COMMIT_SHA=REPLACE_WITH_40_HEX_CHARACTERS
+REVIEWED_COMMIT_SHA=65d7f54b4c08edef65b2c13389b0a036c6a56b5b
 
 sudo curl -fsSL \
   "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
