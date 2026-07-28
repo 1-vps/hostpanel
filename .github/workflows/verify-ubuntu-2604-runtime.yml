@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/ubuntu-26.04-support
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -71,16 +74,18 @@ PY
 
           path = Path("AUDIT-UBUNTU-26.04.md")
           text = path.read_text(encoding="utf-8")
-          replacements = {
-              "| Bash syntax, focused regression tests, and static matrix | success |":
-                  f"| Bash syntax, focused regression tests, and static matrix | {os.environ['FOCUSED_RESULT']} |",
-              "| Locked Python runtime installation on Python 3.14 | failure |":
-                  f"| Locked Python runtime installation from the signed release archive on Python 3.14 | {os.environ['RUNTIME_RESULT']} |",
-          }
-          for old, new in replacements.items():
-              if old not in text:
-                  raise SystemExit(f"audit row not found: {old}")
-              text = text.replace(old, new, 1)
+          focused_prefix = "| Bash syntax, focused regression tests, and static matrix |"
+          runtime_prefixes = (
+              "| Locked Python runtime installation on Python 3.14 |",
+              "| Locked Python runtime installation from the signed release archive on Python 3.14 |",
+          )
+          lines = text.splitlines()
+          for index, line in enumerate(lines):
+              if line.startswith(focused_prefix):
+                  lines[index] = f"{focused_prefix} {os.environ['FOCUSED_RESULT']} |"
+              if line.startswith(runtime_prefixes):
+                  lines[index] = "| Locked Python runtime installation from the signed release archive on Python 3.14 | " + os.environ["RUNTIME_RESULT"] + " |"
+          text = "\n".join(lines) + "\n"
           text = text.replace(
               "package mapping, locked runtime, and installer test matrices",
               "package mapping, the signed-release locked runtime, and installer test matrices",
@@ -90,11 +95,12 @@ PY
           PY
 
       - name: Commit verified audit
+        if: github.event_name == 'push'
         shell: bash
         run: |
-          rm -f .github/workflows/verify-ubuntu-2604-runtime.yml
+          rm -f .github/workflows/verify-ubuntu-2604-runtime.yml .github/ubuntu2604-runtime-trigger
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add AUDIT-UBUNTU-26.04.md .github/workflows/verify-ubuntu-2604-runtime.yml
+          git add AUDIT-UBUNTU-26.04.md .github/workflows/verify-ubuntu-2604-runtime.yml .github/ubuntu2604-runtime-trigger
           git commit -m "Verify Ubuntu 26.04 release runtime"
           git push origin HEAD:agent/ubuntu-26.04-support
