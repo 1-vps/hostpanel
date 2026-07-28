@@ -521,17 +521,18 @@ pkg_repair(){
 pkg_name(){
   local name="$1"
   if [[ "$PKG_FAMILY" == debian ]]; then
-    # Use concrete Debian package names rather than historical or virtual
-    # aliases.  Debian 13 exposes dnsutils only as a virtual package,
-    # renamed bind9utils to bind9-utils, and ships the former contrib
-    # extensions inside postgresql-17 instead of postgresql-contrib.
+    # Use concrete Debian-family package names rather than historical or
+    # virtual aliases. Debian 13 exposes dnsutils only as a virtual package,
+    # renamed bind9utils to bind9-utils, and bundles contrib extensions in
+    # PostgreSQL 17. Ubuntu 26.04 likewise bundles contrib extensions in
+    # PostgreSQL 18 instead of publishing postgresql-contrib.
     case "$name" in
       dnsutils)             printf 'bind9-dnsutils' ;;
       bind9utils)           printf 'bind9-utils' ;;
       postgresql-contrib)
         case "$ID:$VERSION_ID" in
-          debian:13|debian:13.*) printf 'postgresql' ;;
-          *)                     printf 'postgresql-contrib' ;;
+          debian:13|debian:13.*|ubuntu:26.04|ubuntu:26.04.*) printf 'postgresql' ;;
+          *)                                                   printf 'postgresql-contrib' ;;
         esac
         ;;
       *)                    printf '%s' "$name" ;;
@@ -863,7 +864,7 @@ if [[ "$PKG_FAMILY" == debian && "$ID" == debian && "$VERSION_ID" == 13* ]]; the
   ok "Debian 13 package names resolved: PostgreSQL contrib is bundled; BIND utilities use current package names"
 fi
 if [[ "$ID" == ubuntu && "$VERSION_ID" == 26.04 ]]; then
-  ok "Ubuntu 26.04 package policy resolved: native PHP and Rspamd packages selected"
+  ok "Ubuntu 26.04 package policy resolved: PostgreSQL contrib is bundled; native PHP and Rspamd packages selected"
 fi
 pkg_install "${MAPPED_PACKAGES[@]}" || die "Could not install the selected role packages"
 ((${#MISSING_OPTIONAL[@]}))   && printf 'Optional packages unavailable on %s: %s\n' "$PRETTY_NAME" "${MISSING_OPTIONAL[*]}" >>"$LOG"
