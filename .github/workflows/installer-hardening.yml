@@ -82,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm \
-            -v "$PWD:/repo:ro" \
+            -v "$PWD:/repo" \
             -w /repo \
             ubuntu:26.04 \
             bash -ceu '
