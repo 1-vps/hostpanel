@@ -1,41 +1,47 @@
 # HostPanel setup
 
-This is the maintained setup and reinstall guide for
-`3.4.0-hardened-r6`.
+This guide installs the signed `3.4.0-hardened-r5` base release through a
+reviewed, commit-addressed installer overlay.
 
-The reviewed installer commit is:
+Choose a real, resolvable full commit SHA and substitute it for
+`REVIEWED_COMMIT_SHA`. The same value must be used in the download URL and in
+`HP_REPO_REF`.
 
-```text
-2dee7b6326c6158392aa48693634fcabea171ba1
-```
+## Security model
 
-The bootstrap verifies the embedded signed `3.4.0-hardened-r5` source archive,
-applies the reviewed r6 repair chain from the same pinned commit, and installs
-`3.4.0-hardened-r6`.
+The bootstrap does not trust a public key fetched beside the archive it verifies.
+It contains the release verification key directly and uses it to authenticate
+the signed base archive. It separately verifies each installer overlay file
+against the operator-supplied full Git commit object.
 
-HostPanel changes operating-system packages, web and mail services, firewall
-rules, databases, DNS, scheduled jobs, and customer data paths. Use a fresh
-server when possible and keep provider-console access available.
+The installed root script is derived deterministically from a preserved base
+installer. Every expected replacement must match exactly once; otherwise the
+hardener exits before any server mutation.
+
+HostPanel changes packages, firewall rules, web and mail services, databases,
+DNS, scheduled jobs, and customer data paths. Validate the selected roles on a
+fresh disposable server first and keep provider-console access available.
 
 ## Requirements
 
-- Ubuntu 22.04, 24.04, or 26.04, Debian 12 or 13, Rocky Linux 9 or 10, or AlmaLinux 9 or 10
+- Ubuntu 22.04, 24.04, or 26.04; Debian 12 or 13; Rocky Linux 9 or 10; or AlmaLinux 9 or 10
 - x86-64/AMD64 or ARM64/AArch64
 - at least 2 GB RAM
 - at least 10 GB free on `/`
 - root or passwordless sudo access
-- a valid panel hostname, for example `panel.example.com`
+- a valid panel hostname such as `panel.example.com`
+- an administrative IP or CIDR when the installer is not launched from SSH
 
-Ubuntu 26.04 uses the distribution-provided PHP 8.5 and Rspamd packages.
-The installer deliberately skips the Ondrej PHP PPA and the upstream Rspamd
-APT repository on this release because neither currently publishes a
-`resolute` suite. Multi-PHP availability is therefore limited to branches
-published by Ubuntu unless a separately reviewed repository strategy is added.
+Ubuntu 26.04 uses distribution-provided PHP 8.5 and Rspamd packages. Automatic
+third-party repository setup is disabled on every platform: the installer never
+executes a mutable repository bootstrap script as root. Preconfigure a reviewed
+repository yourself when additional packages are required, and keep
+`HP_MULTI_PHP_REPO=off` and `HP_RSPAMD_REPO=off` during installation.
 
 A full installation selects all roles unless `--role` is supplied:
 `control`, `web`, `database`, `mail`, `dns`, `backup`, and `edge`.
 
-## 1. Prepare DNS
+## 1. Prepare DNS and administrative access
 
 Create an `A` record for the panel hostname pointing to the server. Add an
 `AAAA` record only when IPv6 is configured and protected by the same firewall
@@ -45,7 +51,16 @@ policy.
 getent ahosts panel.example.com
 ```
 
-The hostname must resolve to the intended server before production use.
+Determine the source IP or network that must retain panel access. Examples:
+
+```text
+192.0.2.10/32
+2001:db8:100::/64
+```
+
+The installer detects the active SSH port from `SSH_CONNECTION` and `sshd -T`.
+It opens those ports before enabling a default-deny firewall and schedules a
+five-minute automatic rollback until installation completes successfully.
 
 ## 2. Install bootstrap prerequisites
 
@@ -62,31 +77,33 @@ Rocky Linux or AlmaLinux:
 sudo dnf install -y ca-certificates curl git openssl python3
 ```
 
-## 3. Download the pinned bootstrap
+## 3. Download a reviewed bootstrap
 
 Do not run an unpinned branch URL as root.
 
 ```bash
-sudo curl -fsSL \
-  https://raw.githubusercontent.com/1-vps/hostpanel/2dee7b6326c6158392aa48693634fcabea171ba1/bootstrap-install.sh \
-  -o /root/bootstrap-install.sh
+REVIEWED_COMMIT_SHA=REPLACE_WITH_40_HEX_CHARACTERS
 
+sudo curl -fsSL \
+  "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
+  -o /root/bootstrap-install.sh
 sudo chmod 700 /root/bootstrap-install.sh
 sudo bash -n /root/bootstrap-install.sh
 ```
 
-`HP_REPO_REF` must be the same full commit SHA used in the download URL.
+Confirm that the value contains exactly 40 hexadecimal characters and resolves
+in the repository before proceeding.
 
 ## 4. Run the preflight
 
-Replace `panel.example.com` with the real hostname. Choose `postfix` or `exim`
-deliberately; this example uses Exim.
-
 ```bash
 sudo env \
-  HP_REPO_REF=2dee7b6326c6158392aa48693634fcabea171ba1 \
+  HP_REPO_REF="$REVIEWED_COMMIT_SHA" \
   HP_PANEL_HOST=panel.example.com \
-  bash /root/bootstrap-install.sh --check --mta exim
+  HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
+  HP_MULTI_PHP_REPO=off \
+  HP_RSPAMD_REPO=off \
+  bash /root/bootstrap-install.sh --check --mta postfix
 ```
 
 A successful preflight prints:
@@ -95,105 +112,90 @@ A successful preflight prints:
 Preflight passed. No changes were made.
 ```
 
-The preflight checks the operating system, architecture, memory, disk space,
-hostname, selected roles, MTA, environment values, and required ports. It does
-not install packages or modify the server.
+Preflight validates the OS, architecture, memory, disk, hostname, ports, roles,
+and MTA. It does not install packages, configure repositories, modify the
+firewall, build the Python runtime, or start services.
 
 ## 5. Fresh installation
 
 ```bash
 sudo env \
-  HP_REPO_REF=2dee7b6326c6158392aa48693634fcabea171ba1 \
+  HP_REPO_REF="$REVIEWED_COMMIT_SHA" \
   HP_PANEL_HOST=panel.example.com \
-  bash /root/bootstrap-install.sh --mta exim
+  HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
+  HP_MULTI_PHP_REPO=off \
+  HP_RSPAMD_REPO=off \
+  bash /root/bootstrap-install.sh --mta postfix
 ```
 
-A fresh installation creates:
+When installation is performed over SSH, the client address is used when
+`HP_PANEL_ADMIN_CIDR` is omitted. Without either source, installation fails
+closed. `HP_ALLOW_PUBLIC_PANEL=yes` is an explicit override for controlled test
+environments and opens the panel port publicly.
 
-```text
-Username: admin
-```
-
-The generated administrator password is printed once at the end of the first
-successful installation. Save it immediately. Only its password hash is kept,
-so the plaintext cannot be recovered later.
+A fresh installation creates the `admin` account and prints its generated
+password once. The password is passed to the initialization process through
+standard input, not command-line arguments.
 
 ## 6. Safe reinstall or interrupted-run recovery
-
-Use `--reinstall` for an existing HostPanel installation, an interrupted run,
-or a newer reviewed release.
 
 Run the reinstall preflight first:
 
 ```bash
 sudo env \
-  HP_REPO_REF=2dee7b6326c6158392aa48693634fcabea171ba1 \
+  HP_REPO_REF="$REVIEWED_COMMIT_SHA" \
   HP_PANEL_HOST=panel.example.com \
-  bash /root/bootstrap-install.sh --reinstall --check --mta exim
+  HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
+  HP_MULTI_PHP_REPO=off \
+  HP_RSPAMD_REPO=off \
+  bash /root/bootstrap-install.sh --reinstall --check --mta postfix
 ```
 
 Then run the reinstall:
 
 ```bash
 sudo env \
-  HP_REPO_REF=2dee7b6326c6158392aa48693634fcabea171ba1 \
+  HP_REPO_REF="$REVIEWED_COMMIT_SHA" \
   HP_PANEL_HOST=panel.example.com \
-  bash /root/bootstrap-install.sh --reinstall --mta exim
+  HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
+  HP_MULTI_PHP_REPO=off \
+  HP_RSPAMD_REPO=off \
+  bash /root/bootstrap-install.sh --reinstall --mta postfix
 ```
 
-Reinstall mode creates a root-only safety snapshot under
-`/var/backups/hostpanel/install/`, reconciles supported package-manager and
-PostgreSQL state, replaces the application and versioned runtime, performs an
-authenticated readiness check, and attempts rollback if a later stage fails.
-
-It preserves:
-
-- administrator accounts and password hashes;
-- panel, master, node, and readiness secrets;
-- the PostgreSQL control-plane credential;
-- the MariaDB root credential;
-- roles and MTA selection unless explicitly changed;
-- customer websites, mailboxes, databases, backups, and plugins.
-
-A reinstall does not print or reset the administrator password.
-
-## 7. Open the panel
-
-Open the configured hostname:
+Every mutating run creates a root-owned safety snapshot under:
 
 ```text
-https://panel.example.com:2222/
+/var/backups/hostpanel-install/
 ```
 
-Do not use the server IP address. Trusted-host protection intentionally rejects
-unconfigured hosts with:
+The directory is mode `0700`; archives and absence manifests are mode `0600`.
+It is separate from `/var/backups/hostpanel`, which can contain panel-managed
+customer backups. The snapshot includes managed service configuration, package
+repository configuration, firewall state, `/etc/fstab`, credentials, runtime
+metadata, and relevant application trees. The installer tracks newly installed
+packages and removes them on a failed run when possible.
+
+Rollback is best-effort because operating-system package scripts and external
+service side effects cannot be made fully transactional. A disposable VM test
+and a provider-level snapshot remain mandatory before production upgrades.
+
+## 7. Redis and service validation
+
+When Redis is selected, the installer disables its unauthenticated `default`
+ACL user, creates a named `hostpanel` user, writes a root-controlled credential,
+and configures Rspamd to authenticate. Required Redis, Dovecot, PostgreSQL,
+Apache, Rspamd, Postfix/Exim, and final `hostpanel-doctor` failures stop the
+installation instead of being reported as success.
+
+PHP branches are accepted only after required modules are visible to the loaded
+CLI runtime. Unavailable optional module packages are recorded in:
 
 ```text
-Invalid host header
+/etc/hostpanel/php-skipped-packages
 ```
 
-The first visit warns about the self-signed certificate. Replace it before
-production use.
-
-Verify the hostname path from the server:
-
-```bash
-grep -E '^(HP_EXTERNAL_URL|HP_TRUSTED_HOSTS)=' \
-  /opt/hostpanel/config.env
-
-curl -sS -D- -o /dev/null \
-  -H 'Host: panel.example.com' \
-  http://127.0.0.1:12722/
-
-curl -sk -D- -o /dev/null \
-  --resolve panel.example.com:2222:127.0.0.1 \
-  https://panel.example.com:2222/
-```
-
-A healthy unauthenticated panel returns `303 See Other` and
-`location: /login`.
-
-## 8. Verify the installation
+## 8. Verify after installation
 
 ```bash
 cat /opt/hostpanel/VERSION
@@ -204,154 +206,23 @@ sudo /opt/hostpanel/venv/bin/python \
   /opt/hostpanel/app/hostpanel-doctor
 ```
 
-Expected version:
-
-```text
-3.4.0-hardened-r6
-```
-
-Installer log:
+Inspect the root-only installer log:
 
 ```text
 /var/log/hostpanel-install.log
 ```
 
-Install state:
+Reboot and repeat the service and doctor checks. Verify that the configured SSH
+port remains reachable and that firewall rules persist.
 
-```text
-/etc/hostpanel/install-state
-```
+## 9. Production acceptance
 
-## 9. Required post-install work
+Before serving customers:
 
-### Restrict panel access
-
-When port `2222` is open to the internet, restrict it to an administrative IP or
-trusted VPN. Keep provider-console access while changing firewall rules.
-
-```bash
-sudo ufw delete allow 2222/tcp
-sudo ufw allow from YOUR.PUBLIC.IP to any port 2222 proto tcp
-sudo ufw status numbered
-```
-
-Apply equivalent IPv6 policy when public IPv6 is enabled.
-
-### Enable filesystem quotas
-
-When the installer adds quota mount options, reboot first:
-
-```bash
-sudo reboot
-```
-
-After reconnecting:
-
-```bash
-sudo quotacheck -cugm /
-sudo quotaon /
-sudo quotaon -p /
-```
-
-### Replace the self-signed certificate
-
-Install a trusted certificate for the panel hostname and test automatic renewal
-before production exposure.
-
-### Create and test backups
-
-Run **Backups → Back up now** after the first login. Keep production backups on
-separate storage and perform a restore test.
-
-### Configure mail authentication
-
-For each mail domain, generate and publish DKIM, and verify forward DNS, reverse
-DNS, SPF, DKIM, and DMARC. The doctor may warn about DKIM until a real mail
-domain and selector exist.
-
-### Check OpenLiteSpeed when selected
-
-When the doctor reports `lsws` inactive:
-
-```bash
-sudo systemctl status lsws --no-pager --full
-sudo journalctl -u lsws -n 100 --no-pager
-sudo /usr/local/lsws/bin/lswsctrl start
-sudo ss -ltnp | grep -E ':(8088|7080)[[:space:]]'
-```
-
-OpenLiteSpeed should use private backend port `127.0.0.1:8088`; WebAdmin should
-remain local on port `7080`.
-
-## Role examples
-
-Control, web, database, and backup node:
-
-```bash
-sudo env \
-  HP_REPO_REF=2dee7b6326c6158392aa48693634fcabea171ba1 \
-  HP_PANEL_HOST=panel.example.com \
-  bash /root/bootstrap-install.sh \
-    --role control,web,database,backup
-```
-
-Exim mail and DNS node:
-
-```bash
-sudo env \
-  HP_REPO_REF=2dee7b6326c6158392aa48693634fcabea171ba1 \
-  HP_PANEL_HOST=mail.example.com \
-  bash /root/bootstrap-install.sh \
-    --role mail,dns --mta exim
-```
-
-Use the same role list with `--check` before the real run.
-
-## Troubleshooting
-
-### Installer failure
-
-```bash
-sudo tail -n 200 /var/log/hostpanel-install.log
-sudo cat /etc/hostpanel/install-state 2>/dev/null || true
-sudo systemctl status hostpanel --no-pager --full
-sudo journalctl -u hostpanel -n 120 --no-pager
-```
-
-Resume with the same reviewed commit and `--reinstall`. Do not delete
-`/opt/hostpanel`, customer data, or reinstall snapshots as the first recovery
-step.
-
-### Invalid host header
-
-Use the exact configured hostname and port. Do not add `*` to trusted hosts to
-make IP-based access work.
-
-```bash
-grep -E '^(HP_EXTERNAL_URL|HP_TRUSTED_HOSTS)=' \
-  /opt/hostpanel/config.env
-```
-
-### Administrator password unavailable
-
-The original plaintext password cannot be read from the database or logs after
-the first-install output is gone. Reinstall preserves the password hash and does
-not generate a replacement. Use the supported account-recovery path; do not edit
-password hashes manually.
-
-## Security
-
-- Never publish `/opt/hostpanel/config.env`, `/root/.my.cnf`, readiness tokens,
-  private keys, database URLs, or customer data.
-- Keep panel access restricted whenever practical.
-- Keep the bootstrap URL and `HP_REPO_REF` pinned to the same reviewed commit.
-- Run `hostpanel-doctor` after configuration changes and before production use.
-
-Maintained supporting documents:
-
-- [`README.md`](README.md)
-- [`RELEASE-NOTES-v3.4.0-hardened-r6.md`](RELEASE-NOTES-v3.4.0-hardened-r6.md)
-- [`CONFIGURATION.md`](CONFIGURATION.md)
-- [`SECURITY.md`](SECURITY.md)
-- [`FIREWALL.md`](FIREWALL.md)
-- [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md)
+1. install on a disposable systemd VM of the exact target OS;
+2. reboot and verify all selected services;
+3. test panel login, web, database, DNS, mail, backup, and restore paths selected for the node;
+4. confirm quota behavior on the actual customer-data filesystem;
+5. replace self-signed certificates with trusted certificates;
+6. configure reverse DNS, SPF, DKIM, and DMARC for production mail;
+7. retain a tested provider-level recovery path.
