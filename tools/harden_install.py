@@ -13,7 +13,19 @@ if SPEC is None or SPEC.loader is None:
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
+_original_module_replace_once = MODULE.replace_once
 _original_regex_once = MODULE.regex_once
+
+
+def _module_replace_once(text: str, old: str, new: str, label: str) -> str:
+    # The rollback arrays are initialized near startup and cleared after a
+    # successful install. Only the startup occurrence receives additional state.
+    if label == "rollback state":
+        count = text.count(old)
+        if count < 1:
+            raise SystemExit(f"{label}: expected at least one match, found {count}")
+        return text.replace(old, new, 1)
+    return _original_module_replace_once(text, old, new, label)
 
 
 def _replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -39,6 +51,7 @@ def _regex_once(text: str, pattern: str, replacement: str, label: str) -> str:
     return _original_regex_once(text, pattern, replacement, label)
 
 
+MODULE.replace_once = _module_replace_once
 MODULE.regex_once = _regex_once
 
 
