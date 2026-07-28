@@ -96,6 +96,23 @@ if [[ "$REINSTALL" != yes && -f "$PANEL_DIR/config.env" ]]; then''',
         "early administrative source validation",
     )
 
+    # A clean cloud image must receive every command used later by the installer.
+    text = _replace_once(
+        text,
+        '''COMMON_PACKAGES=(openssl rsync acl gnupg sqlite3 needrestart inotify-tools smartmontools prometheus-node-exporter iproute2 git ca-certificates python3 python3-venv python3-pip curl ufw fail2ban unzip sudo nginx)''',
+        '''COMMON_PACKAGES=(openssl rsync acl gnupg sqlite3 needrestart inotify-tools smartmontools prometheus-node-exporter iproute2 git ca-certificates python3 python3-venv python3-pip curl ufw fail2ban unzip sudo nginx openssh-server cron tar gzip util-linux hostname)''',
+        "fresh-host command prerequisites",
+    )
+    text = _replace_once(
+        text,
+        '''    needrestart)            printf 'dnf-utils' ;;
+    inotify-tools)          printf 'inotify-tools' ;;''',
+        '''    needrestart)            printf 'dnf-utils' ;;
+    cron)                   printf 'cronie' ;;
+    inotify-tools)          printf 'inotify-tools' ;;''',
+        "RHEL cron package mapping",
+    )
+
     # The Rspamd Redis password must not inherit a world-readable default mode.
     text = _replace_once(
         text,
