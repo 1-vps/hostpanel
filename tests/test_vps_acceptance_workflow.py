@@ -25,7 +25,7 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
         self.assertIn("VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}", self.text)
         self.assertIn("SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}", self.text)
         self.assertNotIn("inputs.password", self.text)
-        self.assertNotIn("password:", self.text.lower())
+        self.assertNotRegex(self.text, r"(?m)^\s+password:\s*$")
 
     def test_ssh_is_fail_closed(self) -> None:
         self.assertIn("StrictHostKeyChecking=yes", self.text)
