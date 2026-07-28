@@ -78,7 +78,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Validate Ubuntu 26.04 packages and Python 3.14 lock
+      - name: Validate Ubuntu 26.04 signature, packages and Python 3.14 lock
         run: |
           set -euo pipefail
           docker run --rm \
@@ -89,7 +89,7 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update -qq
               apt-get install -y -qq --no-install-recommends \
-                bash git ca-certificates python3 python3-venv python3-pip tar gzip
+                bash git ca-certificates openssl python3 python3-venv python3-pip tar gzip
 
               python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh
               bash -n /tmp/install.generated.sh
@@ -109,7 +109,17 @@ jobs:
 
               archive=$(awk "\$2 ~ /-source\\.tar\\.gz\$/ {print \$2}" SHA256SUMS)
               test -n "$archive"
+              test -s "$archive.sig"
               grep "  $archive$" SHA256SUMS | sha256sum -c -
+              printf "%s\n" \
+                "-----BEGIN PUBLIC KEY-----" \
+                "MCowBQYDK2VwAyEAJonL5vK2NRcFkXvKZUs64ISOs+FfhwL8gQVmFO4C0qk=" \
+                "-----END PUBLIC KEY-----" \
+                >/tmp/hostpanel-release.pub
+              openssl pkeyutl -verify -pubin \
+                -inkey /tmp/hostpanel-release.pub -rawin \
+                -in "$archive" -sigfile "$archive.sig"
+
               mkdir /tmp/release
               tar -xzf "$archive" -C /tmp/release
               release_root=$(find /tmp/release -mindepth 1 -maxdepth 1 -type d -print -quit)
