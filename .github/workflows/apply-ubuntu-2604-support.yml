@@ -1,0 +1,345 @@
+name: Apply Ubuntu 26.04 support
+
+on:
+  push:
+    branches:
+      - agent/ubuntu-26.04-support
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-and-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/ubuntu-26.04-support
+
+      - name: Patch Ubuntu 26.04 support
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def required_replace(text: str, old: str, new: str, label: str, minimum: int = 1) -> str:
+              count = text.count(old)
+              if count < minimum:
+                  raise SystemExit(f"{label}: expected at least {minimum} occurrence(s), found {count}")
+              return text.replace(old, new)
+
+          install = Path("install.sh")
+          text = install.read_text(encoding="utf-8")
+          text = required_replace(
+              text,
+              "# Installs a role-selected HostPanel node on Ubuntu 22.04/24.04, Debian 12/13,",
+              "# Installs a role-selected HostPanel node on Ubuntu 22.04/24.04/26.04, Debian 12/13,",
+              "install.sh header",
+          )
+          text = required_replace(
+              text,
+              '[[ "$ID" == ubuntu && ("$VERSION_ID" == 22.04 || "$VERSION_ID" == 24.04) ]] && SUPPORTED=yes',
+              '[[ "$ID" == ubuntu && ("$VERSION_ID" == 22.04 || "$VERSION_ID" == 24.04 || "$VERSION_ID" == 26.04) ]] && SUPPORTED=yes',
+              "Ubuntu support gate",
+          )
+          text = required_replace(
+              text,
+              "Supported: Ubuntu 22.04/24.04, Debian 12/13, Rocky Linux 9/10 and AlmaLinux 9/10.",
+              "Supported: Ubuntu 22.04/24.04/26.04, Debian 12/13, Rocky Linux 9/10 and AlmaLinux 9/10.",
+              "unsupported OS diagnostic",
+          )
+          text = required_replace(
+              text,
+              '${HP_MULTI_PHP_REPO:-auto}',
+              '$MULTI_PHP_REPO_MODE',
+              "multi-PHP repository references",
+              minimum=3,
+          )
+          text = required_replace(
+              text,
+              '${HP_RSPAMD_REPO:-auto}',
+              '$RSPAMD_REPO_MODE',
+              "Rspamd repository references",
+              minimum=2,
+          )
+          text = required_replace(
+              text,
+              'MAIL_MTA="${HP_MAIL_MTA:-${PREVIOUS_MAIL_MTA:-postfix}}"\n',
+              'MAIL_MTA="${HP_MAIL_MTA:-${PREVIOUS_MAIL_MTA:-postfix}}"\n'
+              'MULTI_PHP_REPO_MODE="${HP_MULTI_PHP_REPO:-auto}"\n'
+              'RSPAMD_REPO_MODE="${HP_RSPAMD_REPO:-auto}"\n',
+              "repository mode initialization",
+          )
+          fallback_anchor = (
+              '[[ ("$ID" == rocky || "$ID" == almalinux) && ("$EL_MAJOR" == 9 || "$EL_MAJOR" == 10) ]] && SUPPORTED=yes\n\n'
+          )
+          fallback_block = fallback_anchor + '''# Ubuntu 26.04 (Resolute) is supported with distribution-native repositories.
+          # The Ondrej PHP PPA currently publishes Jammy/Noble only, and rspamd.com
+          # does not publish a Resolute APT suite. Avoid broken repository metadata
+          # and use Ubuntu's maintained PHP 8.5 and Rspamd packages instead.
+          if [[ "$ID" == ubuntu && "$VERSION_ID" == 26.04 ]]; then
+            if [[ "$MULTI_PHP_REPO_MODE" != off ]]; then
+              warn "Ubuntu 26.04 uses native PHP packages; the Ondrej PHP PPA has no Resolute suite"
+              MULTI_PHP_REPO_MODE=off
+            fi
+            if [[ "$RSPAMD_REPO_MODE" != off ]]; then
+              warn "Ubuntu 26.04 uses Ubuntu's Rspamd package; rspamd.com has no Resolute APT suite"
+              RSPAMD_REPO_MODE=off
+            fi
+          fi
+
+          '''
+          text = required_replace(text, fallback_anchor, fallback_block, "Ubuntu 26.04 repository fallback")
+          success_anchor = '''if [[ "$PKG_FAMILY" == debian && "$ID" == debian && "$VERSION_ID" == 13* ]]; then
+            ok "Debian 13 package names resolved: PostgreSQL contrib is bundled; BIND utilities use current package names"
+          fi
+          '''
+          success_block = success_anchor + '''if [[ "$ID" == ubuntu && "$VERSION_ID" == 26.04 ]]; then
+            ok "Ubuntu 26.04 package policy resolved: native PHP and Rspamd packages selected"
+          fi
+          '''
+          text = required_replace(text, success_anchor, success_block, "Ubuntu 26.04 package policy status")
+          install.write_text(text, encoding="utf-8")
+
+          setup = Path("SETUP.md")
+          setup_text = setup.read_text(encoding="utf-8")
+          setup_text = required_replace(
+              setup_text,
+              "- Ubuntu 22.04 or 24.04, Debian 12 or 13, Rocky Linux 9 or 10, or AlmaLinux 9 or 10",
+              "- Ubuntu 22.04, 24.04, or 26.04, Debian 12 or 13, Rocky Linux 9 or 10, or AlmaLinux 9 or 10",
+              "SETUP requirements",
+          )
+          requirements_anchor = "- a valid panel hostname, for example `panel.example.com`\n"
+          requirements_note = requirements_anchor + '''
+          Ubuntu 26.04 uses the distribution-provided PHP 8.5 and Rspamd packages.
+          The installer deliberately skips the Ondrej PHP PPA and the upstream Rspamd
+          APT repository on this release because neither currently publishes a
+          `resolute` suite. Multi-PHP availability is therefore limited to branches
+          published by Ubuntu unless a separately reviewed repository strategy is added.
+          '''
+          setup_text = required_replace(setup_text, requirements_anchor, requirements_note, "SETUP Ubuntu 26.04 note")
+          setup.write_text(setup_text, encoding="utf-8")
+
+          readme = Path("README.md")
+          readme_text = readme.read_text(encoding="utf-8")
+          readme_text = readme_text.replace("Ubuntu 22.04/24.04", "Ubuntu 22.04/24.04/26.04")
+          readme.write_text(readme_text, encoding="utf-8")
+
+          matrix = Path("test-matrix.sh")
+          matrix_text = matrix.read_text(encoding="utf-8")
+          replacements = [
+              ("Ubuntu 22.04/24.04, Debian", "Ubuntu 22.04/24.04/26.04, Debian"),
+              ("ubuntu-22.04, ubuntu-24.04, debian-12", "ubuntu-22.04, ubuntu-24.04, ubuntu-26.04, debian-12"),
+              ('  [ubuntu-24.04]="ubuntu:24.04"\n', '  [ubuntu-24.04]="ubuntu:24.04"\n  [ubuntu-26.04]="ubuntu:26.04"\n'),
+              ('  [ubuntu-24.04]="debian"\n', '  [ubuntu-24.04]="debian"\n  [ubuntu-26.04]="debian"\n'),
+              ("| Ubuntu 24.04 | configured | Debian-family, LTS |\n", "| Ubuntu 24.04 | configured | Debian-family, LTS |\n| Ubuntu 26.04 | configured | Debian-family, LTS; native PHP/Rspamd |\n"),
+              ("local os_list=(ubuntu-22.04 ubuntu-24.04 debian-12", "local os_list=(ubuntu-22.04 ubuntu-24.04 ubuntu-26.04 debian-12"),
+          ]
+          for old, new in replacements:
+              matrix_text = required_replace(matrix_text, old, new, f"test-matrix replacement: {old[:40]}")
+          matrix.write_text(matrix_text, encoding="utf-8")
+
+          full_matrix = Path("run-full-test-matrix.sh")
+          full_text = full_matrix.read_text(encoding="utf-8")
+          full_replacements = [
+              ("all 8 supported operating systems", "all 9 supported operating systems"),
+              ("ubuntu-22.04, ubuntu-24.04, debian-12", "ubuntu-22.04, ubuntu-24.04, ubuntu-26.04, debian-12"),
+              ('  [ubuntu-24.04]="ubuntu:24.04"\n', '  [ubuntu-24.04]="ubuntu:24.04"\n  [ubuntu-26.04]="ubuntu:26.04"\n'),
+              ('  [ubuntu-24.04]="debian"\n', '  [ubuntu-24.04]="debian"\n  [ubuntu-26.04]="debian"\n'),
+              ("local os_list=(ubuntu-22.04 ubuntu-24.04 debian-12", "local os_list=(ubuntu-22.04 ubuntu-24.04 ubuntu-26.04 debian-12"),
+              ("os_list=(ubuntu-22.04 debian-12 rocky-9)", "os_list=(ubuntu-26.04 debian-13 rocky-10)"),
+              ("$0 --os ubuntu-22.04 --verbose", "$0 --os ubuntu-26.04 --verbose"),
+          ]
+          for old, new in full_replacements:
+              full_text = required_replace(full_text, old, new, f"run-full matrix replacement: {old[:40]}")
+          full_matrix.write_text(full_text, encoding="utf-8")
+
+          tests = Path("tests")
+          tests.mkdir(exist_ok=True)
+          Path("tests/test_ubuntu_2604_support.py").write_text(r'''#!/usr/bin/env python3
+          import os
+          import pathlib
+          import subprocess
+          import tempfile
+          import unittest
+
+          ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+          class Ubuntu2604InstallerTests(unittest.TestCase):
+              def test_static_support_and_repository_policy(self):
+                  installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+                  self.assertIn('"$VERSION_ID" == 26.04', installer)
+                  self.assertIn("Ubuntu 22.04/24.04/26.04", installer)
+                  self.assertIn("MULTI_PHP_REPO_MODE", installer)
+                  self.assertIn("RSPAMD_REPO_MODE", installer)
+                  self.assertIn("Ondrej PHP PPA has no Resolute suite", installer)
+                  self.assertIn("rspamd.com has no Resolute APT suite", installer)
+
+              def test_setup_and_matrix_are_consistent(self):
+                  setup = (ROOT / "SETUP.md").read_text(encoding="utf-8")
+                  matrix = (ROOT / "test-matrix.sh").read_text(encoding="utf-8")
+                  full_matrix = (ROOT / "run-full-test-matrix.sh").read_text(encoding="utf-8")
+                  self.assertIn("Ubuntu 22.04, 24.04, or 26.04", setup)
+                  self.assertIn("distribution-provided PHP 8.5", setup)
+                  for content in (matrix, full_matrix):
+                      self.assertIn('ubuntu-26.04]="ubuntu:26.04"', content)
+
+              def run_preflight(self, version: str):
+                  with tempfile.TemporaryDirectory() as directory:
+                      release = pathlib.Path(directory) / "os-release"
+                      release.write_text(
+                          f'ID=ubuntu\nVERSION_ID="{version}"\nPRETTY_NAME="Ubuntu {version} LTS"\nVERSION_CODENAME=resolute\n',
+                          encoding="utf-8",
+                      )
+                      env = os.environ.copy()
+                      env.update(
+                          HP_OS_RELEASE_FILE=str(release),
+                          HP_PANEL_HOST="panel.example.test",
+                          HP_ALLOW_EXISTING_STACK="yes",
+                      )
+                      return subprocess.run(
+                          ["bash", str(ROOT / "install.sh"), "--check", "--role", "web"],
+                          cwd=ROOT,
+                          env=env,
+                          text=True,
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT,
+                          check=False,
+                      )
+
+              def test_ubuntu_2604_preflight_passes_with_native_fallback(self):
+                  result = self.run_preflight("26.04")
+                  self.assertEqual(result.returncode, 0, result.stdout)
+                  self.assertIn("Preflight passed", result.stdout)
+                  self.assertIn("native PHP packages", result.stdout)
+                  self.assertIn("Ubuntu's Rspamd package", result.stdout)
+
+              def test_unsupported_interim_release_is_still_rejected(self):
+                  result = self.run_preflight("25.10")
+                  self.assertNotEqual(result.returncode, 0, result.stdout)
+                  self.assertIn("Unsupported OS release", result.stdout)
+
+
+          if __name__ == "__main__":
+              unittest.main()
+          ''', encoding="utf-8")
+          PY
+
+      - name: Run syntax and focused tests
+        id: focused
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          bash -n install.sh
+          bash -n bootstrap-install.sh
+          bash -n test-matrix.sh
+          bash -n run-full-test-matrix.sh
+          python3 -m unittest -v tests.test_ubuntu_2604_support
+          bash test-matrix.sh --check-only
+
+      - name: Run Ubuntu 26.04 container preflight matrix
+        id: matrix
+        continue-on-error: true
+        shell: bash
+        run: |
+          bash test-matrix.sh --os ubuntu-26.04
+
+      - name: Audit Ubuntu 26.04 package candidates
+        id: packages
+        continue-on-error: true
+        shell: bash
+        run: |
+          docker run --rm ubuntu:26.04 bash -ceu '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            required=(
+              openssl rsync acl gnupg sqlite3 inotify-tools iproute2 git ca-certificates
+              python3 python3-venv python3-pip curl ufw fail2ban unzip sudo nginx
+              postgresql postgresql-contrib nodejs npm podman restic bind9-dnsutils
+              apache2 apache2-utils libapache2-mod-fcgid composer certbot
+              python3-certbot-nginx libfcgi-bin libnginx-mod-http-modsecurity
+              modsecurity-crs radicale quota quotatool xfsprogs mariadb-server
+              redis-server bind9 bind9-utils dovecot-core dovecot-imapd
+              dovecot-lmtpd dovecot-sieve dovecot-managesieved opendkim
+              opendkim-tools rspamd clamav clamav-daemon postfix postfix-pcre
+              postsrsd exim4-base exim4-config exim4-daemon-heavy rclone
+              php8.5-fpm php8.5-cli
+            )
+            missing=()
+            for package in "${required[@]}"; do
+              candidate=$(apt-cache policy "$package" | awk "/Candidate:/ {print \$2; exit}")
+              [[ -n "$candidate" && "$candidate" != "(none)" ]] || missing+=("$package")
+            done
+            if ((${#missing[@]})); then
+              printf "Missing required Ubuntu 26.04 candidates: %s\n" "${missing[*]}" >&2
+              exit 1
+            fi
+            echo "All audited required Ubuntu 26.04 package candidates are available."
+          '
+
+      - name: Run ShellCheck error audit
+        id: shellcheck
+        continue-on-error: true
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -S error install.sh bootstrap-install.sh test-matrix.sh run-full-test-matrix.sh
+
+      - name: Write Ubuntu 26.04 audit report
+        shell: bash
+        env:
+          FOCUSED_RESULT: ${{ steps.focused.outcome }}
+          MATRIX_RESULT: ${{ steps.matrix.outcome }}
+          PACKAGES_RESULT: ${{ steps.packages.outcome }}
+          SHELLCHECK_RESULT: ${{ steps.shellcheck.outcome }}
+        run: |
+          cat > AUDIT-UBUNTU-26.04.md <<EOF
+          # Ubuntu 26.04 installer setup audit
+
+          **Audit date:** $(date -u +%Y-%m-%d)  
+          **Target:** Ubuntu 26.04 LTS (Resolute Raccoon)  
+          **Scope:** \\`install.sh\\`, maintained setup documentation, and installer test matrices
+
+          ## Changes
+
+          - Added Ubuntu 26.04 to the explicit supported-release gate and diagnostics.
+          - Added Ubuntu 26.04 Docker images to both installer test matrices.
+          - Added focused regression tests for supported and rejected Ubuntu releases.
+          - Updated \\`SETUP.md\\` with the Ubuntu 26.04 repository policy.
+          - On Ubuntu 26.04, auto-configured external PHP and Rspamd repositories are disabled and distribution packages are used.
+
+          ## Repository compatibility findings
+
+          1. The Ondrej PHP PPA does not currently publish a Resolute suite. Ubuntu 26.04 supplies native PHP 8.5 FPM and CLI packages, so the installer uses those packages instead.
+          2. The upstream Rspamd stable APT repository does not currently publish a Resolute suite. Ubuntu 26.04 supplies Rspamd in its archive, so the installer uses the Ubuntu package.
+          3. Multi-PHP availability on Ubuntu 26.04 is limited to PHP branches published by Ubuntu until a separate reviewed repository source supports Resolute.
+          4. The basic Docker matrix validates OS detection, prerequisite provisioning, package-manager detection, FQDN rejection, preflight, and dry-run behavior. It does not boot a complete systemd host or activate every service.
+
+          ## Automated results
+
+          | Check | Result |
+          | --- | --- |
+          | Bash syntax, focused regression tests, and static matrix | $FOCUSED_RESULT |
+          | Ubuntu 26.04 Docker preflight/dry-run matrix | $MATRIX_RESULT |
+          | Ubuntu 26.04 required-package candidate audit | $PACKAGES_RESULT |
+          | ShellCheck error-level audit | $SHELLCHECK_RESULT |
+
+          ## Production validation still required
+
+          Before declaring a release production-ready, run a full installation on a disposable Ubuntu 26.04 VM with systemd, reboot it, run \\`hostpanel-doctor\\`, test all selected roles, and perform a backup/restore test. Container preflight cannot validate service startup, kernel quota behavior, firewall persistence, mail delivery, or DNS delegation end to end.
+          EOF
+
+      - name: Commit audited changes
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-ubuntu-2604-support.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add install.sh README.md SETUP.md test-matrix.sh run-full-test-matrix.sh tests/test_ubuntu_2604_support.py AUDIT-UBUNTU-26.04.md .github/workflows/apply-ubuntu-2604-support.yml
+          git commit -m "Add Ubuntu 26.04 installer support"
+          git push origin HEAD:agent/ubuntu-26.04-support
