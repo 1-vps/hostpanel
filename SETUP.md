@@ -19,12 +19,18 @@ server when possible and keep provider-console access available.
 
 ## Requirements
 
-- Ubuntu 22.04 or 24.04, Debian 12 or 13, Rocky Linux 9 or 10, or AlmaLinux 9 or 10
+- Ubuntu 22.04, 24.04, or 26.04, Debian 12 or 13, Rocky Linux 9 or 10, or AlmaLinux 9 or 10
 - x86-64/AMD64 or ARM64/AArch64
 - at least 2 GB RAM
 - at least 10 GB free on `/`
 - root or passwordless sudo access
 - a valid panel hostname, for example `panel.example.com`
+
+Ubuntu 26.04 uses the distribution-provided PHP 8.5 and Rspamd packages.
+The installer deliberately skips the Ondrej PHP PPA and the upstream Rspamd
+APT repository on this release because neither currently publishes a
+`resolute` suite. Multi-PHP availability is therefore limited to branches
+published by Ubuntu unless a separately reviewed repository strategy is added.
 
 A full installation selects all roles unless `--role` is supplied:
 `control`, `web`, `database`, `mail`, `dns`, `backup`, and `edge`.
