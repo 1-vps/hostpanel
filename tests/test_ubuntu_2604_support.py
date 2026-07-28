@@ -63,7 +63,7 @@ class Ubuntu2604InstallerTests(unittest.TestCase):
         for content in (matrix, full_matrix):
             self.assertIn('ubuntu-26.04]="ubuntu:26.04"', content)
 
-    def run_preflight(self, version: str):
+    def run_preflight(self, version: str, include_admin: bool = True):
         with tempfile.TemporaryDirectory() as directory:
             release = pathlib.Path(directory) / "os-release"
             release.write_text(
@@ -78,6 +78,12 @@ class Ubuntu2604InstallerTests(unittest.TestCase):
                 HP_MULTI_PHP_REPO="off",
                 HP_RSPAMD_REPO="off",
             )
+            env.pop("SSH_CLIENT", None)
+            if include_admin:
+                env["HP_PANEL_ADMIN_CIDR"] = "192.0.2.10/32"
+            else:
+                env.pop("HP_PANEL_ADMIN_CIDR", None)
+                env.pop("HP_ALLOW_PUBLIC_PANEL", None)
             return subprocess.run(
                 ["bash", str(ROOT / "install.sh"), "--check", "--role", "web"],
                 cwd=ROOT,
@@ -92,6 +98,11 @@ class Ubuntu2604InstallerTests(unittest.TestCase):
         result = self.run_preflight("26.04")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("Preflight passed", result.stdout)
+
+    def test_missing_administrative_source_is_rejected_in_preflight(self):
+        result = self.run_preflight("26.04", include_admin=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("HP_PANEL_ADMIN_CIDR", result.stdout)
 
     def test_unsupported_interim_release_is_still_rejected(self):
         result = self.run_preflight("25.10")
