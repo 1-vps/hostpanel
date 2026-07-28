@@ -4,10 +4,10 @@ This checklist applies to `3.4.0-hardened-r6` after the installer pipeline has
 passed. It does not replace validation on a real systemd VM using the target
 kernel, firewall, storage, DNS, and mail environment.
 
-Validated installer integration commit:
+Validated installer and VM-harness commit:
 
 ```text
-4e8393696bae3baa41e4fdb1b57307a2a126488f
+01f171b489bc9971eab4e3ebe7aad58f10255124
 ```
 
 ## Prepare a disposable VM
@@ -23,7 +23,7 @@ selected HostPanel roles.
 ## Install from the pinned commit
 
 ```bash
-REVIEWED_COMMIT_SHA=4e8393696bae3baa41e4fdb1b57307a2a126488f
+REVIEWED_COMMIT_SHA=01f171b489bc9971eab4e3ebe7aad58f10255124
 
 sudo curl -fsSL \
   "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
