@@ -60,8 +60,9 @@ class Ubuntu2604InstallerTests(unittest.TestCase):
         full_matrix = (ROOT / "run-full-test-matrix.sh").read_text(encoding="utf-8")
         self.assertIn("Ubuntu 22.04, 24.04, or 26.04", setup)
         self.assertIn("distribution-provided PHP 8.5", setup)
-        for content in (matrix, full_matrix):
-            self.assertIn('ubuntu-26.04]="ubuntu:26.04"', content)
+        self.assertIn('ubuntu-26.04]="ubuntu:26.04"', matrix)
+        self.assertIn('"$SCRIPT_DIR/test-matrix.sh"', full_matrix)
+        self.assertIn("ubuntu-26.04", full_matrix)
 
     def run_preflight(self, version: str, include_admin: bool = True):
         with tempfile.TemporaryDirectory() as directory:
