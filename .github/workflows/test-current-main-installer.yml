@@ -1,0 +1,92 @@
+name: Test current main installer
+
+on:
+  pull_request:
+    paths:
+      - install.sh
+      - bootstrap-install.sh
+      - test-matrix.sh
+      - run-full-test-matrix.sh
+      - tests/**
+      - .github/workflows/test-current-main-installer.yml
+
+permissions:
+  contents: read
+
+jobs:
+  behavior:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Bash syntax
+        run: |
+          set -euo pipefail
+          bash -n install.sh
+          bash -n bootstrap-install.sh
+          bash -n test-matrix.sh
+          bash -n run-full-test-matrix.sh
+
+      - name: Existing test suite
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Existing static matrix
+        run: ./test-matrix.sh --check-only
+
+      - name: Ubuntu 26.04 preflight and dry-run
+        run: |
+          set -euo pipefail
+          cat >/tmp/hostpanel-os-release <<'EOF'
+          ID=ubuntu
+          VERSION_ID="26.04"
+          PRETTY_NAME="Ubuntu 26.04 LTS"
+          VERSION_CODENAME=resolute
+          EOF
+          export HP_OS_RELEASE_FILE=/tmp/hostpanel-os-release
+          export HP_PANEL_HOST=panel.example.test
+          export HP_ALLOW_EXISTING_STACK=yes
+          export HP_MULTI_PHP_REPO=off
+          export HP_RSPAMD_REPO=off
+          bash install.sh --check --role web
+          bash install.sh --dry-run --role web
+
+  security-regressions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Critical installer invariants
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          text = Path('install.sh').read_text(encoding='utf-8')
+          required = {
+              'root-only installer snapshots': 'INSTALL_SNAPSHOT_DIR="/var/backups/hostpanel-install"',
+              'custom SSH port detection': 'sshd -T',
+              'timed firewall rollback': 'systemd-run --quiet',
+              'Redis default ACL disabled': 'user default off',
+              'admin password from stdin': 'password = sys.stdin.read()',
+              'fatal final doctor': 'Post-install health check failed',
+          }
+          missing = [name for name, marker in required.items() if marker not in text]
+          forbidden = {
+              'mutable LiteSpeed root script': 'bash "$LITESPEED_REPO_SCRIPT"',
+              'admin password embedded in argv': "store.init('admin', '$ADMIN_PASS')",
+          }
+          present = [name for name, marker in forbidden.items() if marker in text]
+          if missing or present:
+              if missing:
+                  print('Missing hardened invariants:')
+                  for item in missing:
+                      print(f'  - {item}')
+              if present:
+                  print('Known dangerous patterns still present:')
+                  for item in present:
+                      print(f'  - {item}')
+              raise SystemExit(1)
+          PY
