@@ -4,6 +4,7 @@ HostPanel is a multi-tenant Linux hosting control panel for web, DNS, mail,
 databases, backups, certificates, firewall policy, monitoring, and infrastructure
 operations.
 
+**Current working release:** `3.4.0-hardened-r6`  
 **Signed base release:** `3.4.0-hardened-r5`  
 **Validated installer overlay:** `65d7f54b4c08edef65b2c13389b0a036c6a56b5b`  
 **License:** MIT
@@ -19,9 +20,10 @@ Do not execute an unpinned `main` branch script as root.
 
 The bootstrap has two independent verification layers:
 
-1. an embedded long-lived release public key verifies the signed source archive;
-2. the operator-supplied full Git commit SHA authenticates the small installer
-   overlay (`install.sh`, `install.base.sh`, and the deterministic hardener).
+1. an embedded long-lived release public key verifies the signed
+   `3.4.0-hardened-r5` source archive;
+2. the operator-supplied full Git commit SHA authenticates the installer overlay
+   that derives and installs `3.4.0-hardened-r6`.
 
 Every overlay file is checked against its Git object before use. The preserved
 base installer is also checked by its expected Git blob ID before the generated
@@ -118,6 +120,12 @@ sudo nginx -t
 sudo systemctl status hostpanel nginx --no-pager --full
 sudo /opt/hostpanel/venv/bin/python \
   /opt/hostpanel/app/hostpanel-doctor
+```
+
+Expected installed version:
+
+```text
+3.4.0-hardened-r6
 ```
 
 Installer log:
