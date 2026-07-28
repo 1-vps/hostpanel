@@ -1,0 +1,131 @@
+name: Installer hardening
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-hardening-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  deterministic-and-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Generate the exact hardened installer
+        run: |
+          set -euo pipefail
+          python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh
+          bash -n install.sh
+          bash -n bootstrap-install.sh
+          bash -n test-matrix.sh
+          bash -n run-full-test-matrix.sh
+          bash -n /tmp/install.generated.sh
+
+      - name: Run all installer regressions
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Run matrix static checks
+        run: ./test-matrix.sh --check-only
+
+      - name: ShellCheck executable shell paths
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh
+          shellcheck -S error install.sh bootstrap-install.sh test-matrix.sh run-full-test-matrix.sh /tmp/install.generated.sh
+
+  supported-os-preflight:
+    runs-on: ubuntu-latest
+    needs: deterministic-and-static
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - ubuntu-26.04
+          - debian-12
+          - debian-13
+          - rocky-9
+          - rocky-10
+          - almalinux-9
+          - almalinux-10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate complete installer bundle on ${{ matrix.os }}
+        run: ./test-matrix.sh --os '${{ matrix.os }}'
+
+  ubuntu-2604-runtime-lock:
+    runs-on: ubuntu-latest
+    needs: deterministic-and-static
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate Ubuntu 26.04 signature, packages and Python 3.14 lock
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD:/repo" \
+            -w /repo \
+            ubuntu:26.04 \
+            bash -ceu '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends \
+                bash git ca-certificates openssl python3 python3-venv python3-pip tar gzip
+
+              python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh
+              bash -n /tmp/install.generated.sh
+              HP_PANEL_HOST=panel.example.test \
+              HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
+              HP_ALLOW_EXISTING_STACK=yes \
+              HP_MULTI_PHP_REPO=off \
+              HP_RSPAMD_REPO=off \
+                bash install.sh --check --role web
+
+              for package in python3-venv php8.5-fpm php8.5-cli rspamd postgresql; do
+                candidate=$(apt-cache policy "$package" | awk "/Candidate:/ {print \$2; exit}")
+                test -n "$candidate" && test "$candidate" != "(none)"
+              done
+              contrib=$(apt-cache policy postgresql-contrib | awk "/Candidate:/ {print \$2; exit}")
+              test -z "$contrib" || test "$contrib" = "(none)"
+
+              archive=$(awk "\$2 ~ /-source\\.tar\\.gz\$/ {print \$2}" SHA256SUMS)
+              test -n "$archive"
+              test -s "$archive.sig"
+              grep "  $archive$" SHA256SUMS | sha256sum -c -
+              printf "%s\n" \
+                "-----BEGIN PUBLIC KEY-----" \
+                "MCowBQYDK2VwAyEAJonL5vK2NRcFkXvKZUs64ISOs+FfhwL8gQVmFO4C0qk=" \
+                "-----END PUBLIC KEY-----" \
+                >/tmp/hostpanel-release.pub
+              openssl pkeyutl -verify -pubin \
+                -inkey /tmp/hostpanel-release.pub -rawin \
+                -in "$archive" -sigfile "$archive.sig"
+
+              mkdir /tmp/release
+              tar -xzf "$archive" -C /tmp/release
+              release_root=$(find /tmp/release -mindepth 1 -maxdepth 1 -type d -print -quit)
+              test -s "$release_root/requirements.lock"
+              python3 -m venv /tmp/hostpanel-lock-test
+              /tmp/hostpanel-lock-test/bin/pip install --quiet --upgrade "pip==25.1.1"
+              /tmp/hostpanel-lock-test/bin/pip install --quiet --require-hashes \
+                -r "$release_root/requirements.lock"
+            '
