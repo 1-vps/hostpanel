@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Fetch a reviewed HostPanel commit, verify its embedded signed source archive,
-# and run that commit's current installer from the complete extracted source tree.
+# Fetch a reviewed HostPanel commit, verify the signed source archive with the
+# embedded release trust root, verify every executable overlay against the full
+# Git object ID, and run the hardened installer from the complete source tree.
 set -euo pipefail
 
 REPO="${HP_REPO:-https://github.com/1-vps/hostpanel.git}"
@@ -8,13 +9,21 @@ REF="${HP_REPO_REF:-}"
 WORK_DIR=""
 PG_URL_FILE=""
 
+# Long-lived release verification key. The adjacent key file in a fetched
+# commit is deliberately not trusted to verify the archive from that commit.
+read -r -d '' TRUSTED_RELEASE_PUBLIC_KEY <<'EOF' || true
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAJonL5vK2NRcFkXvKZUs64ISOs+FfhwL8gQVmFO4C0qk=
+-----END PUBLIC KEY-----
+EOF
+
 say(){ printf '\n==> %s\n' "$*"; }
 die(){ printf '\nError: %s\n' "$*" >&2; exit 1; }
 cleanup(){
   [[ -z "$PG_URL_FILE" ]] || rm -f -- "$PG_URL_FILE"
   [[ -z "$WORK_DIR" ]] || rm -rf -- "$WORK_DIR"
 }
-trap cleanup EXIT
+trap cleanup EXIT HUP INT TERM
 
 postgres_diagnostics(){
   printf '\n--- PostgreSQL diagnostics ---\n' >&2
@@ -80,9 +89,7 @@ with psycopg.connect("dbname=postgres", autocommit=True) as connection:
     with connection.cursor() as cursor:
         cursor.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (role_name,))
         if cursor.fetchone() is None:
-            cursor.execute(
-                sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(role_name))
-            )
+            cursor.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(role_name)))
         cursor.execute(
             sql.SQL("ALTER ROLE {} WITH LOGIN PASSWORD {}").format(
                 sql.Identifier(role_name), sql.Literal(password)
@@ -110,7 +117,7 @@ if identity != (role_name, database_name):
     raise SystemExit("the repaired PostgreSQL credential resolved to an unexpected identity")
 print("repaired")
 PYPGREPAIR
-)"; then
+  )"; then
     rc=0
   else
     rc=$?
@@ -122,9 +129,7 @@ PYPGREPAIR
     postgres_diagnostics
     die "Could not reconcile the preserved local PostgreSQL control plane"
   fi
-  if [[ "$result" == repaired ]]; then
-    printf '  ok preserved local PostgreSQL role, database and password reconciled\n'
-  fi
+  [[ "$result" != repaired ]] || printf '  ok preserved local PostgreSQL role, database and password reconciled\n'
 }
 
 [[ "$REPO" =~ ^https://[^[:space:]]+$ ]] \
@@ -132,7 +137,7 @@ PYPGREPAIR
 [[ "$REF" =~ ^[0-9a-fA-F]{40}$ ]] \
   || die "Set HP_REPO_REF to the reviewed full 40-character Git commit SHA"
 
-for command in git sha256sum openssl python3 mktemp; do
+for command in git sha256sum openssl python3 mktemp tar; do
   command -v "$command" >/dev/null 2>&1 \
     || die "$command is required before running the bootstrap"
 done
@@ -142,7 +147,10 @@ WORK_DIR="$(mktemp -d /tmp/hostpanel-bootstrap.XXXXXX)" \
 chmod 700 "$WORK_DIR"
 CHECKOUT="$WORK_DIR/repository"
 EXTRACT_ROOT="$WORK_DIR/release"
+PUBLIC_KEY="$WORK_DIR/trusted-release.pub"
 mkdir -p "$CHECKOUT" "$EXTRACT_ROOT"
+printf '%s\n' "$TRUSTED_RELEASE_PUBLIC_KEY" >"$PUBLIC_KEY"
+chmod 600 "$PUBLIC_KEY"
 
 say "Fetching reviewed HostPanel commit $REF"
 git -C "$CHECKOUT" init -q \
@@ -159,14 +167,9 @@ git -C "$CHECKOUT" checkout -q --detach "$FETCHED_COMMIT" \
   || die "Could not check out reviewed commit $REF"
 
 CHECKSUMS="$CHECKOUT/SHA256SUMS"
-[[ -s "$CHECKSUMS" ]] \
-  || die "Reviewed commit is missing SHA256SUMS"
+[[ -s "$CHECKSUMS" ]] || die "Reviewed commit is missing SHA256SUMS"
 mapfile -t SOURCE_ARCHIVES < <(
-  awk '
-    $2 ~ /^hostpanel-v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z][0-9A-Za-z.-]*)?-source\.tar\.gz$/ {
-      print $2
-    }
-  ' "$CHECKSUMS"
+  awk '$2 ~ /^hostpanel-v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z][0-9A-Za-z.-]*)?-source\.tar\.gz$/ {print $2}' "$CHECKSUMS"
 )
 ((${#SOURCE_ARCHIVES[@]} == 1)) \
   || die "SHA256SUMS must identify exactly one HostPanel source tarball"
@@ -178,18 +181,13 @@ ARCHIVE_RELEASE_ID="${ARCHIVE_RELEASE_ID%-source.tar.gz}"
 
 ARCHIVE="$CHECKOUT/$ARCHIVE_NAME"
 SIGNATURE="$ARCHIVE.sig"
-PUBLIC_KEY="$CHECKOUT/hostpanel-v${ARCHIVE_RELEASE_ID}-release.pub"
-[[ -s "$ARCHIVE" && -s "$SIGNATURE" && -s "$PUBLIC_KEY" ]] \
-  || die "Reviewed commit lacks the complete signed source-release files"
+[[ -s "$ARCHIVE" && -s "$SIGNATURE" ]] \
+  || die "Reviewed commit lacks the signed source-release files"
 
-say "Verifying source archive checksum and signature"
-CHECKSUM_LINE="$(awk -v name="$ARCHIVE_NAME" '
-  $2 == name {line=$0; count++}
-  END {if (count != 1) exit 1; print line}
-' "$CHECKSUMS")" \
+say "Verifying source archive checksum and anchored signature"
+CHECKSUM_LINE="$(awk -v name="$ARCHIVE_NAME" '$2 == name {line=$0; count++} END {if (count != 1) exit 1; print line}' "$CHECKSUMS")" \
   || die "SHA256SUMS must contain exactly one entry for $ARCHIVE_NAME"
-printf '%s\n' "$CHECKSUM_LINE" \
-  | (cd "$CHECKOUT" && sha256sum -c -) \
+printf '%s\n' "$CHECKSUM_LINE" | (cd "$CHECKOUT" && sha256sum -c -) \
   || die "Source archive checksum verification failed"
 openssl pkeyutl -verify -pubin -inkey "$PUBLIC_KEY" -rawin \
   -in "$ARCHIVE" -sigfile "$SIGNATURE" >/dev/null \
@@ -204,18 +202,26 @@ import tarfile
 
 archive = pathlib.Path(sys.argv[1])
 destination = pathlib.Path(sys.argv[2])
+max_members = 50000
+max_total_size = 2 * 1024 * 1024 * 1024
 with tarfile.open(archive, "r:gz") as handle:
     members = handle.getmembers()
+    if len(members) > max_members:
+        raise SystemExit("source archive contains too many members")
+    total_size = 0
     for member in members:
         path = pathlib.PurePosixPath(member.name)
         if path.is_absolute() or ".." in path.parts:
             raise SystemExit(f"unsafe archive path: {member.name}")
         if member.issym() or member.islnk() or member.isdev() or member.isfifo():
             raise SystemExit(f"unsupported archive member: {member.name}")
-    extract_options = {}
+        total_size += max(member.size, 0)
+        if total_size > max_total_size:
+            raise SystemExit("source archive expands beyond the safety limit")
+    options = {}
     if "filter" in inspect.signature(handle.extractall).parameters:
-        extract_options["filter"] = "fully_trusted"
-    handle.extractall(destination, members=members, **extract_options)
+        options["filter"] = "fully_trusted"
+    handle.extractall(destination, members=members, **options)
 PYARCHIVE
 
 mapfile -t RELEASE_ROOTS < <(find "$EXTRACT_ROOT" -mindepth 1 -maxdepth 1 -type d -print)
@@ -225,46 +231,61 @@ SOURCE_ROOT="${RELEASE_ROOTS[0]}"
 EXPECTED_ROOT_NAME="${ARCHIVE_NAME%-source.tar.gz}"
 [[ "${SOURCE_ROOT##*/}" == "$EXPECTED_ROOT_NAME" ]] \
   || die "Source archive top-level directory does not match its signed filename"
-[[ -d "$SOURCE_ROOT/app" ]] \
-  || die "Verified source archive is missing app/"
-[[ -s "$SOURCE_ROOT/VERSION" ]] \
-  || die "Verified source archive is missing VERSION"
-[[ -s "$SOURCE_ROOT/requirements.lock" ]] \
-  || die "Verified source archive is missing requirements.lock"
+[[ -d "$SOURCE_ROOT/app" && -s "$SOURCE_ROOT/VERSION" && -s "$SOURCE_ROOT/requirements.lock" ]] \
+  || die "Verified source archive is incomplete"
 SOURCE_VERSION="$(tr -d '[:space:]' <"$SOURCE_ROOT/VERSION")"
 [[ "$SOURCE_VERSION" =~ ^[0-9]+(\.[0-9]+){2}([-+][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] \
   || die "Verified source archive contains an invalid VERSION"
-ARCHIVE_VERSION_CORE="${ARCHIVE_RELEASE_ID%%[-+]*}"
-SOURCE_VERSION_CORE="${SOURCE_VERSION%%[-+]*}"
-[[ "$SOURCE_VERSION_CORE" == "$ARCHIVE_VERSION_CORE" ]] \
+[[ "${SOURCE_VERSION%%[-+]*}" == "${ARCHIVE_RELEASE_ID%%[-+]*}" ]] \
   || die "Verified source archive VERSION is incompatible with its signed filename"
 
-# The signed archive may contain an older installer hotfix level. Preserve its
-# complete application tree while running reviewed hotfixes from the same pinned
-# Git commit.
+verify_commit_file(){
+  local path="$1" expected actual
+  [[ -f "$CHECKOUT/$path" && ! -L "$CHECKOUT/$path" ]] \
+    || die "Reviewed commit contains an unsafe overlay path: $path"
+  expected="$(git -C "$CHECKOUT" rev-parse "$FETCHED_COMMIT:$path" 2>/dev/null)" \
+    || die "Reviewed commit does not contain $path"
+  actual="$(git -C "$CHECKOUT" hash-object "$CHECKOUT/$path")" \
+    || die "Could not hash reviewed overlay $path"
+  [[ "$actual" == "$expected" ]] \
+    || die "Reviewed overlay does not match its Git object: $path"
+}
+
+say "Verifying and applying commit-addressed installer overlays"
+OVERLAY_FILES=(
+  install.sh
+  install.base.sh
+  tools/harden_install_runtime.py
+  release-hotfixes/install/php9_probe.py
+  release-hotfixes/app/dbcompat.py
+)
+for overlay in "${OVERLAY_FILES[@]}"; do verify_commit_file "$overlay"; done
 install -m 0755 "$CHECKOUT/install.sh" "$SOURCE_ROOT/install.sh"
-INSTALLER_HOTFIX="$CHECKOUT/release-hotfixes/install/php9_probe.py"
-[[ -f "$INSTALLER_HOTFIX" && ! -L "$INSTALLER_HOTFIX" ]] \
-  || die "Reviewed commit is missing the PHP 9 installer probe hotfix"
-[[ -f "$SOURCE_ROOT/install.sh" && ! -L "$SOURCE_ROOT/install.sh" ]] \
-  || die "Verified source release contains an unsafe installer path"
-python3 "$INSTALLER_HOTFIX" "$SOURCE_ROOT/install.sh" \
+install -m 0755 "$CHECKOUT/install.base.sh" "$SOURCE_ROOT/install.base.sh"
+install -d -m 0755 "$SOURCE_ROOT/tools"
+install -m 0755 "$CHECKOUT/tools/harden_install_runtime.py" "$SOURCE_ROOT/tools/harden_install_runtime.py"
+
+# Apply the two reviewed compatibility overlays to the preserved base/app tree.
+python3 "$CHECKOUT/release-hotfixes/install/php9_probe.py" "$SOURCE_ROOT/install.base.sh" \
   || die "Could not apply the reviewed PHP 9 installer probe hotfix"
-bash -n "$SOURCE_ROOT/install.sh" \
-  || die "PHP 9 installer probe produced invalid Bash"
-DBCOMPAT_HOTFIX="$CHECKOUT/release-hotfixes/app/dbcompat.py"
-[[ -f "$DBCOMPAT_HOTFIX" && ! -L "$DBCOMPAT_HOTFIX" ]] \
-  || die "Reviewed commit is missing the PostgreSQL schema-order hotfix"
-[[ -f "$SOURCE_ROOT/app/dbcompat.py" && ! -L "$SOURCE_ROOT/app/dbcompat.py" ]] \
-  || die "Verified source archive contains an unsafe dbcompat.py path"
-python3 - "$DBCOMPAT_HOTFIX" <<'PYHOTFIX'
+python3 - "$CHECKOUT/release-hotfixes/app/dbcompat.py" <<'PYHOTFIX'
 import pathlib
 import sys
-
 path = pathlib.Path(sys.argv[1])
 compile(path.read_text(encoding="utf-8"), str(path), "exec")
 PYHOTFIX
-install -m 0644 "$DBCOMPAT_HOTFIX" "$SOURCE_ROOT/app/dbcompat.py"
+install -m 0644 "$CHECKOUT/release-hotfixes/app/dbcompat.py" "$SOURCE_ROOT/app/dbcompat.py"
+
+# Validate the exact generated root installer before any server mutation.
+GENERATED_CHECK="$WORK_DIR/install.generated.sh"
+python3 "$SOURCE_ROOT/tools/harden_install_runtime.py" \
+  "$SOURCE_ROOT/install.base.sh" "$GENERATED_CHECK" \
+  || die "Could not derive the hardened installer during bootstrap validation"
+bash -n "$SOURCE_ROOT/install.sh" \
+  || die "Hardened installer launcher has invalid Bash syntax"
+bash -n "$GENERATED_CHECK" \
+  || die "Derived hardened installer has invalid Bash syntax"
+rm -f "$GENERATED_CHECK"
 
 REINSTALL_REQUESTED=no
 for argument in "$@"; do
@@ -275,7 +296,7 @@ if [[ "$REINSTALL_REQUESTED" == yes ]]; then
   repair_preserved_local_postgres
 fi
 
-say "Starting HostPanel installer from the complete verified source tree"
+say "Starting the verified hardened HostPanel installer"
 set +e
 bash "$SOURCE_ROOT/install.sh" "$@"
 status=$?
