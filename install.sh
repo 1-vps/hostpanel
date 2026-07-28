@@ -8,7 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 BASE_INSTALLER="$SCRIPT_DIR/install.base.sh"
-HARDENER="$SCRIPT_DIR/tools/harden_install_runtime.py"
+HARDENER="$SCRIPT_DIR/tools/harden_install.py"
 EXPECTED_BASE_BLOB="17424f62d177706a096d1f600e5a702c9ce99498"
 GENERATED_INSTALLER=""
 
@@ -24,6 +24,8 @@ command -v python3 >/dev/null 2>&1 || die "python3 is required to derive the har
 [[ -f "$BASE_INSTALLER" && ! -L "$BASE_INSTALLER" ]] \
   || die "install.base.sh is missing or unsafe; use the pinned bootstrap from the complete reviewed source"
 [[ -f "$HARDENER" && ! -L "$HARDENER" ]] \
+  || die "tools/harden_install.py is missing or unsafe"
+[[ -f "$SCRIPT_DIR/tools/harden_install_runtime.py" && ! -L "$SCRIPT_DIR/tools/harden_install_runtime.py" ]] \
   || die "tools/harden_install_runtime.py is missing or unsafe"
 
 ACTUAL_BASE_BLOB="$(git hash-object "$BASE_INSTALLER")" \
