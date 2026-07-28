@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import sys
 
 MODULE_PATH = pathlib.Path(__file__).with_name("harden_install_runtime.py")
@@ -25,6 +26,17 @@ def _module_replace_once(text: str, old: str, new: str, label: str) -> str:
         if count < 1:
             raise SystemExit(f"{label}: expected at least one match, found {count}")
         return text.replace(old, new, 1)
+    # Earlier module-recording edits can change whitespace around this block.
+    # Match the two stable boundary statements and require exactly one block.
+    if label == "validate loaded PHP baseline":
+        pattern = re.compile(
+            r'''printf '%s\\n' "\$\{PHP_INSTALLED\[@\]\}" >/etc/hostpanel/php-versions\n'''
+            r'''\s*ok "PHP-FPM installed: \$\{PHP_INSTALLED\[\*\]\}"'''
+        )
+        updated, count = pattern.subn(lambda _: new, text, count=1)
+        if count != 1:
+            raise SystemExit(f"{label}: expected exactly one structural match, found {count}")
+        return updated
     return _original_module_replace_once(text, old, new, label)
 
 
@@ -79,11 +91,11 @@ def compatibility_hardening(text: str) -> str:
     # before package or firewall mutation begins.
     text = _replace_once(
         text,
-        '''[[ "$PREFLIGHT_HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$ ]] \\
+        r'''[[ "$PREFLIGHT_HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$ ]] \
   || die "Configure a valid FQDN or set HP_PANEL_HOST before installation"
 
 if [[ "$REINSTALL" != yes && -f "$PANEL_DIR/config.env" ]]; then''',
-        '''[[ "$PREFLIGHT_HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$ ]] \\
+        r'''[[ "$PREFLIGHT_HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$ ]] \
   || die "Configure a valid FQDN or set HP_PANEL_HOST before installation"
 PREFLIGHT_ADMIN_SOURCE="${HP_PANEL_ADMIN_CIDR:-}"
 if [[ -z "$PREFLIGHT_ADMIN_SOURCE" && -n "${SSH_CLIENT:-}" ]]; then
@@ -93,7 +105,7 @@ if [[ -z "$PREFLIGHT_ADMIN_SOURCE" && "${HP_ALLOW_PUBLIC_PANEL:-no}" != yes ]]; 
   die "Set HP_PANEL_ADMIN_CIDR, install over SSH, or explicitly set HP_ALLOW_PUBLIC_PANEL=yes"
 fi
 if [[ -n "$PREFLIGHT_ADMIN_SOURCE" ]]; then
-  python3 - "$PREFLIGHT_ADMIN_SOURCE" <<'PYADMIN' \\
+  python3 - "$PREFLIGHT_ADMIN_SOURCE" <<'PYADMIN' \
     || die "HP_PANEL_ADMIN_CIDR or SSH_CLIENT contains an invalid address"
 import ipaddress
 import sys
