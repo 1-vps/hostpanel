@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the deterministic installer hardening transform with marker compatibility."""
+"""Run the deterministic installer hardening transform with compatibility fixes."""
 from __future__ import annotations
 
 import importlib.util
@@ -14,6 +14,13 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 _original_regex_once = MODULE.regex_once
+
+
+def _replace_once(text: str, old: str, new: str, label: str) -> str:
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{label}: expected exactly one match, found {count}")
+    return text.replace(old, new, 1)
 
 
 def _regex_once(text: str, pattern: str, replacement: str, label: str) -> str:
@@ -35,6 +42,76 @@ def _regex_once(text: str, pattern: str, replacement: str, label: str) -> str:
 MODULE.regex_once = _regex_once
 
 
+def compatibility_hardening(text: str) -> str:
+    # Remove newly installed packages before restoring saved configuration;
+    # package removal scripts must not delete files that were just restored.
+    text = _replace_once(
+        text,
+        '''      remove_paths_absent_before_install
+      if [[ -s "$REINSTALL_SNAPSHOT" ]]; then
+        tar -C / -xzf "$REINSTALL_SNAPSHOT" >>"$LOG" 2>&1 || true
+        command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload >>"$LOG" 2>&1 || true
+      fi
+      rollback_new_packages''',
+        '''      rollback_new_packages
+      remove_paths_absent_before_install
+      if [[ -s "$REINSTALL_SNAPSHOT" ]]; then
+        tar -C / -xzf "$REINSTALL_SNAPSHOT" >>"$LOG" 2>&1 || true
+        command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload >>"$LOG" 2>&1 || true
+      fi''',
+        "rollback ordering",
+    )
+
+    # Reject a missing or malformed administrative source during preflight,
+    # before package or firewall mutation begins.
+    text = _replace_once(
+        text,
+        '''[[ "$PREFLIGHT_HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$ ]] \\
+  || die "Configure a valid FQDN or set HP_PANEL_HOST before installation"
+
+if [[ "$REINSTALL" != yes && -f "$PANEL_DIR/config.env" ]]; then''',
+        '''[[ "$PREFLIGHT_HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$ ]] \\
+  || die "Configure a valid FQDN or set HP_PANEL_HOST before installation"
+PREFLIGHT_ADMIN_SOURCE="${HP_PANEL_ADMIN_CIDR:-}"
+if [[ -z "$PREFLIGHT_ADMIN_SOURCE" && -n "${SSH_CLIENT:-}" ]]; then
+  PREFLIGHT_ADMIN_SOURCE="${SSH_CLIENT%% *}"
+fi
+if [[ -z "$PREFLIGHT_ADMIN_SOURCE" && "${HP_ALLOW_PUBLIC_PANEL:-no}" != yes ]]; then
+  die "Set HP_PANEL_ADMIN_CIDR, install over SSH, or explicitly set HP_ALLOW_PUBLIC_PANEL=yes"
+fi
+if [[ -n "$PREFLIGHT_ADMIN_SOURCE" ]]; then
+  python3 - "$PREFLIGHT_ADMIN_SOURCE" <<'PYADMIN' \\
+    || die "HP_PANEL_ADMIN_CIDR or SSH_CLIENT contains an invalid address"
+import ipaddress
+import sys
+raw = sys.argv[1]
+value = ipaddress.ip_network(raw, strict=False) if "/" in raw else ipaddress.ip_address(raw)
+address = value.network_address if hasattr(value, "network_address") else value
+if getattr(address, "scope_id", None):
+    raise SystemExit("scoped IPv6 is unsupported")
+PYADMIN
+fi
+
+if [[ "$REINSTALL" != yes && -f "$PANEL_DIR/config.env" ]]; then''',
+        "early administrative source validation",
+    )
+
+    # The Rspamd Redis password must not inherit a world-readable default mode.
+    text = _replace_once(
+        text,
+        '''if id _rspamd >/dev/null 2>&1; then chown -R _rspamd:_rspamd /etc/rspamd/local.d; elif id rspamd >/dev/null 2>&1; then chown -R rspamd:rspamd /etc/rspamd/local.d; fi
+
+systemctl enable --now "$(svc redis)"''',
+        '''if id _rspamd >/dev/null 2>&1; then chown -R _rspamd:_rspamd /etc/rspamd/local.d; elif id rspamd >/dev/null 2>&1; then chown -R rspamd:rspamd /etc/rspamd/local.d; fi
+find /etc/rspamd/local.d -type d -exec chmod 750 {} +
+find /etc/rspamd/local.d -type f -exec chmod 640 {} +
+
+systemctl enable --now "$(svc redis)"''',
+        "Rspamd secret permissions",
+    )
+    return text
+
+
 def main() -> None:
     if len(sys.argv) != 3:
         raise SystemExit("usage: harden_install.py SOURCE DESTINATION")
@@ -43,6 +120,7 @@ def main() -> None:
     if not source.is_file() or source.is_symlink():
         raise SystemExit(f"unsafe installer base: {source}")
     transformed = MODULE.harden(source.read_text(encoding="utf-8"))
+    transformed = compatibility_hardening(transformed)
     destination.write_text(transformed, encoding="utf-8")
     destination.chmod(0o700)
 
