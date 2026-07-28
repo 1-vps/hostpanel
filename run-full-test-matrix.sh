@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
 # HostPanel Installation Test Suite - Multi-OS Matrix Testing
-# Tests install.sh across all 8 supported operating systems
+# Tests install.sh across all 9 supported operating systems
 #
 # Usage:
 #   ./run-full-test-matrix.sh [--quick] [--os OS_NAME] [--verbose]
 #
-# Supported OSes: ubuntu-22.04, ubuntu-24.04, debian-12, debian-13,
+# Supported OSes: ubuntu-22.04, ubuntu-24.04, ubuntu-26.04, debian-12, debian-13,
 #                 rocky-9, rocky-10, almalinux-9, almalinux-10
 
 set -euo pipefail
@@ -24,6 +24,7 @@ RESULTS_FILE="${TEST_LOG_DIR}/test-results.json"
 declare -A OS_IMAGES=(
   [ubuntu-22.04]="ubuntu:22.04"
   [ubuntu-24.04]="ubuntu:24.04"
+  [ubuntu-26.04]="ubuntu:26.04"
   [debian-12]="debian:12"
   [debian-13]="debian:13"
   [rocky-9]="rockylinux:9"
@@ -35,6 +36,7 @@ declare -A OS_IMAGES=(
 declare -A PKG_MANAGERS=(
   [ubuntu-22.04]="debian"
   [ubuntu-24.04]="debian"
+  [ubuntu-26.04]="debian"
   [debian-12]="debian"
   [debian-13]="debian"
   [rocky-9]="rhel"
@@ -534,7 +536,7 @@ main() {
   log_info ""
   log_info "PHASE 2: Multi-OS Container Testing"
   
-  local os_list=(ubuntu-22.04 ubuntu-24.04 debian-12 debian-13 rocky-9 almalinux-9)
+  local os_list=(ubuntu-22.04 ubuntu-24.04 ubuntu-26.04 debian-12 debian-13 rocky-9 almalinux-9)
   
   if [[ -n "$TARGET_OS" ]]; then
     [[ -v OS_IMAGES[$TARGET_OS] ]] || die "Unknown OS: $TARGET_OS"
@@ -543,7 +545,7 @@ main() {
   
   if [[ $QUICK_MODE -eq 1 ]]; then
     log_info "Quick mode: testing subset of OSes"
-    os_list=(ubuntu-22.04 debian-12 rocky-9)
+    os_list=(ubuntu-26.04 debian-13 rocky-10)
   fi
   
   for os_name in "${os_list[@]}"; do
@@ -586,12 +588,12 @@ Options:
   --help        Show this help
 
 Supported OS names:
-  ubuntu-22.04, ubuntu-24.04, debian-12, debian-13
+  ubuntu-22.04, ubuntu-24.04, ubuntu-26.04, debian-12, debian-13
   rocky-9, rocky-10, almalinux-9, almalinux-10
 
 Examples:
   $0 --quick
-  $0 --os ubuntu-22.04 --verbose
+  $0 --os ubuntu-26.04 --verbose
   $0
 EOF
       exit 0 ;;

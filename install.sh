@@ -3,7 +3,7 @@
 # HostPanel — local, reviewable installer
 # Run from an extracted, signature-verified source release.
 #
-# Installs a role-selected HostPanel node on Ubuntu 22.04/24.04, Debian 12/13,
+# Installs a role-selected HostPanel node on Ubuntu 22.04/24.04/26.04, Debian 12/13,
 # Rocky Linux 9/10, or AlmaLinux 9/10.
 # Run with --check or --dry-run before changing a server.
 #
@@ -29,6 +29,8 @@ if [[ -r /etc/hostpanel/mail-mta ]]; then
 fi
 [[ "$PREVIOUS_MAIL_MTA" =~ ^(postfix|exim)$ ]] || PREVIOUS_MAIL_MTA=""
 MAIL_MTA="${HP_MAIL_MTA:-${PREVIOUS_MAIL_MTA:-postfix}}"
+MULTI_PHP_REPO_MODE="${HP_MULTI_PHP_REPO:-auto}"
+RSPAMD_REPO_MODE="${HP_RSPAMD_REPO:-auto}"
 
 INSTALL_STARTED=no
 INSTALL_COMPLETED=no
@@ -261,9 +263,24 @@ OS_RELEASE_FILE="${HP_OS_RELEASE_FILE:-/etc/os-release}"
 ID="${ID,,}"
 EL_MAJOR="${VERSION_ID%%.*}"
 SUPPORTED=no
-[[ "$ID" == ubuntu && ("$VERSION_ID" == 22.04 || "$VERSION_ID" == 24.04) ]] && SUPPORTED=yes
+[[ "$ID" == ubuntu && ("$VERSION_ID" == 22.04 || "$VERSION_ID" == 24.04 || "$VERSION_ID" == 26.04) ]] && SUPPORTED=yes
 [[ "$ID" == debian && ("$VERSION_ID" == 12 || "$VERSION_ID" == 13) ]] && SUPPORTED=yes
 [[ ("$ID" == rocky || "$ID" == almalinux) && ("$EL_MAJOR" == 9 || "$EL_MAJOR" == 10) ]] && SUPPORTED=yes
+
+# Ubuntu 26.04 (Resolute) is supported with distribution-native repositories.
+# The Ondrej PHP PPA currently publishes Jammy/Noble only, and rspamd.com
+# does not publish a Resolute APT suite. Avoid broken repository metadata
+# and use Ubuntu's maintained PHP 8.5 and Rspamd packages instead.
+if [[ "$ID" == ubuntu && "$VERSION_ID" == 26.04 ]]; then
+  if [[ "$MULTI_PHP_REPO_MODE" != off ]]; then
+    warn "Ubuntu 26.04 uses native PHP packages; the Ondrej PHP PPA has no Resolute suite"
+    MULTI_PHP_REPO_MODE=off
+  fi
+  if [[ "$RSPAMD_REPO_MODE" != off ]]; then
+    warn "Ubuntu 26.04 uses Ubuntu's Rspamd package; rspamd.com has no Resolute APT suite"
+    RSPAMD_REPO_MODE=off
+  fi
+fi
 
 case " $ID ${ID_LIKE:-} " in
   *" rhel "*|*" fedora "*|*" centos "*|*" rocky "*|*" almalinux "*) PKG_FAMILY=rhel ;;
@@ -272,7 +289,7 @@ esac
 [[ "$ID" == rocky || "$ID" == almalinux ]] && PKG_FAMILY=rhel
 
 if [[ "$SUPPORTED" != yes && "${HP_ALLOW_UNTESTED_OS:-no}" != yes ]]; then
-  die "Unsupported OS release: ${PRETTY_NAME:-$ID $VERSION_ID}. Supported: Ubuntu 22.04/24.04, Debian 12/13, Rocky Linux 9/10 and AlmaLinux 9/10."
+  die "Unsupported OS release: ${PRETTY_NAME:-$ID $VERSION_ID}. Supported: Ubuntu 22.04/24.04/26.04, Debian 12/13, Rocky Linux 9/10 and AlmaLinux 9/10."
 fi
 case "$(command -v dpkg >/dev/null 2>&1 && dpkg --print-architecture 2>/dev/null || uname -m)" in
   amd64|arm64|x86_64|aarch64) ;;
@@ -579,7 +596,7 @@ fi
 pkg_refresh || die "Could not refresh package-manager metadata; review $LOG"
 if [[ "$PKG_FAMILY" == debian ]]; then
   BOOTSTRAP_PACKAGES=(ca-certificates curl gnupg)
-  if [[ "$ID" == ubuntu ]] && has_role web && [[ "${HP_MULTI_PHP_REPO:-auto}" != off ]]; then
+  if [[ "$ID" == ubuntu ]] && has_role web && [[ "$MULTI_PHP_REPO_MODE" != off ]]; then
     BOOTSTRAP_PACKAGES+=(software-properties-common)
   fi
   OPTIONAL_BOOTSTRAP_PACKAGES=(lsb-release)
@@ -604,14 +621,14 @@ if [[ "$PKG_FAMILY" == rhel ]]; then
     || die "dnf config-manager is unavailable after installing dnf-plugins-core"
 fi
 if [[ "$PKG_FAMILY" == debian && "$ID" == ubuntu ]] && has_role web \
-   && [[ "${HP_MULTI_PHP_REPO:-auto}" != off ]]; then
+   && [[ "$MULTI_PHP_REPO_MODE" != off ]]; then
   command -v add-apt-repository >/dev/null 2>&1 \
     || die "add-apt-repository is unavailable after installing software-properties-common"
 fi
 DIST_CODENAME="${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}"
 if [[ "$PKG_FAMILY" == debian ]] \
-   && { { has_role mail && [[ "${HP_RSPAMD_REPO:-auto}" != off ]]; } \
-        || { has_role web && [[ "${HP_MULTI_PHP_REPO:-auto}" != off ]]; }; } \
+   && { { has_role mail && [[ "$RSPAMD_REPO_MODE" != off ]]; } \
+        || { has_role web && [[ "$MULTI_PHP_REPO_MODE" != off ]]; }; } \
    && [[ -z "$DIST_CODENAME" ]]; then
   die "Distribution codename is missing from $OS_RELEASE_FILE; set VERSION_CODENAME there or disable external repositories"
 fi
@@ -754,7 +771,7 @@ if [[ "$PKG_FAMILY" == rhel ]]; then
   say "Enabling CRB, EPEL and Remi"
   dnf -y -q config-manager --set-enabled crb >>"$LOG" 2>&1     || dnf -y -q config-manager --set-enabled powertools >>"$LOG" 2>&1     || die "Could not enable the CRB repository"
   pkg_install epel-release || die "Could not enable EPEL"
-  if has_role web && [[ "${HP_MULTI_PHP_REPO:-auto}" != off ]]; then
+  if has_role web && [[ "$MULTI_PHP_REPO_MODE" != off ]]; then
     pkg_install "https://rpms.remirepo.net/enterprise/remi-release-${EL_MAJOR}.rpm"       || die "Could not enable the Remi PHP repository"
   fi
   pkg_refresh
@@ -764,7 +781,7 @@ fi
 # Rspamd publishes supported repositories for Debian/Ubuntu and EL 8–10.  Use
 # those rather than hoping a distribution snapshot happens to carry a current
 # build; mail filtering is a required role component, not an optional extra.
-if has_role mail && [[ "${HP_RSPAMD_REPO:-auto}" != off ]]; then
+if has_role mail && [[ "$RSPAMD_REPO_MODE" != off ]]; then
   say "Enabling the official Rspamd repository"
   if [[ "$PKG_FAMILY" == rhel ]]; then
     curl -fsSLo /etc/yum.repos.d/rspamd.repo       "https://rspamd.com/rpm-stable/centos-${EL_MAJOR}/rspamd.repo"       || die "Could not enable the Rspamd repository"
@@ -777,7 +794,7 @@ if has_role mail && [[ "${HP_RSPAMD_REPO:-auto}" != off ]]; then
   ok "Rspamd repository enabled"
 fi
 
-if has_role web && [[ "${HP_MULTI_PHP_REPO:-auto}" != off ]]; then
+if has_role web && [[ "$MULTI_PHP_REPO_MODE" != off ]]; then
   ensure_bootstrap_temp_dir
   if [[ "$PKG_FAMILY" == debian ]]; then
     if [[ "$ID" == ubuntu ]]; then
@@ -844,6 +861,9 @@ done < <(pkg_map "${PACKAGES[@]}")
 ((${#MAPPED_PACKAGES[@]})) || die "No role packages are available from the configured repositories"
 if [[ "$PKG_FAMILY" == debian && "$ID" == debian && "$VERSION_ID" == 13* ]]; then
   ok "Debian 13 package names resolved: PostgreSQL contrib is bundled; BIND utilities use current package names"
+fi
+if [[ "$ID" == ubuntu && "$VERSION_ID" == 26.04 ]]; then
+  ok "Ubuntu 26.04 package policy resolved: native PHP and Rspamd packages selected"
 fi
 pkg_install "${MAPPED_PACKAGES[@]}" || die "Could not install the selected role packages"
 ((${#MISSING_OPTIONAL[@]}))   && printf 'Optional packages unavailable on %s: %s\n' "$PRETTY_NAME" "${MISSING_OPTIONAL[*]}" >>"$LOG"

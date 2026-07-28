@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
 # HostPanel Installer Test Matrix - All Supported Operating Systems
-# Tests install.sh across Ubuntu 22.04/24.04, Debian 12/13, Rocky 9/10, AlmaLinux 9/10
+# Tests install.sh across Ubuntu 22.04/24.04/26.04, Debian 12/13, Rocky 9/10, AlmaLinux 9/10
 #
 # Usage:
 #   ./test-matrix.sh [--check-only] [--verbose] [--os OSNAME]
 #
 # Supported OS names:
-#   ubuntu-22.04, ubuntu-24.04, debian-12, debian-13
+#   ubuntu-22.04, ubuntu-24.04, ubuntu-26.04, debian-12, debian-13
 #   rocky-9, rocky-10, almalinux-9, almalinux-10
 #
 
@@ -32,6 +32,7 @@ TARGET_OS=""
 declare -A OS_IMAGES=(
   [ubuntu-22.04]="ubuntu:22.04"
   [ubuntu-24.04]="ubuntu:24.04"
+  [ubuntu-26.04]="ubuntu:26.04"
   [debian-12]="debian:12"
   [debian-13]="debian:13"
   [rocky-9]="rockylinux/rockylinux:9"
@@ -43,6 +44,7 @@ declare -A OS_IMAGES=(
 declare -A PKG_MANAGERS=(
   [ubuntu-22.04]="debian"
   [ubuntu-24.04]="debian"
+  [ubuntu-26.04]="debian"
   [debian-12]="debian"
   [debian-13]="debian"
   [rocky-9]="rhel"
@@ -466,6 +468,7 @@ This report details the comprehensive testing of `install.sh` across all support
 |----|--------|-------|
 | Ubuntu 22.04 | configured | Debian-family, LTS |
 | Ubuntu 24.04 | configured | Debian-family, LTS |
+| Ubuntu 26.04 | configured | Debian-family, LTS; native PHP/Rspamd |
 | Debian 12 | configured | bookworm |
 | Debian 13 | configured | trixie |
 | Rocky Linux 9 | configured | RHEL-family |
@@ -526,7 +529,7 @@ main() {
     log_info ""
     log_info "PHASE 4: Container Integration Tests"
     
-    local os_list=(ubuntu-22.04 ubuntu-24.04 debian-12 debian-13 rocky-9 rocky-10 almalinux-9 almalinux-10)
+    local os_list=(ubuntu-22.04 ubuntu-24.04 ubuntu-26.04 debian-12 debian-13 rocky-9 rocky-10 almalinux-9 almalinux-10)
     
     if [[ -n "$TARGET_OS" ]]; then
       os_list=("$TARGET_OS")
