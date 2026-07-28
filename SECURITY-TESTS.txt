@@ -1,0 +1,57 @@
+
+Authentication and delegated credentials
+  PASS passkey challenge is not blocked by cookie CSRF
+  PASS SAML ACS is not blocked by cookie CSRF
+  PASS 2FA page does not echo the primary password
+  PASS 2FA page carries only a one-time preauth transaction
+
+API token scopes
+  PASS read-only token cannot mutate admin resources
+  PASS API tokens cannot mint more API tokens
+
+FTP tenant boundary
+  PASS one tenant cannot reset another tenant's FTP password
+
+PostgreSQL compatibility
+  PASS PostgreSQL inserts discover identity columns instead of a hand list
+  PASS SQL script splitting preserves semicolons inside quoted values
+
+Archive boundaries
+  PASS migration archives reject FIFOs and every other special object
+
+Network, secrets and browser policy
+  PASS outbound integration policy blocks loopback SSRF
+  PASS secret storage fails closed when the production master key is absent
+  PASS CSP refuses inline script and inline event attributes
+  PASS logout.html contains no inline script blocks
+  PASS logout.html contains no inline event handlers
+  PASS login.html contains no inline script blocks
+  PASS login.html contains no inline event handlers
+  PASS panel.html contains no inline script blocks
+  PASS panel.html contains no inline event handlers
+
+Privilege and service configuration
+  PASS sudoers grants only the root gateway
+  PASS installer requires encrypted FTP authentication
+  PASS FTP plaintext credential source is removed
+  PASS SMTP submission enables mandatory TLS and Dovecot SASL
+  PASS updater root-owns the complete importable application tree
+  PASS root worker ownership is driven by one manifest
+  PASS arbitrary systemd unit files are excluded from write-file
+  PASS application units are rendered by a fixed root-side template
+  PASS mail and spam maps use closed root-side grammars
+  PASS nginx-loaded site, WAF and certificate trees are root-owned
+  PASS the /etc/hostpanel parent cannot be replaced by the panel account
+  PASS alert and offsite settings cross the validated root gateway
+  PASS repair preserves root ownership of code and service configuration
+  PASS subaccount FTP credentials are salted hashes
+  PASS subaccount SFTP hashes travel over stdin, not process arguments
+  PASS certificate private keys are installed as mode 0600
+  PASS panel modules never directly write root-service include trees
+  PASS update readiness validates panel and service configurations
+
+Supply chain
+  PASS dependency lock includes the transitive graph
+  PASS every locked requirement is installed under hash enforcement
+
+39 passed, 0 failed

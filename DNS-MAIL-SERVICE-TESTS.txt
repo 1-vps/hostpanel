@@ -1,0 +1,91 @@
+
+DNS zone generation
+  PASS a zone file is written
+  PASS the A record uses the given address
+  PASS www is created alongside the apex
+  PASS an MX record is created
+  PASS SPF is published
+  PASS DMARC is published
+  PASS two nameservers are listed
+  PASS the zone is validated before going live
+  PASS BIND is told to reload
+  PASS the zone is registered in named.conf.local
+
+DNS serial numbers
+  PASS a fresh serial is a ten-digit date
+  PASS a serial published today is bumped, not reused
+  PASS an old serial jumps forward to today
+
+DNS record editing
+  PASS the new record is appended
+  PASS the serial is bumped on every edit
+  PASS an unknown record type is refused
+  PASS a record value with a newline is refused
+  PASS a record name with a semicolon is refused
+  PASS an absurd TTL is refused
+  PASS records parse back out of the zone file
+  PASS the SOA block is not parsed as a record
+
+DNS record deletion
+  PASS the record is gone
+  PASS other records survive
+  PASS deleting something absent is refused
+
+Mail maps
+  PASS a virtual domain is written
+  PASS postfix is reloaded after a domain change
+  PASS the mailbox is added to the postfix map
+  PASS the maildir path is relative to the mail root
+  PASS the password is hashed by doveadm, never stored raw
+  PASS the quota lands in the dovecot line
+  PASS the map is rebuilt with postmap
+  PASS both mail services are reloaded
+  PASS a short mail password is refused
+  PASS a localpart containing @ is refused
+  PASS an unknown quota is refused
+
+Mail aliases
+  PASS an alias is written
+  PASS an alias to a malformed address is refused
+
+DKIM
+  PASS the key is reassembled from its quoted chunks
+  PASS the reassembled key has no embedded quotes
+  PASS a key is generated through the validated root gateway
+  PASS 2048 bits are requested
+  PASS the private key is locked down
+  PASS the key is registered in the KeyTable
+  PASS signing is enabled for the whole domain
+  PASS opendkim is restarted
+
+DKIM publication to DNS
+  PASS the DKIM record is added to the zone
+  PASS a long key is split into quoted chunks under 255 characters
+  PASS the serial is bumped for the DKIM record
+  PASS publishing twice is refused
+  PASS publishing for a domain we do not host is refused
+
+Tenant isolation
+  PASS a system user is created through the tenant gateway
+  PASS the account's user has no shell
+  PASS a pool file is written
+  PASS the pool runs as the account's own user
+  PASS the pool listens on its own socket
+  PASS nginx can reach the socket
+  PASS open_basedir confines PHP to the account
+  PASS escape-hatch functions are disabled
+  PASS the home directory is not world readable
+  PASS files are handed to the account's user and web group
+  PASS the pool is activated by restarting FPM
+  PASS two accounts never share a socket
+  PASS system user names are namespaced
+  PASS an invalid account name is refused
+  PASS an uninstalled PHP version is refused
+
+Isolation removal
+  PASS the pool file is removed through the managed-path gateway
+  PASS the system user is removed through the tenant gateway
+  PASS files are kept unless asked otherwise
+
+68 passed, 0 failed
+

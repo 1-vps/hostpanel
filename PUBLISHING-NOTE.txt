@@ -1,0 +1,3 @@
+latest.json currently uses the non-routable downloads.example.invalid domain.
+Before publishing automatic updates, rebuild with tools/build_release.py and a
+real HTTPS --base-url, then verify and publish all detached signatures.

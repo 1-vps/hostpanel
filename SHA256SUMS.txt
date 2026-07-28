@@ -1,0 +1,9 @@
+7adaacef2ae3b35e8eb77a6de4c5d2434e42c7fbb537b8b02f18e5f2a9fa1a89  ./README.md
+d29fc7eb6a12646ac4fc96d000d5671529c607749d28c0e8563a0e30cc02c88c  ./documentation/RELEASE-NOTES-v2.2.0.md
+5b4a84b80d783c651b41c528fd0fa4b2c589341a7867790ddd91598ea9aab0dc  ./documentation/VERIFICATION-v2.2.0.md
+817ab9952958f4afdf8e1ee07bde1a5ee37beac899b35f0afc7a49fb42314b42  ./hostpanel-linux-parity-v2.2.0.tar.gz
+299c3ae3d59f8ea554a925d3105170ebd3469caefe74d2b2599d85d65c943b0d  ./hostpanel-linux-parity-v2.2.0.zip
+cc61173caf4fe3e9b66eae14125110c9c599b171640c101210ab494be3c403fe  ./index.html
+e3ca21f57aa7998a2330b66e08e0001e37ede05f67e39ea6bd1f8321353eb46b  ./modules/hostpanel-blesta-module-v1_0_1.zip
+2785ddc3e59854c802a9ff2c88a5613a1b0ddb2d78f0b4d7f600647de3b7172e  ./modules/hostpanel-clientexec-plugin-v1_0_1.zip
+a4a2eb6d55579075f46f8acdedf3b33a6527c53b7895bf2668d819669b8a1852  ./modules/hostpanel-whmcs-module-v1_0_1.zip

@@ -1,0 +1,124 @@
+{
+  "errors": 0,
+  "findings": [
+    {
+      "check": "syntax",
+      "detail": "31 shell scripts and 176 Python files parsed",
+      "path": "",
+      "severity": "ok"
+    },
+    {
+      "check": "unsafe-patterns",
+      "detail": "no pipe-to-shell, os-release sourcing, installer eval, predictable root temp, or unguarded recursive delete found",
+      "path": "",
+      "severity": "ok"
+    },
+    {
+      "check": "python-global-references",
+      "detail": "176 Python files have no unresolved function-level globals",
+      "path": "",
+      "severity": "ok"
+    },
+    {
+      "check": "supported-os-preflight",
+      "detail": "all 16 OS/MTA combinations passed all-role --check",
+      "path": "",
+      "severity": "ok"
+    },
+    {
+      "check": "real-vm-matrix",
+      "detail": "all eight supported OS/version targets cover both Postfix and Exim",
+      "path": "tests/real-vm/matrix.json",
+      "severity": "ok"
+    },
+    {
+      "check": "installer-platform-map",
+      "detail": "16 required invariants present; 5 rejected patterns absent",
+      "path": "install.sh",
+      "severity": "ok"
+    },
+    {
+      "check": "root-gateway-runtime",
+      "detail": "6 required invariants present; 2 rejected patterns absent",
+      "path": "app/hostpanel-root",
+      "severity": "ok"
+    },
+    {
+      "check": "updater-hardening",
+      "detail": "8 required invariants present; 3 rejected patterns absent",
+      "path": "app/hostpanel-update",
+      "severity": "ok"
+    },
+    {
+      "check": "cluster-setup-transaction",
+      "detail": "9 required invariants present; 0 rejected patterns absent",
+      "path": "app/hostpanel-cluster-setup",
+      "severity": "ok"
+    },
+    {
+      "check": "calendar-transaction",
+      "detail": "8 required invariants present; 0 rejected patterns absent",
+      "path": "app/hostpanel-calendar-sync",
+      "severity": "ok"
+    },
+    {
+      "check": "subaccount-transaction",
+      "detail": "12 required invariants present; 3 rejected patterns absent",
+      "path": "app/hostpanel-subaccount-sync",
+      "severity": "ok"
+    },
+    {
+      "check": "uninstall-confinement",
+      "detail": "7 required invariants present; 1 rejected patterns absent",
+      "path": "app/hostpanel-uninstall",
+      "severity": "ok"
+    },
+    {
+      "check": "cross-os-package-and-service-matrix",
+      "detail": "8 required invariants present; 2 rejected patterns absent",
+      "path": "install.sh",
+      "severity": "ok"
+    },
+    {
+      "check": "mail-policy-service-integrity",
+      "detail": "10 required invariants present; 1 rejected patterns absent",
+      "path": "app/hostpanel-production-maint",
+      "severity": "ok"
+    },
+    {
+      "check": "container-delete-transaction",
+      "detail": "4 required invariants present; 1 rejected patterns absent",
+      "path": "app/hostpanel-production-maint",
+      "severity": "ok"
+    },
+    {
+      "check": "dns-temporary-file",
+      "detail": "2 required invariants present; 1 rejected patterns absent",
+      "path": "app/modules/dns.py",
+      "severity": "ok"
+    },
+    {
+      "check": "ignored-service-operation",
+      "detail": "no unexplained ignored start/restart/reload operations",
+      "path": "",
+      "severity": "ok"
+    }
+  ],
+  "metrics": {
+    "ignored_service_warnings": 0,
+    "os_mta_preflights": 16,
+    "python_files": 176,
+    "python_global_files": 176,
+    "python_undefined_globals": 0,
+    "shell_files": 31,
+    "source_files_scanned": 437,
+    "unsafe_installer-eval": 0,
+    "unsafe_os-release-execution": 0,
+    "unsafe_predictable-root-temp": 0,
+    "unsafe_shell-pipe-execution": 0,
+    "unsafe_unsafe-recursive-delete": 0,
+    "vm_full_os_mta_entries": 16,
+    "vm_matrix_entries": 21
+  },
+  "warnings": 0
+}

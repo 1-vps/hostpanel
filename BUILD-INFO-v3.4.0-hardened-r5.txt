@@ -1,0 +1,11 @@
+product=HostPanel
+base_version=3.4.0
+release=hardened-r5
+focus=dual-stack-ipv4-ipv6-antiddos
+source_date=2026-07-25
+packaging_revision=complete-3-prerequisite-hotfix
+license=MIT
+source_formats=zip,tar,tar.gz
+release_signing=ed25519-detached
+release_public_key_sha256=2de5a1b96ac4b1f07a3ac742f150327e91c4220fa08cc1a31a78a8d0f1784192
+browser_dependency_lock=package-lock.json

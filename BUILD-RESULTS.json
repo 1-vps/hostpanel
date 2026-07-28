@@ -1,0 +1,21 @@
+{
+  "archive_entries": 437,
+  "artifacts": {
+    "hostpanel-v3.4.0-hardened-r5-source.tar": "174f3107c9cdc98fc6ba2cd92d4cca394dc85da84afd5e3407625f13a52fd720",
+    "hostpanel-v3.4.0-hardened-r5-source.tar.gz": "578f7373774b6ae0f50540ff074b061c2ee7596606e984331d29d12668ccfc4e",
+    "hostpanel-v3.4.0-hardened-r5-source.zip": "a66a98f0535ec7864ae5ad6f544ea8c974bbf9e3014aa6b607b40244b2089c35"
+  },
+  "checksums": "SHA256SUMS",
+  "release_name": "hostpanel-v3.4.0-hardened-r5",
+  "signature_files": [
+    "hostpanel-v3.4.0-hardened-r5-source.zip.sig",
+    "hostpanel-v3.4.0-hardened-r5-source.tar.sig",
+    "hostpanel-v3.4.0-hardened-r5-source.tar.gz.sig",
+    "SHA256SUMS.sig",
+    "latest.json.sig"
+  ],
+  "signed": true,
+  "source_date_epoch": 1784937600,
+  "source_files": 436,
+  "update_manifest": "latest.json"
+}
