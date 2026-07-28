@@ -6,7 +6,7 @@ operations.
 
 **Current working release:** `3.4.0-hardened-r6`  
 **Signed base release:** `3.4.0-hardened-r5`  
-**Validated installer overlay:** `65d7f54b4c08edef65b2c13389b0a036c6a56b5b`  
+**Validated installer overlay:** `01f171b489bc9971eab4e3ebe7aad58f10255124`  
 **License:** MIT
 
 > HostPanel changes operating-system packages, service configuration, firewall
@@ -47,11 +47,11 @@ packages.
 ## Download the pinned bootstrap
 
 The commands below use the installer commit that passed deterministic generation,
-ShellCheck, all supported-OS preflights, signed-archive verification, and the
-Ubuntu 26.04/Python 3.14 locked-runtime test.
+ShellCheck, all supported-OS preflights, signed-archive verification, the Ubuntu
+26.04/Python 3.14 locked-runtime test, and the production-VM harness checks.
 
 ```bash
-REVIEWED_COMMIT_SHA=65d7f54b4c08edef65b2c13389b0a036c6a56b5b
+REVIEWED_COMMIT_SHA=01f171b489bc9971eab4e3ebe7aad58f10255124
 
 sudo curl -fsSL \
   "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
@@ -139,7 +139,7 @@ Installer log:
 Before serving customers:
 
 1. complete a full installation on a disposable systemd VM of the target OS;
-2. reboot and run `hostpanel-doctor` without ignored failures;
+2. run the production VM validator before and after a verified reboot;
 3. test every selected role and verify all required services;
 4. create a backup and perform a restore test;
 5. verify firewall persistence and reconnect over the configured SSH port;
