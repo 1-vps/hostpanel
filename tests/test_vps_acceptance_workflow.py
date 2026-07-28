@@ -42,8 +42,13 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
         self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", self.text)
         self.assertNotIn("eval ", self.text)
 
-    def test_workflow_does_not_collect_installer_log(self) -> None:
+    def test_generated_credentials_stay_on_the_vps(self) -> None:
         self.assertNotIn("/var/log/hostpanel-install.log", self.text)
+        self.assertIn("PRIVATE_LOG=/root/hostpanel-acceptance-private-install.log", self.text)
+        self.assertIn('>> "$PRIVATE_LOG" 2>&1', self.text)
+        self.assertEqual(self.text.count("hostpanel-acceptance-private-install.log"), 1)
+        self.assertNotIn("install-and-pre-reboot.txt", self.text)
+        self.assertNotIn("exec > >(tee", self.text)
         self.assertIn("hostpanel-acceptance-evidence", self.text)
 
 
