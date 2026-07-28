@@ -1,11 +1,13 @@
 # HostPanel setup
 
-This guide installs the signed `3.4.0-hardened-r5` base release through a
-reviewed, commit-addressed installer overlay.
+This guide installs the signed `3.4.0-hardened-r5` base release through the
+validated installer overlay commit:
 
-Choose a real, resolvable full commit SHA and substitute it for
-`REVIEWED_COMMIT_SHA`. The same value must be used in the download URL and in
-`HP_REPO_REF`.
+```text
+65d7f54b4c08edef65b2c13389b0a036c6a56b5b
+```
+
+The same full commit SHA must be used in the download URL and in `HP_REPO_REF`.
 
 ## Security model
 
@@ -77,12 +79,12 @@ Rocky Linux or AlmaLinux:
 sudo dnf install -y ca-certificates curl git openssl python3
 ```
 
-## 3. Download a reviewed bootstrap
+## 3. Download the validated bootstrap
 
 Do not run an unpinned branch URL as root.
 
 ```bash
-REVIEWED_COMMIT_SHA=REPLACE_WITH_40_HEX_CHARACTERS
+REVIEWED_COMMIT_SHA=65d7f54b4c08edef65b2c13389b0a036c6a56b5b
 
 sudo curl -fsSL \
   "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
@@ -91,8 +93,9 @@ sudo chmod 700 /root/bootstrap-install.sh
 sudo bash -n /root/bootstrap-install.sh
 ```
 
-Confirm that the value contains exactly 40 hexadecimal characters and resolves
-in the repository before proceeding.
+This commit passed deterministic installer generation, Bash syntax, ShellCheck,
+all nine supported-OS preflight jobs, signed-archive verification, and the
+Ubuntu 26.04/Python 3.14 locked-runtime installation test.
 
 ## 4. Run the preflight
 
