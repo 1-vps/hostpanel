@@ -1,0 +1,231 @@
+name: Finalize Ubuntu 26.04 support
+
+on:
+  push:
+    branches:
+      - agent/ubuntu-26.04-support
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/ubuntu-26.04-support
+          fetch-depth: 0
+
+      - name: Map Ubuntu 26.04 PostgreSQL contrib
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          installer = Path("install.sh")
+          text = installer.read_text(encoding="utf-8")
+          old_comment = '''    # Use concrete Debian package names rather than historical or virtual
+              # aliases.  Debian 13 exposes dnsutils only as a virtual package,
+              # renamed bind9utils to bind9-utils, and ships the former contrib
+              # extensions inside postgresql-17 instead of postgresql-contrib.
+          '''
+          new_comment = '''    # Use concrete Debian-family package names rather than historical or
+              # virtual aliases. Debian 13 exposes dnsutils only as a virtual package,
+              # renamed bind9utils to bind9-utils, and bundles contrib extensions in
+              # PostgreSQL 17. Ubuntu 26.04 likewise bundles contrib extensions in
+              # PostgreSQL 18 instead of publishing postgresql-contrib.
+          '''
+          if old_comment not in text:
+              raise SystemExit("expected Debian package mapping comment not found")
+          text = text.replace(old_comment, new_comment, 1)
+
+          old_case = '''          debian:13|debian:13.*) printf 'postgresql' ;;
+                    *)                     printf 'postgresql-contrib' ;;
+          '''
+          new_case = '''          debian:13|debian:13.*|ubuntu:26.04|ubuntu:26.04.*) printf 'postgresql' ;;
+                    *)                                                   printf 'postgresql-contrib' ;;
+          '''
+          if old_case not in text:
+              raise SystemExit("expected postgresql-contrib mapping case not found")
+          text = text.replace(old_case, new_case, 1)
+
+          old_status = '''if [[ "$ID" == ubuntu && "$VERSION_ID" == 26.04 ]]; then
+            ok "Ubuntu 26.04 package policy resolved: native PHP and Rspamd packages selected"
+          fi
+          '''
+          new_status = '''if [[ "$ID" == ubuntu && "$VERSION_ID" == 26.04 ]]; then
+            ok "Ubuntu 26.04 package policy resolved: PostgreSQL contrib is bundled; native PHP and Rspamd packages selected"
+          fi
+          '''
+          if old_status not in text:
+              raise SystemExit("expected Ubuntu 26.04 status block not found")
+          text = text.replace(old_status, new_status, 1)
+          installer.write_text(text, encoding="utf-8")
+
+          tests = Path("tests/test_ubuntu_2604_support.py")
+          test_text = tests.read_text(encoding="utf-8")
+          anchor = '        self.assertIn("rspamd.com has no Resolute APT suite", installer)\n'
+          addition = anchor + '''        self.assertIn(
+              "debian:13|debian:13.*|ubuntu:26.04|ubuntu:26.04.*",
+              installer,
+          )
+          '''
+          if anchor not in test_text:
+              raise SystemExit("test insertion point not found")
+          test_text = test_text.replace(anchor, addition, 1)
+          tests.write_text(test_text, encoding="utf-8")
+          PY
+
+      - name: Run syntax, regression, and static matrix
+        id: focused
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          bash -n install.sh
+          bash -n bootstrap-install.sh
+          bash -n test-matrix.sh
+          bash -n run-full-test-matrix.sh
+          python3 -m unittest -v tests.test_ubuntu_2604_support
+          bash test-matrix.sh --check-only
+
+      - name: Run Ubuntu 26.04 container preflight matrix
+        id: matrix
+        continue-on-error: true
+        shell: bash
+        run: bash test-matrix.sh --os ubuntu-26.04
+
+      - name: Audit mapped Ubuntu 26.04 package candidates
+        id: packages
+        continue-on-error: true
+        shell: bash
+        run: |
+          docker run --rm ubuntu:26.04 bash -ceu '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            required=(
+              openssl rsync acl gnupg sqlite3 inotify-tools iproute2 git ca-certificates
+              python3 python3-venv python3-pip curl ufw fail2ban unzip sudo nginx
+              postgresql nodejs npm podman restic bind9-dnsutils
+              apache2 apache2-utils libapache2-mod-fcgid composer certbot
+              python3-certbot-nginx libfcgi-bin libnginx-mod-http-modsecurity
+              modsecurity-crs radicale quota quotatool xfsprogs mariadb-server
+              redis-server bind9 bind9-utils dovecot-core dovecot-imapd
+              dovecot-lmtpd dovecot-sieve dovecot-managesieved opendkim
+              opendkim-tools rspamd clamav clamav-daemon postfix postfix-pcre
+              postsrsd exim4-base exim4-config exim4-daemon-heavy rclone
+              php8.5-fpm php8.5-cli
+            )
+            missing=()
+            for package in "${required[@]}"; do
+              candidate=$(apt-cache policy "$package" | awk "/Candidate:/ {print \$2; exit}")
+              [[ -n "$candidate" && "$candidate" != "(none)" ]] || missing+=("$package")
+            done
+            if ((${#missing[@]})); then
+              printf "Missing mapped Ubuntu 26.04 candidates: %s\n" "${missing[*]}" >&2
+              exit 1
+            fi
+            contrib=$(apt-cache policy postgresql-contrib | awk "/Candidate:/ {print \$2; exit}")
+            [[ -z "$contrib" || "$contrib" == "(none)" ]]
+            psql_candidate=$(apt-cache policy postgresql | awk "/Candidate:/ {print \$2; exit}")
+            [[ -n "$psql_candidate" && "$psql_candidate" != "(none)" ]]
+            echo "Mapped package audit passed; postgresql replaces postgresql-contrib on Ubuntu 26.04."
+          '
+
+      - name: Test locked Python runtime on Ubuntu 26.04
+        id: runtime
+        continue-on-error: true
+        shell: bash
+        run: |
+          docker run -d --rm --name hostpanel-ubuntu2604-runtime ubuntu:26.04 sleep 3600
+          trap 'docker rm -f hostpanel-ubuntu2604-runtime >/dev/null 2>&1 || true' EXIT
+          docker cp requirements.lock hostpanel-ubuntu2604-runtime:/tmp/requirements.lock
+          docker exec -e DEBIAN_FRONTEND=noninteractive hostpanel-ubuntu2604-runtime bash -ceu '
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates python3 python3-venv python3-pip build-essential python3-dev libpq-dev
+            python3 -m venv /tmp/venv
+            /tmp/venv/bin/pip install --quiet --upgrade "pip==25.1.1"
+            /tmp/venv/bin/pip install --quiet --require-hashes -r /tmp/requirements.lock
+            /tmp/venv/bin/python -c "import fastapi, psycopg, sqlalchemy; print(\"locked runtime imports passed\")"
+          '
+
+      - name: Run ShellCheck error audit
+        id: shellcheck
+        continue-on-error: true
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -S error install.sh bootstrap-install.sh test-matrix.sh run-full-test-matrix.sh
+
+      - name: Write final audit report
+        shell: bash
+        env:
+          FOCUSED_RESULT: ${{ steps.focused.outcome }}
+          MATRIX_RESULT: ${{ steps.matrix.outcome }}
+          PACKAGES_RESULT: ${{ steps.packages.outcome }}
+          RUNTIME_RESULT: ${{ steps.runtime.outcome }}
+          SHELLCHECK_RESULT: ${{ steps.shellcheck.outcome }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          results = {
+              "Bash syntax, focused regression tests, and static matrix": os.environ["FOCUSED_RESULT"],
+              "Ubuntu 26.04 Docker preflight/dry-run matrix": os.environ["MATRIX_RESULT"],
+              "Mapped Ubuntu 26.04 required-package candidate audit": os.environ["PACKAGES_RESULT"],
+              "Locked Python runtime installation on Python 3.14": os.environ["RUNTIME_RESULT"],
+              "ShellCheck error-level audit": os.environ["SHELLCHECK_RESULT"],
+          }
+          lines = [
+              "# Ubuntu 26.04 installer setup audit",
+              "",
+              f"**Audit date:** {datetime.now(timezone.utc):%Y-%m-%d}  ",
+              "**Target:** Ubuntu 26.04 LTS (Resolute Raccoon)  ",
+              "**Scope:** `install.sh`, maintained setup documentation, package mapping, locked runtime, and installer test matrices",
+              "",
+              "## Changes",
+              "",
+              "- Added Ubuntu 26.04 to the explicit supported-release gate and diagnostics.",
+              "- Added Ubuntu 26.04 Docker images to both installer test matrices.",
+              "- Added focused regression tests for supported and rejected Ubuntu releases.",
+              "- Updated `SETUP.md` with the Ubuntu 26.04 repository policy.",
+              "- Disabled auto-configured external PHP and Rspamd repositories on Ubuntu 26.04 and selected distribution packages.",
+              "- Mapped `postgresql-contrib` to `postgresql` because Ubuntu 26.04 bundles the former contrib modules in PostgreSQL 18.",
+              "",
+              "## Compatibility findings",
+              "",
+              "1. The Ondrej PHP PPA does not currently publish a Resolute suite. Ubuntu 26.04 supplies native PHP 8.5 FPM and CLI packages, so the installer uses those packages instead.",
+              "2. The upstream Rspamd stable APT repository does not currently publish a Resolute suite. Ubuntu 26.04 supplies Rspamd in its archive, so the installer uses the Ubuntu package.",
+              "3. Ubuntu 26.04 does not publish a `postgresql-contrib` candidate; its PostgreSQL 18 package includes those modules, so package mapping resolves the logical dependency to `postgresql`.",
+              "4. Multi-PHP availability on Ubuntu 26.04 is limited to PHP branches published by Ubuntu until a separately reviewed repository supports Resolute.",
+              "5. The Docker matrix validates OS detection, prerequisite provisioning, package-manager detection, FQDN rejection, preflight, and dry-run behavior. It does not boot a complete systemd host or activate every service.",
+              "",
+              "## Automated results",
+              "",
+              "| Check | Result |",
+              "| --- | --- |",
+          ]
+          lines.extend(f"| {name} | {result} |" for name, result in results.items())
+          lines.extend([
+              "",
+              "## Production validation still required",
+              "",
+              "Before declaring a release production-ready, run a full installation on a disposable Ubuntu 26.04 VM with systemd, reboot it, run `hostpanel-doctor`, test every selected role, and perform a backup/restore test. Container preflight cannot validate service startup, kernel quota behavior, firewall persistence, mail delivery, or DNS delegation end to end.",
+              "",
+          ])
+          Path("AUDIT-UBUNTU-26.04.md").write_text("\n".join(lines), encoding="utf-8")
+          PY
+
+      - name: Commit finalized changes
+        shell: bash
+        run: |
+          rm -f .github/workflows/finalize-ubuntu-2604-support.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add install.sh tests/test_ubuntu_2604_support.py AUDIT-UBUNTU-26.04.md .github/workflows/finalize-ubuntu-2604-support.yml
+          git commit -m "Fix Ubuntu 26.04 package mapping"
+          git push origin HEAD:agent/ubuntu-26.04-support
