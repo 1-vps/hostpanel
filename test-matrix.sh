@@ -57,17 +57,22 @@ done
 log(){ printf '[matrix] %s\n' "$*" >&2; }
 verbose(){ [[ "$VERBOSE" == yes ]] && printf '[matrix:debug] %s\n' "$*" >&2 || true; }
 contains_os(){ local item; for item in "${SUPPORTED_OSES[@]}"; do [[ "$item" == "$1" ]] && return 0; done; return 1; }
+cleanup_container(){ [[ -z "${1:-}" ]] || docker rm -f "$1" >/dev/null 2>&1 || true; }
 
 mkdir -p "$LOG_DIR"
 
 validate_bundle(){
   local generated
   generated="$(mktemp "$LOG_DIR/install.generated.XXXXXX")"
-  trap 'rm -f -- "$generated"' RETURN
-  python3 "$SCRIPT_DIR/tools/harden_install.py" \
-    "$SCRIPT_DIR/install.base.sh" "$generated"
+  if ! python3 "$SCRIPT_DIR/tools/harden_install.py" \
+      "$SCRIPT_DIR/install.base.sh" "$generated"; then
+    rm -f -- "$generated"
+    return 1
+  fi
   bash -n "$SCRIPT_DIR/install.sh"
   bash -n "$SCRIPT_DIR/bootstrap-install.sh"
+  bash -n "$SCRIPT_DIR/test-matrix.sh"
+  bash -n "$SCRIPT_DIR/run-full-test-matrix.sh"
   bash -n "$generated"
   python3 -m unittest discover -s "$SCRIPT_DIR/tests" -p 'test_*.py' -v
   grep -q 'INSTALL_SNAPSHOT_DIR="/var/backups/hostpanel-install"' "$generated"
@@ -75,7 +80,6 @@ validate_bundle(){
   grep -q 'systemd-run --quiet' "$generated"
   ! grep -q 'https://repo.litespeed.sh' "$generated"
   rm -f -- "$generated"
-  trap - RETURN
   log "deterministic generation and regressions passed"
 }
 
@@ -104,8 +108,8 @@ copy_bundle(){
 }
 
 run_expect_success(){
-  local cid="$1" name="$2"; shift 2
-  local output
+  local cid="$1" name="$2" output
+  shift 2
   if ! output="$(docker exec "$cid" "$@" 2>&1)"; then
     printf '%s\n' "$output" >"$LOG_DIR/${name}.log"
     printf 'FAIL %s; see %s\n' "$name" "$LOG_DIR/${name}.log" >&2
@@ -115,62 +119,87 @@ run_expect_success(){
 }
 
 run_container_test(){
-  local os_name="$1" image="${OS_IMAGES[$1]}" cid output
+  local os_name="$1" image="${OS_IMAGES[$1]}" cid="" output
   log "$os_name: pulling $image"
   docker pull "$image" >/dev/null
   cid="$(docker run -d --rm --tmpfs /tmp:exec --tmpfs /run:exec --memory 2g --cpus 2 "$image" sleep 3600)"
-  trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' RETURN
-  install_prerequisites "$os_name" "$cid"
-  copy_bundle "$cid"
 
-  run_expect_success "$cid" "$os_name-generate" sh -ceu '
+  if ! install_prerequisites "$os_name" "$cid" || ! copy_bundle "$cid"; then
+    cleanup_container "$cid"
+    return 1
+  fi
+
+  if ! run_expect_success "$cid" "$os_name-generate" sh -ceu '
     cd /root/hostpanel
     python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh
     bash -n install.sh
     bash -n /tmp/install.generated.sh
-  '
-
-  output="$(docker exec \
-    -e HP_PANEL_HOST=panel.example.test \
-    -e HP_ALLOW_EXISTING_STACK=yes \
-    -e HP_MULTI_PHP_REPO=off \
-    -e HP_RSPAMD_REPO=off \
-    "$cid" bash /root/hostpanel/install.sh --check --role web 2>&1)" || {
-      printf '%s\n' "$output" >"$LOG_DIR/${os_name}-preflight.log"
-      return 1
-    }
-  grep -q 'Preflight passed' <<<"$output"
-
-  if docker exec -e HP_PANEL_HOST=localhost "$cid" \
-      bash /root/hostpanel/install.sh --check --role web \
-      >"$LOG_DIR/${os_name}-invalid-fqdn.log" 2>&1; then
-    printf 'invalid FQDN accepted on %s\n' "$os_name" >&2
+  '; then
+    cleanup_container "$cid"
     return 1
   fi
-  grep -q 'valid FQDN' "$LOG_DIR/${os_name}-invalid-fqdn.log"
 
-  output="$(docker exec \
-    -e HP_PANEL_HOST=panel.example.test \
-    -e HP_ALLOW_EXISTING_STACK=yes \
-    "$cid" bash /root/hostpanel/install.sh --dry-run --role web 2>&1)" || {
-      printf '%s\n' "$output" >"$LOG_DIR/${os_name}-dry-run.log"
-      return 1
-    }
-  grep -q 'No changes were made' <<<"$output"
+  if ! output="$(docker exec \
+      -e HP_PANEL_HOST=panel.example.test \
+      -e HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
+      -e HP_ALLOW_EXISTING_STACK=yes \
+      -e HP_MULTI_PHP_REPO=off \
+      -e HP_RSPAMD_REPO=off \
+      "$cid" bash /root/hostpanel/install.sh --check --role web 2>&1)"; then
+    printf '%s\n' "$output" >"$LOG_DIR/${os_name}-preflight.log"
+    cleanup_container "$cid"
+    return 1
+  fi
+  grep -q 'Preflight passed' <<<"$output" || {
+    printf '%s\n' "$output" >"$LOG_DIR/${os_name}-preflight.log"
+    cleanup_container "$cid"
+    return 1
+  }
+
+  if docker exec \
+      -e HP_PANEL_HOST=localhost \
+      -e HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
+      "$cid" bash /root/hostpanel/install.sh --check --role web \
+      >"$LOG_DIR/${os_name}-invalid-fqdn.log" 2>&1; then
+    printf 'invalid FQDN accepted on %s\n' "$os_name" >&2
+    cleanup_container "$cid"
+    return 1
+  fi
+  grep -q 'valid FQDN' "$LOG_DIR/${os_name}-invalid-fqdn.log" || {
+    cleanup_container "$cid"
+    return 1
+  }
+
+  if ! output="$(docker exec \
+      -e HP_PANEL_HOST=panel.example.test \
+      -e HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
+      -e HP_ALLOW_EXISTING_STACK=yes \
+      "$cid" bash /root/hostpanel/install.sh --dry-run --role web 2>&1)"; then
+    printf '%s\n' "$output" >"$LOG_DIR/${os_name}-dry-run.log"
+    cleanup_container "$cid"
+    return 1
+  fi
+  grep -q 'No changes were made' <<<"$output" || {
+    printf '%s\n' "$output" >"$LOG_DIR/${os_name}-dry-run.log"
+    cleanup_container "$cid"
+    return 1
+  }
 
   if [[ "$os_name" == ubuntu-26.04 ]]; then
-    docker exec "$cid" sh -ceu '
+    if ! docker exec "$cid" sh -ceu '
       for package in python3-venv php8.5-fpm php8.5-cli rspamd postgresql; do
         candidate=$(apt-cache policy "$package" | awk "/Candidate:/ {print \$2; exit}")
         test -n "$candidate" && test "$candidate" != "(none)"
       done
       candidate=$(apt-cache policy postgresql-contrib | awk "/Candidate:/ {print \$2; exit}")
       test -z "$candidate" || test "$candidate" = "(none)"
-    '
+    '; then
+      cleanup_container "$cid"
+      return 1
+    fi
   fi
 
-  docker rm -f "$cid" >/dev/null
-  trap - RETURN
+  cleanup_container "$cid"
   log "$os_name: bundle generation, preflight, rejection and dry-run passed"
 }
 
