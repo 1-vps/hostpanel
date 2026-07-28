@@ -1,0 +1,100 @@
+name: Verify Ubuntu 26.04 release runtime
+
+on:
+  push:
+    branches:
+      - agent/ubuntu-26.04-support
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/ubuntu-26.04-support
+          fetch-depth: 0
+
+      - name: Run focused regression tests
+        id: focused
+        continue-on-error: true
+        shell: bash
+        run: |
+          bash -n install.sh
+          bash -n bootstrap-install.sh
+          bash -n test-matrix.sh
+          bash -n run-full-test-matrix.sh
+          python3 -m unittest -v tests.test_ubuntu_2604_support
+          bash test-matrix.sh --check-only
+
+      - name: Test signed-release lock on Ubuntu 26.04 Python 3.14
+        id: runtime
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=$(find . -maxdepth 1 -type f -name 'hostpanel-v*-source.tar.gz' -print -quit)
+          [[ -n "$archive" ]] || { echo "No signed source archive found" >&2; exit 1; }
+          member=$(tar -tzf "$archive" | awk '/\/requirements\.lock$/ {print; exit}')
+          [[ -n "$member" ]] || { echo "requirements.lock missing from $archive" >&2; exit 1; }
+          tar -xOf "$archive" "$member" > /tmp/requirements.lock
+          [[ -s /tmp/requirements.lock ]]
+
+          docker run -d --rm --name hostpanel-ubuntu2604-runtime ubuntu:26.04 sleep 3600
+          trap 'docker rm -f hostpanel-ubuntu2604-runtime >/dev/null 2>&1 || true' EXIT
+          docker cp /tmp/requirements.lock hostpanel-ubuntu2604-runtime:/tmp/requirements.lock
+          docker exec -e DEBIAN_FRONTEND=noninteractive hostpanel-ubuntu2604-runtime bash -ceu '
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates python3 python3-venv python3-pip build-essential python3-dev libpq-dev
+            python3 -m venv /tmp/venv
+            /tmp/venv/bin/pip install --quiet --upgrade "pip==25.1.1"
+            /tmp/venv/bin/pip install --require-hashes -r /tmp/requirements.lock
+            /tmp/venv/bin/python - <<"PY"
+import fastapi
+import psycopg
+import sqlalchemy
+print("locked runtime imports passed")
+PY
+          '
+
+      - name: Update audit results
+        shell: bash
+        env:
+          FOCUSED_RESULT: ${{ steps.focused.outcome }}
+          RUNTIME_RESULT: ${{ steps.runtime.outcome }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path("AUDIT-UBUNTU-26.04.md")
+          text = path.read_text(encoding="utf-8")
+          replacements = {
+              "| Bash syntax, focused regression tests, and static matrix | success |":
+                  f"| Bash syntax, focused regression tests, and static matrix | {os.environ['FOCUSED_RESULT']} |",
+              "| Locked Python runtime installation on Python 3.14 | failure |":
+                  f"| Locked Python runtime installation from the signed release archive on Python 3.14 | {os.environ['RUNTIME_RESULT']} |",
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f"audit row not found: {old}")
+              text = text.replace(old, new, 1)
+          text = text.replace(
+              "package mapping, locked runtime, and installer test matrices",
+              "package mapping, the signed-release locked runtime, and installer test matrices",
+              1,
+          )
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Commit verified audit
+        shell: bash
+        run: |
+          rm -f .github/workflows/verify-ubuntu-2604-runtime.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add AUDIT-UBUNTU-26.04.md .github/workflows/verify-ubuntu-2604-runtime.yml
+          git commit -m "Verify Ubuntu 26.04 release runtime"
+          git push origin HEAD:agent/ubuntu-26.04-support
