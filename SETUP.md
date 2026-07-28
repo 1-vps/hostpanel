@@ -1,7 +1,8 @@
 # HostPanel setup
 
-This guide installs the signed `3.4.0-hardened-r5` base release through the
-validated installer overlay commit:
+This guide installs `3.4.0-hardened-r6` from the signed
+`3.4.0-hardened-r5` base release through the validated installer overlay
+commit:
 
 ```text
 65d7f54b4c08edef65b2c13389b0a036c6a56b5b
@@ -13,8 +14,9 @@ The same full commit SHA must be used in the download URL and in `HP_REPO_REF`.
 
 The bootstrap does not trust a public key fetched beside the archive it verifies.
 It contains the release verification key directly and uses it to authenticate
-the signed base archive. It separately verifies each installer overlay file
-against the operator-supplied full Git commit object.
+the signed `3.4.0-hardened-r5` base archive. It separately verifies each
+installer overlay file against the operator-supplied full Git commit object.
+The overlay derives and installs the working release `3.4.0-hardened-r6`.
 
 The installed root script is derived deterministically from a preserved base
 installer. Every expected replacement must match exactly once; otherwise the
@@ -207,6 +209,12 @@ sudo nginx -t
 sudo systemctl status hostpanel nginx --no-pager --full
 sudo /opt/hostpanel/venv/bin/python \
   /opt/hostpanel/app/hostpanel-doctor
+```
+
+Expected installed version:
+
+```text
+3.4.0-hardened-r6
 ```
 
 Inspect the root-only installer log:
