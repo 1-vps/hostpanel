@@ -19,9 +19,10 @@ def _load_runtime_environment() -> None:
         if _runtime_os.environ.get("HP_TEST_MODE") == "1":
             return
         raise RuntimeError("HostPanel runtime environment is unavailable") from exc
+    mode = _runtime_stat.S_IMODE(metadata.st_mode)
     if (not _runtime_stat.S_ISREG(metadata.st_mode)
             or metadata.st_uid != 0
-            or metadata.st_mode & 0o022):
+            or mode not in (0o600, 0o640)):
         raise RuntimeError("HostPanel runtime environment is unsafe")
     seen = set()
     for raw in config.read_text(encoding="utf-8").splitlines():
@@ -29,7 +30,7 @@ def _load_runtime_environment() -> None:
             continue
         key, separator, value = raw.partition("=")
         if (not separator or not _RUNTIME_ENV_KEY.fullmatch(key)
-                or key in seen or "\\x00" in value):
+                or key in seen or "\x00" in value):
             raise RuntimeError("HostPanel runtime environment is malformed")
         seen.add(key)
         _runtime_os.environ.setdefault(key, value)
@@ -75,8 +76,8 @@ DOCTOR_LSWS_NEW = '''    if "web" in roles:
             service("apache"): False,
         })'''
 
-MYSQL_ADMIN_OLD = '''    prelude = "SET SESSION local_infile=0;\\nSET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\\n"'''
-MYSQL_ADMIN_NEW = '''    prelude = "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\\n"'''
+MYSQL_ADMIN_OLD = '''    prelude = "SET SESSION local_infile=0;\nSET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\n"'''
+MYSQL_ADMIN_NEW = '''    prelude = "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\n"'''
 
 
 def patch(target: pathlib.Path, old: str, new: str, label: str) -> None:
