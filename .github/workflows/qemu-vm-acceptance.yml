@@ -19,7 +19,9 @@ on:
       - tools/inspect-release-state.py
       - tools/validate-production-vm.sh
       - tools/harden_install.py
+      - tools/harden_install_impl.py
       - tools/harden_install_runtime.py
+      - tools/patch_cli_runtime_env.py
       - bootstrap-install.sh
       - install.sh
       - install.base.sh
@@ -28,6 +30,7 @@ on:
       - SHA256SUMS
       - '*.sig'
       - tests/test_qemu_vm_acceptance.py
+      - tests/test_post_install_health.py
       - tests/test_systemd_resolved_dns.py
 
 permissions:
@@ -54,7 +57,7 @@ jobs:
     timeout-minutes: 180
     env:
       HP_QEMU_REVIEWED_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      HP_QEMU_EXPECTED_VERSION: 3.4.0-hardened-r6
+      HP_QEMU_EXPECTED_VERSION: 3.4.0-hardened-r5
       HP_QEMU_MTA: ${{ inputs.mta || 'postfix' }}
 
     steps:
