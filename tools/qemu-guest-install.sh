@@ -49,7 +49,16 @@ collect_failure_evidence(){
       printf '%s\n' 'installer log unavailable'
     fi
     if [[ "$stage" == 'Configuring OpenLiteSpeed as a private per-domain backend' ]]; then
-      printf '%s\n' '--- scoped OpenLiteSpeed configuration test ---'
+      printf '%s\n' '--- scoped pre-rollback OpenLiteSpeed errors ---'
+      if [[ -r "$PRIVATE_LOG" ]]; then
+        grep -Eai '(openlitespeed|litespeed|lsws|httpd_config|admin_config|traceback|systemexit|syntax|rejected|failed to start)' \
+          "$PRIVATE_LOG" \
+          | grep -Evai '(password|passwd|secret|token|credential|private[ _-]?key|api[ _-]?key|admin[ _-]?(user|login))' \
+          | tail -n 180 || true
+      else
+        printf '%s\n' 'private outer installer log unavailable'
+      fi
+      printf '%s\n' '--- scoped post-rollback OpenLiteSpeed configuration test ---'
       if [[ -x /usr/local/lsws/bin/openlitespeed ]]; then
         /usr/local/lsws/bin/openlitespeed -t 2>&1 | tail -n 160 || true
       else
