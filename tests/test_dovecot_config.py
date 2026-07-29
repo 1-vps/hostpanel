@@ -93,6 +93,7 @@ class DovecotConfigTests(unittest.TestCase):
         self.assertLess(plugin_args, spam)
         self.assertLess(spam, ham)
         self.assertLess(ham, restart)
+        self.assertIn("-c /etc/dovecot/dovecot.conf", text)
         self.assertIn(
             "-o 'sieve_plugins=sieve_imapsieve sieve_extprograms'",
             text,
@@ -101,6 +102,7 @@ class DovecotConfigTests(unittest.TestCase):
             "-o 'sieve_global_extensions=+vnd.dovecot.pipe +vnd.dovecot.environment'",
             text,
         )
+        self.assertIn("-x '+imapsieve +vnd.dovecot.pipe'", text)
         self.assertEqual(text.count('"${SIEVEC_PLUGIN_ARGS[@]}"'), 2)
         self.assertIn("Could not compile the spam-learning Sieve rule", text)
         self.assertIn("Could not compile the ham-learning Sieve rule", text)
