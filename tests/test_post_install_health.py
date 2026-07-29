@@ -69,9 +69,36 @@ class PostInstallHealthTests(unittest.TestCase):
         self.assertIn('if has_role backup; then', self.generated[backup - 80:command])
         self.assertIn('|| die "Initial verified backup failed"', self.generated[command:doctor])
 
+    def test_initial_backup_and_doctor_use_production_environment(self):
+        backup = self.generated.index('say "Creating the initial verified backup"')
+        doctor = self.generated.index('DOCTOR_STATUS=0', backup)
+        backup_block = self.generated[backup:doctor]
+        doctor_block = self.generated[doctor:doctor + 1100]
+        for variable in (
+            'HP_DATABASE_URL_FILE="$PANEL_DIR/credentials/database-url"',
+            'HP_MASTER_KEY_FILE="$PANEL_DIR/credentials/master.key"',
+            'HP_VHOST_ROOT="$VHOST_ROOT"',
+            'HP_BACKUP_DIR="$BACKUP_DIR"',
+        ):
+            self.assertIn(variable, backup_block)
+            self.assertIn(variable, doctor_block)
+
+    def test_backup_and_doctor_cron_use_production_environment(self):
+        lines = self.generated.splitlines()
+        for schedule in ("0 3 * * *", "30 3 * * *", "0 6 * * 1"):
+            line = next(line for line in lines if line.startswith(schedule))
+            self.assertIn(
+                "HP_DATABASE_URL_FILE=$PANEL_DIR/credentials/database-url", line
+            )
+            self.assertIn(
+                "HP_MASTER_KEY_FILE=$PANEL_DIR/credentials/master.key", line
+            )
+            self.assertIn("HP_VHOST_ROOT=$VHOST_ROOT", line)
+            self.assertIn("HP_BACKUP_DIR=$BACKUP_DIR", line)
+
     def test_doctor_warning_and_failure_exit_codes_are_distinct(self):
         doctor = self.generated.index('DOCTOR_STATUS=0')
-        block = self.generated[doctor:doctor + 700]
+        block = self.generated[doctor:doctor + 1100]
         self.assertIn('|| DOCTOR_STATUS=$?', block)
         self.assertIn(
             '1) warn "Post-install health check completed with warnings; inspect $LOG" ;;',
