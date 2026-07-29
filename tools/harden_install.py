@@ -17,11 +17,11 @@ SPEC.loader.exec_module(MODULE)
 _original_module_replace_once = MODULE.replace_once
 _original_regex_once = MODULE.regex_once
 
-DBCOMPAT_CLASSIFIER_OLD = '''        for statement in statements:
+DBCOMPAT_CLASSIFIER_OLD = r'''        for statement in statements:
             match = re.match(r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)", statement, re.I)
             (tables if match else others).append((match.group(1).lower(), statement) if match else statement)'''
 
-DBCOMPAT_CLASSIFIER_NEW = '''        for statement in statements:
+DBCOMPAT_CLASSIFIER_NEW = r'''        for statement in statements:
             classified = re.sub(
                 r"^\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*",
                 "",
