@@ -30,7 +30,7 @@ def _module_replace_once(text: str, old: str, new: str, label: str) -> str:
     # Match the two stable boundary statements and require exactly one block.
     if label == "validate loaded PHP baseline":
         pattern = re.compile(
-            r'''printf '%s\\n' "\$\{PHP_INSTALLED\[@\]\}" >/etc/hostpanel/php-versions\n'''
+            r'''printf '%s\n' "\$\{PHP_INSTALLED\[@\]\}" >/etc/hostpanel/php-versions\n'''
             r'''\s*ok "PHP-FPM installed: \$\{PHP_INSTALLED\[\*\]\}"'''
         )
         updated, count = pattern.subn(lambda _: new, text, count=1)
@@ -119,6 +119,65 @@ fi
 
 if [[ "$REINSTALL" != yes && -f "$PANEL_DIR/config.env" ]]; then''',
         "early administrative source validation",
+    )
+
+    # Ubuntu's normal systemd-resolved loopback stub is not an existing DNS
+    # stack. Allow only that exact listener during check mode; any other process
+    # or non-loopback address on port 53 remains a fail-closed conflict.
+    text = _replace_once(
+        text,
+        '''  for port in "${PORTS[@]}"; do
+    if ss -ltnup 2>/dev/null | grep -Eq "[:.]${port}[[:space:]]"; then
+      die "Port $port is already in use. Use a clean server or set HP_ALLOW_EXISTING_STACK=yes after reviewing conflicts."
+    fi
+  done''',
+        '''  for port in "${PORTS[@]}"; do
+    LISTENERS="$(ss -H -ltnup 2>/dev/null | grep -E "[:.]${port}[[:space:]]" || true)"
+    if [[ -n "$LISTENERS" ]]; then
+      if [[ "$port" == 53 ]] \
+         && ! grep -Fvq 'systemd-resolve' <<<"$LISTENERS" \
+         && ! grep -Ev '127\\.0\\.0\\.(53|54)(%lo)?:53([[:space:]]|$)' <<<"$LISTENERS" >/dev/null; then
+        warn "systemd-resolved loopback DNS stub will be disabled before the DNS role is installed"
+        continue
+      fi
+      die "Port $port is already in use. Use a clean server or set HP_ALLOW_EXISTING_STACK=yes after reviewing conflicts."
+    fi
+  done''',
+        "systemd-resolved preflight allowance",
+    )
+
+    # Retain upstream name resolution while freeing port 53 before BIND is
+    # installed. This runs only for the DNS role on Debian-family systems and
+    # only when the standard systemd-resolved loopback stub is active.
+    text = _replace_once(
+        text,
+        '''# --------------------------------------------------------------------------- #
+say "Installing packages for roles: $ROLE_CSV"''',
+        '''# --------------------------------------------------------------------------- #
+if has_role dns && [[ "$PKG_FAMILY" == debian ]] \
+   && command -v systemctl >/dev/null 2>&1 \
+   && systemctl is-active --quiet systemd-resolved 2>/dev/null \
+   && ss -H -ltnup 2>/dev/null | grep -E '127\\.0\\.0\\.(53|54)(%lo)?:53([[:space:]]|$)' | grep -Fq 'systemd-resolve'; then
+  say "Preparing systemd-resolved for the authoritative DNS role"
+  install -d -o root -g root -m 755 /etc/systemd/resolved.conf.d
+  cat >/etc/systemd/resolved.conf.d/hostpanel-dns.conf <<'EOFRESOLVED'
+[Resolve]
+DNSStubListener=no
+EOFRESOLVED
+  chmod 644 /etc/systemd/resolved.conf.d/hostpanel-dns.conf
+  if [[ -e /run/systemd/resolve/resolv.conf ]]; then
+    ln -sfn /run/systemd/resolve/resolv.conf /etc/resolv.conf
+  fi
+  systemctl restart systemd-resolved >>"$LOG" 2>&1 \
+    || die "Could not restart systemd-resolved without its DNS stub"
+  if ss -H -ltnup 2>/dev/null | grep -E '[:.]53[[:space:]]' | grep -Fq 'systemd-resolve'; then
+    die "systemd-resolved still owns port 53 after disabling its DNS stub"
+  fi
+  ok "systemd-resolved upstream resolver retained without a port 53 listener"
+fi
+
+say "Installing packages for roles: $ROLE_CSV"''',
+        "systemd-resolved DNS preparation",
     )
 
     # A clean cloud image must receive every command used later by the installer.
