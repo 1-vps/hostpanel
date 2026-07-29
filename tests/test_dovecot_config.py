@@ -11,7 +11,7 @@ BASE = ROOT / "install.base.sh"
 
 
 class DovecotConfigTests(unittest.TestCase):
-    def test_generated_postfix_profile_uses_valid_multiline_blocks(self):
+    def test_generated_mail_profiles_use_valid_multiline_blocks(self):
         with tempfile.TemporaryDirectory() as directory:
             generated = pathlib.Path(directory) / "install.generated.sh"
             subprocess.run(
@@ -34,19 +34,22 @@ class DovecotConfigTests(unittest.TestCase):
             text.count(
                 "passdb {\n  driver = passwd-file\n  args = /etc/dovecot/users\n}"
             ),
-            1,
+            2,
         )
         self.assertEqual(
             text.count(
                 "userdb {\n  driver = passwd-file\n  args = /etc/dovecot/users\n}"
             ),
-            1,
+            2,
         )
+        self.assertEqual(text.count("# Managed by HostPanel — Postfix profile"), 1)
+        self.assertEqual(text.count("# Managed by HostPanel — Exim profile"), 1)
 
-    def test_hardener_fails_closed_on_reviewed_source_shape(self):
+    def test_hardener_fails_closed_on_both_reviewed_source_shapes(self):
         hardener = HARDENER.read_text(encoding="utf-8")
-        self.assertIn('"Dovecot passwd-file block syntax"', hardener)
-        self.assertIn("count != 1", hardener)
+        self.assertIn('label == "Dovecot passwd-file block syntax"', hardener)
+        self.assertIn("expected = 2", hardener)
+        self.assertIn("count != expected", hardener)
 
 
 if __name__ == "__main__":
