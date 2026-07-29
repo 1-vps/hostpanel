@@ -36,6 +36,14 @@ class QemuDefaultVersionTests(unittest.TestCase):
         )
         self.assertNotIn('rm -rf "$ARTIFACT_DIR"/*', harness)
 
+    def test_work_directory_is_private_and_unique_per_run(self):
+        harness = HARNESS.read_text(encoding="utf-8")
+        self.assertIn('WORK_PARENT="${RUNNER_TEMP:-/tmp}"', harness)
+        self.assertIn('WORK_DIR="$(mktemp -d "$WORK_PARENT/hostpanel-qemu-acceptance.XXXXXX")"', harness)
+        self.assertIn('[[ -d "$WORK_PARENT" && ! -L "$WORK_PARENT" ]]', harness)
+        self.assertIn('if ! qemu_pid_is_ours && [[ -n "$WORK_DIR"', harness)
+        self.assertNotIn('WORK_DIR="${RUNNER_TEMP:-/tmp}/hostpanel-qemu-acceptance"', harness)
+
     def test_all_forwarded_host_ports_are_unique_and_available(self):
         harness = HARNESS.read_text(encoding="utf-8")
         self.assertIn("HOST_FORWARD_PORTS=(", harness)
