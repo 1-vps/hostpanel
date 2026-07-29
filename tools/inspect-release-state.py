@@ -23,6 +23,10 @@ TOKENS = (
     "/api/internal/readiness",
     "x-hostpanel-readiness",
     "def verify_privileged_file_modes",
+    "hostpanel-antiddos",
+    "anti-DDoS apply failed",
+    "HP_PANEL_BACKEND_PORT",
+    "12722",
 )
 found = 0
 
@@ -89,6 +93,23 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
                 if "def verify_privileged_file_modes" in line:
                     context_lines.update(
                         range(max(1, number - 8), min(len(lines), number + 80) + 1)
+                    )
+        if member.name.endswith("/ops/hostpanel-antiddos"):
+            context_label = "anti-DDoS helper"
+            context_lines.update(range(1, len(lines) + 1))
+        elif any(
+            token in line
+            for _, line in hits
+            for token in (
+                "hostpanel-antiddos",
+                "anti-DDoS apply failed",
+            )
+        ):
+            context_label = "anti-DDoS installer context"
+            for number, line in hits:
+                if "hostpanel-antiddos" in line or "anti-DDoS apply failed" in line:
+                    context_lines.update(
+                        range(max(1, number - 30), min(len(lines), number + 45) + 1)
                     )
         if context_lines:
             print(f"### {member.name} {context_label} context")
