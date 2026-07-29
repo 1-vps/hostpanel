@@ -121,7 +121,15 @@ case "$DOCTOR_STATUS" in
   0) ;;
   1) warn "Post-install health check completed with warnings; inspect $LOG" ;;
   *) die "Post-install health check failed" ;;
-esac'''
+esac
+if command -v systemctl >/dev/null 2>&1 \
+   && systemctl list-unit-files openipmi.service --no-legend 2>/dev/null | grep -q . \
+   && ! compgen -G '/dev/ipmi*' >/dev/null \
+   && [[ ! -d /dev/ipmi ]]; then
+  systemctl disable --now openipmi.service >>"$LOG" 2>&1 || true
+  systemctl reset-failed openipmi.service >>"$LOG" 2>&1 || true
+  warn "OpenIPMI service disabled because no local IPMI interface was detected"
+fi'''
 
     cron_old = r'''0 3 * * * root $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-backup >> /var/log/hostpanel-backup.log 2>&1
 30 3 * * * root $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-backup --prune 14 >> /var/log/hostpanel-backup.log 2>&1'''
@@ -133,6 +141,42 @@ esac'''
 
     postsrsd_old = r'''POSTFIX_PACKAGES=(postfix postfix-pcre opendkim postsrsd)'''
     postsrsd_new = r'''POSTFIX_PACKAGES=(postfix postfix-pcre opendkim)'''
+
+    service_order_old = r'''SERVICE_AFTER="network-online.target"
+has_role database && SERVICE_AFTER+=" mariadb.service postgresql.service"
+cat >/etc/systemd/system/hostpanel.service <<EOF
+[Unit]
+Description=HostPanel node service
+After=$SERVICE_AFTER
+Wants=network-online.target'''
+    service_order_new = r'''SERVICE_AFTER="network-online.target"
+SERVICE_WANTS="network-online.target"
+if has_role database; then
+  SERVICE_AFTER+=" mariadb.service postgresql.service"
+  SERVICE_WANTS+=" mariadb.service postgresql.service"
+fi
+if has_role web || has_role database || has_role mail; then
+  REDIS_UNIT="$(svc redis).service"
+  SERVICE_AFTER+=" $REDIS_UNIT"
+  SERVICE_WANTS+=" $REDIS_UNIT"
+fi
+cat >/etc/systemd/system/hostpanel.service <<EOF
+[Unit]
+Description=HostPanel node service
+After=$SERVICE_AFTER
+Wants=$SERVICE_WANTS'''
+
+    quota_old = r'''      if [[ "$QUOTA_MOUNT" == "/" ]]; then
+        # Add usrquota to the root entry without disturbing anything else.
+        cp /etc/fstab /etc/fstab.hostpanel.bak
+        awk '$2=="/" && $4 !~ /(^|,)usrquota(,|$)/ {$4=$4",usrquota"} {print}' OFS='\t' \
+          /etc/fstab.hostpanel.bak >/etc/fstab
+        QUOTA_STATE="configured for $QUOTA_MOUNT in fstab — reboot, then run: quotacheck -cugm $QUOTA_MOUNT && quotaon $QUOTA_MOUNT"
+      else
+        QUOTA_STATE="$QUOTA_MOUNT needs usrquota in its mount options — update fstab and remount"
+      fi'''
+    quota_new = r'''      QUOTA_STATE="$QUOTA_MOUNT needs usrquota in its mount options — update fstab, remount, then initialise quotas"
+      warn "Automatic fstab quota changes are disabled; prepare $QUOTA_MOUNT explicitly before enforcing plan quotas"'''
 
     runtime_old = r'''sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''
     runtime_new = r'''CLI_RUNTIME_PATCHER="$SOURCE_ROOT/tools/patch_cli_runtime_env.py"
@@ -174,6 +218,12 @@ sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''.replace(
     )
     updated = replace_reviewed_shape(
         updated, postsrsd_old, postsrsd_new, "unused PostSRSd package"
+    )
+    updated = replace_reviewed_shape(
+        updated, service_order_old, service_order_new, "first reboot service ordering"
+    )
+    updated = replace_reviewed_shape(
+        updated, quota_old, quota_new, "explicit quota provisioning"
     )
     updated = replace_reviewed_shape(
         updated, runtime_old, runtime_new, "CLI runtime environment injection"
