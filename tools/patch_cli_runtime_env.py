@@ -67,6 +67,14 @@ _load_runtime_environment()
 
 import osrelease'''
 
+DOCTOR_LSWS_OLD = '''    if "web" in roles:
+        expected.update({"lsws": True, service("apache"): False})'''
+DOCTOR_LSWS_NEW = '''    if "web" in roles:
+        expected.update({
+            "lsws": Path("/usr/local/lsws/bin/lswsctrl").is_file(),
+            service("apache"): False,
+        })'''
+
 MYSQL_ADMIN_OLD = '''    prelude = "SET SESSION local_infile=0;\\nSET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\\n"'''
 MYSQL_ADMIN_NEW = '''    prelude = "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\\n"'''
 
@@ -102,10 +110,19 @@ def main() -> None:
         raise SystemExit(
             "usage: patch_cli_runtime_env.py HOSTPANEL_BACKUP HOSTPANEL_DOCTOR HOSTPANEL_MYSQL_ADMIN"
         )
-    patch(pathlib.Path(sys.argv[1]), BACKUP_OLD, BACKUP_NEW, "backup CLI")
-    patch(pathlib.Path(sys.argv[2]), DOCTOR_OLD, DOCTOR_NEW, "doctor CLI")
+    backup = pathlib.Path(sys.argv[1])
+    doctor = pathlib.Path(sys.argv[2])
+    mysql_admin = pathlib.Path(sys.argv[3])
+    patch(backup, BACKUP_OLD, BACKUP_NEW, "backup CLI")
+    patch(doctor, DOCTOR_OLD, DOCTOR_NEW, "doctor CLI")
     patch(
-        pathlib.Path(sys.argv[3]),
+        doctor,
+        DOCTOR_LSWS_OLD,
+        DOCTOR_LSWS_NEW,
+        "doctor OpenLiteSpeed fallback",
+    )
+    patch(
+        mysql_admin,
         MYSQL_ADMIN_OLD,
         MYSQL_ADMIN_NEW,
         "MariaDB root gateway",
