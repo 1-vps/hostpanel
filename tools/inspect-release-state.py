@@ -22,6 +22,7 @@ TOKENS = (
     "TrustedHostMiddleware",
     "/api/internal/readiness",
     "x-hostpanel-readiness",
+    "def verify_privileged_file_modes",
 )
 found = 0
 
@@ -81,6 +82,13 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
                 ):
                     context_lines.update(
                         range(max(1, number - 12), min(len(lines), number + 12) + 1)
+                    )
+        if any("def verify_privileged_file_modes" in line for _, line in hits):
+            context_label = "privileged file verification"
+            for number, line in hits:
+                if "def verify_privileged_file_modes" in line:
+                    context_lines.update(
+                        range(max(1, number - 8), min(len(lines), number + 80) + 1)
                     )
         if context_lines:
             print(f"### {member.name} {context_label} context")
