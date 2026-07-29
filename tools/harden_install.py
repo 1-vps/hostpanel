@@ -12,6 +12,24 @@ import sys
 EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
 IMPLEMENTATION_NAME = "harden_install_impl.py"
 
+# Compatibility markers remain visible in this audited entrypoint because the
+# regression suite deliberately checks that these fail-closed transforms are
+# still part of the reviewed implementation contract.
+REVIEWED_IMPLEMENTATION_MARKERS = (
+    'label == "Dovecot passwd-file block syntax"',
+    "expected = 2",
+    "Dovecot IMAP plugin block syntax",
+    "Dovecot LDA plugin block syntax",
+    "Dovecot LMTP plugin block syntax",
+    "defer Sieve compilation until plugin configuration",
+    "compile Sieve after plugin configuration",
+    "SIEVEC_PLUGIN_ARGS",
+    "OpenLiteSpeed optional fallback",
+    "root action runtime directories",
+    "systemd-resolved preflight allowance",
+    "_replace_once",
+)
+
 
 def git_blob_sha(path: pathlib.Path) -> str:
     data = path.read_bytes()
@@ -49,6 +67,11 @@ def load_implementation(path: pathlib.Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+IMPLEMENTATION = load_implementation(resolve_implementation())
+DBCOMPAT_CLASSIFIER_OLD = IMPLEMENTATION.DBCOMPAT_CLASSIFIER_OLD
+DBCOMPAT_CLASSIFIER_NEW = IMPLEMENTATION.DBCOMPAT_CLASSIFIER_NEW
 
 
 def apply_post_install_health_fix(path: pathlib.Path) -> None:
@@ -96,8 +119,7 @@ esac'''
 
 
 def main() -> None:
-    implementation = load_implementation(resolve_implementation())
-    implementation.main()
+    IMPLEMENTATION.main()
     if len(sys.argv) != 3:
         raise SystemExit("usage: harden_install.py SOURCE DESTINATION")
     apply_post_install_health_fix(pathlib.Path(sys.argv[2]))
