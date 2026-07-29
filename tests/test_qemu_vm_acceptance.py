@@ -5,6 +5,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "qemu-vm-acceptance.yml"
 HARNESS = ROOT / "tools" / "run-qemu-vm-acceptance.sh"
+GUEST_INSTALLER = ROOT / "tools" / "qemu-guest-install.sh"
 
 
 class QemuVmAcceptanceTests(unittest.TestCase):
@@ -12,6 +13,7 @@ class QemuVmAcceptanceTests(unittest.TestCase):
     def setUpClass(cls):
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
         cls.harness = HARNESS.read_text(encoding="utf-8")
+        cls.guest_installer = GUEST_INSTALLER.read_text(encoding="utf-8")
 
     def test_workflow_is_secretless_and_least_privilege(self):
         self.assertIn("permissions:\n  contents: read", self.workflow)
@@ -65,7 +67,7 @@ class QemuVmAcceptanceTests(unittest.TestCase):
 
     def test_harness_performs_real_systemd_reboot_acceptance(self):
         self.assertIn('test "$(cat /proc/1/comm)" = systemd', self.harness)
-        self.assertIn("--prepare-reboot", self.harness)
+        self.assertIn("--prepare-reboot", self.guest_installer)
         self.assertIn("sudo systemctl reboot", self.harness)
         self.assertIn("--post-reboot", self.harness)
         self.assertIn("guest boot ID did not change", self.harness)
@@ -74,13 +76,23 @@ class QemuVmAcceptanceTests(unittest.TestCase):
     def test_generated_credentials_and_install_output_remain_private(self):
         self.assertIn(
             "generated credentials stay in the root-only guest log",
-            self.harness,
+            self.guest_installer,
         )
         self.assertIn(
-            "private installer output was not exported",
-            self.harness,
+            "hostpanel-qemu-private-install.log",
+            self.guest_installer,
         )
-        self.assertNotIn("hostpanel-qemu-private-install.log\" \"$ARTIFACT_DIR", self.harness)
+        self.assertNotIn("$PRIVATE_LOG\" > \"$EVIDENCE", self.guest_installer)
+        self.assertNotIn("cat \"$PRIVATE_LOG\"", self.guest_installer)
+
+    def test_failure_evidence_is_stage_based_and_redacted(self):
+        self.assertIn("/etc/hostpanel/install-state", self.guest_installer)
+        self.assertIn("redacted installer errors", self.guest_installer)
+        self.assertIn(
+            "password|passwd|secret|token|credential|private[ _-]?key",
+            self.guest_installer,
+        )
+        self.assertIn("install-failure-summary.txt", self.guest_installer)
 
 
 if __name__ == "__main__":
