@@ -393,6 +393,13 @@ sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"''',
 
     text = _replace_once(
         text,
+        '  die "OpenLiteSpeed binary is missing after installation"',
+        '  warn "OpenLiteSpeed backend unavailable; nginx and Apache remain active"',
+        "OpenLiteSpeed optional fallback",
+    )
+
+    text = _replace_once(
+        text,
         '''if id _rspamd >/dev/null 2>&1; then chown -R _rspamd:_rspamd /etc/rspamd/local.d; elif id rspamd >/dev/null 2>&1; then chown -R rspamd:rspamd /etc/rspamd/local.d; fi
 
 systemctl enable --now "$(svc redis)"''',
