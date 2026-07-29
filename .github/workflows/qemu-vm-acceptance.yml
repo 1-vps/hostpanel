@@ -80,7 +80,10 @@ jobs:
           fi
 
       - name: Boot, install, reboot, and validate
-        run: ./tools/run-qemu-vm-acceptance.sh
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/qemu-vm-acceptance
+          bash tools/run-qemu-vm-acceptance.sh
 
       - name: Upload non-sensitive VM evidence
         if: ${{ always() }}
