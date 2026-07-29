@@ -87,6 +87,12 @@ for port in "$SSH_PORT" "$PANEL_FORWARD_PORT"; do
   [[ "$port" =~ ^[0-9]+$ ]] && ((port >= 1024 && port <= 65535)) \
     || die "invalid unprivileged host port: $port"
 done
+for source_file in \
+  "$REPO_ROOT/bootstrap-install.sh" \
+  "$REPO_ROOT/tools/validate-production-vm.sh" \
+  "$REPO_ROOT/tools/qemu-guest-install.sh"; do
+  [[ -f "$source_file" && ! -L "$source_file" ]] || die "unsafe or missing source file: $source_file"
+done
 
 printf '%s  %s\n' "$IMAGE_SHA256" "$WORK_DIR/base.img" > "$WORK_DIR/image.sha256"
 curl -fL --retry 5 --retry-all-errors --connect-timeout 20 \
@@ -167,10 +173,6 @@ ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
   'test "$(cat /proc/1/comm)" = systemd; cat /etc/os-release; uname -a; df -hT; free -h' \
   | tee "$ARTIFACT_DIR/pre-install-inventory.txt"
 
-scp "${scp_opts[@]}" \
-  "$REPO_ROOT/bootstrap-install.sh" \
-  "$REPO_ROOT/tools/validate-production-vm.sh" \
-  hostpanel@127.0.0.1:/tmp/
 cat > "$WORK_DIR/guest.env" <<EOF
 HP_REVIEWED_COMMIT_SHA=${REVIEWED_COMMIT_SHA}
 HP_EXPECTED_VERSION=${EXPECTED_VERSION}
@@ -179,69 +181,15 @@ HP_EXPECTED_PUBLIC_IP=${GUEST_IP}
 HP_PANEL_ADMIN_CIDR=${ADMIN_CIDR}
 HP_MTA=${MTA}
 EOF
-cat > "$WORK_DIR/guest-install.sh" <<'GUEST'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-umask 077
-source /tmp/guest.env
-EVIDENCE=/root/hostpanel-qemu-evidence
-PREFLIGHT_LOG="$EVIDENCE/preflight.log"
-PRIVATE_LOG=/root/hostpanel-qemu-private-install.log
-install -d -o root -g root -m 700 "$EVIDENCE"
-: > "$PRIVATE_LOG"
-chmod 600 "$PRIVATE_LOG"
-trap 'status=$?; printf "Guest installation failed at line %s (private installer output was not exported).\n" "$LINENO" >&2; exit "$status"' ERR
-
-test "$(cat /proc/1/comm)" = systemd
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq >> "$PRIVATE_LOG" 2>&1
-apt-get install -y -qq ca-certificates curl git openssl python3 >> "$PRIVATE_LOG" 2>&1
-install -o root -g root -m 700 /tmp/bootstrap-install.sh /root/bootstrap-install.sh
-install -o root -g root -m 700 /tmp/validate-production-vm.sh /root/validate-production-vm.sh
-
-common_env=(
-  HP_REPO_REF="$HP_REVIEWED_COMMIT_SHA"
-  HP_PANEL_HOST="$HP_PANEL_HOST"
-  HP_PANEL_ADMIN_CIDR="$HP_PANEL_ADMIN_CIDR"
-  HP_MULTI_PHP_REPO=off
-  HP_RSPAMD_REPO=off
-)
-install_args=(--mta "$HP_MTA")
-echo 'Running installer preflight; its non-secret diagnostics are exported as evidence.'
-if ! env "${common_env[@]}" bash /root/bootstrap-install.sh --check "${install_args[@]}" > "$PREFLIGHT_LOG" 2>&1; then
-  echo 'Installer preflight failed:' >&2
-  tail -n 200 "$PREFLIGHT_LOG" >&2
-  exit 1
-fi
-echo 'Running full installation; generated credentials stay in the root-only guest log.'
-env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
-
-test "$(tr -d '[:space:]' < /opt/hostpanel/VERSION)" = "$HP_EXPECTED_VERSION"
-env \
-  HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
-  HP_PANEL_HOST="$HP_PANEL_HOST" \
-  HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
-  bash /root/validate-production-vm.sh --check \
-  | tee "$EVIDENCE/pre-reboot-validator.txt"
-env \
-  HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
-  HP_PANEL_HOST="$HP_PANEL_HOST" \
-  HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
-  bash /root/validate-production-vm.sh --prepare-reboot \
-  | tee "$EVIDENCE/prepare-reboot-validator.txt"
-cat /etc/os-release > "$EVIDENCE/os-release.txt"
-uname -a > "$EVIDENCE/uname.txt"
-cat /proc/sys/kernel/random/boot_id > "$EVIDENCE/pre-reboot-boot-id.txt"
-cat /opt/hostpanel/VERSION > "$EVIDENCE/version.txt"
-systemctl --failed --no-legend --plain > "$EVIDENCE/failed-units-pre-reboot.txt" || true
-GUEST
-chmod 700 "$WORK_DIR/guest-install.sh"
 chmod 600 "$WORK_DIR/guest.env"
 scp "${scp_opts[@]}" \
-  "$WORK_DIR/guest.env" "$WORK_DIR/guest-install.sh" \
+  "$REPO_ROOT/bootstrap-install.sh" \
+  "$REPO_ROOT/tools/validate-production-vm.sh" \
+  "$REPO_ROOT/tools/qemu-guest-install.sh" \
+  "$WORK_DIR/guest.env" \
   hostpanel@127.0.0.1:/tmp/
 ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
-  'sudo chown root:root /tmp/guest.env /tmp/guest-install.sh && sudo chmod 600 /tmp/guest.env && sudo chmod 700 /tmp/guest-install.sh && sudo /tmp/guest-install.sh'
+  'sudo chown root:root /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh /tmp/guest.env && sudo chmod 700 /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh && sudo chmod 600 /tmp/guest.env && sudo /tmp/qemu-guest-install.sh'
 
 PRE_REBOOT_BOOT_ID="$(ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 'cat /proc/sys/kernel/random/boot_id')"
 ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 'sudo systemctl reboot' || true
