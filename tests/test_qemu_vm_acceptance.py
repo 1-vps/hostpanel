@@ -60,6 +60,7 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         )
         self.assertIn("sha256sum -c image.sha256", self.harness)
         self.assertIn("cloud-localds", self.harness)
+        self.assertIn("manage_etc_hosts: true", self.harness)
 
     def test_harness_uses_ephemeral_key_auth_and_no_password(self):
         self.assertIn("ssh-keygen -q -t ed25519", self.harness)
@@ -67,6 +68,14 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertIn("BatchMode=yes", self.harness)
         self.assertNotIn("SSHPASS", self.harness)
         self.assertNotIn("VPS_ROOT_PASSWORD", self.harness)
+
+    def test_qemu_cleanup_revalidates_pid_ownership(self):
+        self.assertIn("qemu_pid_is_ours(){", self.harness)
+        self.assertIn('/proc/$QEMU_PID/cmdline', self.harness)
+        self.assertIn("qemu-system-x86_64", self.harness)
+        self.assertIn('$WORK_DIR/disk.qcow2', self.harness)
+        self.assertIn("qemu_pid_is_ours && kill -KILL", self.harness)
+        self.assertNotIn('kill -0 "$QEMU_PID"', self.harness)
 
     def test_harness_performs_real_systemd_reboot_acceptance(self):
         self.assertIn('test "$(cat /proc/1/comm)" = systemd', self.harness)
