@@ -132,28 +132,30 @@ esac'''
     doctor_cron_new = r'''0 6 * * 1 root HP_DB=$PANEL_DIR/hostpanel.db HP_DATABASE_URL_FILE=$PANEL_DIR/credentials/database-url HP_MASTER_KEY_FILE=$PANEL_DIR/credentials/master.key HP_VHOST_ROOT=$VHOST_ROOT HP_BACKUP_DIR=$BACKUP_DIR $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-doctor --quiet >> /var/log/hostpanel-doctor.log 2>&1'''
 
     runtime_old = r'''sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''
-    runtime_new = rf'''CLI_RUNTIME_PATCHER="$SOURCE_ROOT/tools/patch_cli_runtime_env.py"
+    runtime_new = r'''CLI_RUNTIME_PATCHER="$SOURCE_ROOT/tools/patch_cli_runtime_env.py"
 if [[ ! -f "$CLI_RUNTIME_PATCHER" || -L "$CLI_RUNTIME_PATCHER" ]]; then
   mapfile -t CLI_RUNTIME_PATCHERS < <(
     find /tmp -path '/tmp/hostpanel-bootstrap.*/repository/tools/patch_cli_runtime_env.py' \
       -type f ! -type l -print 2>/dev/null
   )
-  ((${#{'{'}CLI_RUNTIME_PATCHERS[@]{'}'} == 1)) \
+  ((${#CLI_RUNTIME_PATCHERS[@]} == 1)) \
     || die "Could not resolve exactly one reviewed CLI runtime environment patcher"
-  CLI_RUNTIME_PATCHER="${{'{'}CLI_RUNTIME_PATCHERS[0]{'}'}}"
+  CLI_RUNTIME_PATCHER="${CLI_RUNTIME_PATCHERS[0]}"
 fi
 [[ -f "$CLI_RUNTIME_PATCHER" && ! -L "$CLI_RUNTIME_PATCHER" ]] \
   || die "The reviewed CLI runtime environment patcher is missing or unsafe"
 CLI_RUNTIME_PATCHER_BLOB="$(git hash-object --no-filters "$CLI_RUNTIME_PATCHER")" \
   || die "Could not hash the reviewed CLI runtime environment patcher"
-[[ "$CLI_RUNTIME_PATCHER_BLOB" == "{EXPECTED_CLI_PATCHER_BLOB}" ]] \
+[[ "$CLI_RUNTIME_PATCHER_BLOB" == "__EXPECTED_CLI_PATCHER_BLOB__" ]] \
   || die "The CLI runtime environment patcher does not match the reviewed Git blob"
 python3 "$CLI_RUNTIME_PATCHER" \
   "$PANEL_DIR/app/hostpanel-backup" "$PANEL_DIR/app/hostpanel-doctor" >>"$LOG" 2>&1 \
   || die "Could not apply the reviewed CLI runtime environment patch"
 python3 -m py_compile "$PANEL_DIR/app/hostpanel-backup" "$PANEL_DIR/app/hostpanel-doctor" >>"$LOG" 2>&1 \
   || die "Patched CLI runtime environment loaders do not compile"
-sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''
+sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''.replace(
+        "__EXPECTED_CLI_PATCHER_BLOB__", EXPECTED_CLI_PATCHER_BLOB
+    )
 
     text = path.read_text(encoding="utf-8")
     updated = replace_reviewed_shape(
