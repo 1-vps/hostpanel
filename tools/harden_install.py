@@ -33,15 +33,11 @@ DBCOMPAT_CLASSIFIER_NEW = r'''        for statement in statements:
 
 
 def _module_replace_once(text: str, old: str, new: str, label: str) -> str:
-    # The rollback arrays are initialized near startup and cleared after a
-    # successful install. Only the startup occurrence receives additional state.
     if label == "rollback state":
         count = text.count(old)
         if count < 1:
             raise SystemExit(f"{label}: expected at least one match, found {count}")
         return text.replace(old, new, 1)
-    # Earlier module-recording edits can change whitespace around this block.
-    # Match the two stable boundary statements and require exactly one block.
     if label == "validate loaded PHP baseline":
         pattern = re.compile(
             r'''printf '%s\\n' "\$\{PHP_INSTALLED\[@\]\}" >/etc/hostpanel/php-versions\n'''
@@ -62,9 +58,6 @@ def _replace_once(text: str, old: str, new: str, label: str) -> str:
 
 
 def _regex_once(text: str, pattern: str, replacement: str, label: str) -> str:
-    # The external-repository replacement intentionally renames the section
-    # marker before the firewall helper is injected. Keep the later fail-closed
-    # match aligned with the transformed marker.
     if label == "timed firewall rollback helper":
         pattern = pattern.replace(
             "# ---- Enterprise Linux repositories",
@@ -82,8 +75,6 @@ MODULE.regex_once = _regex_once
 
 
 def compatibility_hardening(text: str) -> str:
-    # Remove newly installed packages before restoring saved configuration;
-    # package removal scripts must not delete files that were just restored.
     text = _replace_once(
         text,
         '''      remove_paths_absent_before_install
@@ -101,8 +92,6 @@ def compatibility_hardening(text: str) -> str:
         "rollback ordering",
     )
 
-    # Reject a missing or malformed administrative source during preflight,
-    # before package or firewall mutation begins.
     text = _replace_once(
         text,
         r'''[[ "$PREFLIGHT_HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$ ]] \
@@ -135,9 +124,6 @@ if [[ "$REINSTALL" != yes && -f "$PANEL_DIR/config.env" ]]; then''',
         "early administrative source validation",
     )
 
-    # Ubuntu's normal systemd-resolved loopback stub is not an existing DNS
-    # stack. Allow only that exact listener during check mode; any other process
-    # or non-loopback address on port 53 remains a fail-closed conflict.
     text = _replace_once(
         text,
         '''  for port in "${PORTS[@]}"; do
@@ -160,9 +146,6 @@ if [[ "$REINSTALL" != yes && -f "$PANEL_DIR/config.env" ]]; then''',
         "systemd-resolved preflight allowance",
     )
 
-    # Retain upstream name resolution while freeing port 53 before BIND is
-    # installed. This runs only for the DNS role on Debian-family systems and
-    # only when the standard systemd-resolved loopback stub is active.
     text = _replace_once(
         text,
         '''# --------------------------------------------------------------------------- #
@@ -194,7 +177,6 @@ say "Installing packages for roles: $ROLE_CSV"''',
         "systemd-resolved DNS preparation",
     )
 
-    # A clean cloud image must receive every command used later by the installer.
     text = _replace_once(
         text,
         '''COMMON_PACKAGES=(openssl rsync acl gnupg sqlite3 needrestart inotify-tools smartmontools prometheus-node-exporter iproute2 git ca-certificates python3 python3-venv python3-pip curl ufw fail2ban unzip sudo nginx)''',
@@ -211,13 +193,21 @@ say "Installing packages for roles: $ROLE_CSV"''',
         "RHEL cron package mapping",
     )
 
-    # The signed r5 runtime sorts PostgreSQL CREATE TABLE statements by foreign
-    # key dependencies, but its classifier misses statements with leading SQL
-    # comments. Patch the installed copy atomically and fail closed if the
-    # reviewed source shape has changed. The same signed runtime also uses the
-    # PostgreSQL-reserved identifier "offset" for two cursor tables; rename those
-    # fields and their runtime statements before either recovery or control-plane
-    # schema initialization.
+    text = _replace_once(
+        text,
+        '''passdb { driver = passwd-file; args = /etc/dovecot/users }
+userdb { driver = passwd-file; args = /etc/dovecot/users }''',
+        '''passdb {
+  driver = passwd-file
+  args = /etc/dovecot/users
+}
+userdb {
+  driver = passwd-file
+  args = /etc/dovecot/users
+}''',
+        "Dovecot passwd-file block syntax",
+    )
+
     runtime_patch = f'''sync_release_tree "$SOURCE_ROOT/app" "$PANEL_DIR/app"
 python3 - "$PANEL_DIR/app/dbcompat.py" <<'PYDBCOMPAT' >>"$LOG" 2>&1 \
   || die "Could not apply the reviewed PostgreSQL schema compatibility patch"
@@ -343,7 +333,6 @@ sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"''',
         "PostgreSQL runtime compatibility patches",
     )
 
-    # The Rspamd Redis password must not inherit a world-readable default mode.
     text = _replace_once(
         text,
         '''if id _rspamd >/dev/null 2>&1; then chown -R _rspamd:_rspamd /etc/rspamd/local.d; elif id rspamd >/dev/null 2>&1; then chown -R rspamd:rspamd /etc/rspamd/local.d; fi
