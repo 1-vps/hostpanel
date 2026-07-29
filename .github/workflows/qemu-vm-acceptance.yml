@@ -15,6 +15,7 @@ on:
     paths:
       - .github/workflows/qemu-vm-acceptance.yml
       - tools/run-qemu-vm-acceptance.sh
+      - tools/qemu-guest-install.sh
       - tools/validate-production-vm.sh
       - tools/harden_install.py
       - tools/harden_install_runtime.py
@@ -55,6 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           bash -n tools/run-qemu-vm-acceptance.sh
+          bash -n tools/qemu-guest-install.sh
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
           python3 -m unittest discover -s tests -p 'test_systemd_resolved_dns.py' -v
 
