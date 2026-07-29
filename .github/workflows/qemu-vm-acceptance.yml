@@ -30,6 +30,7 @@ on:
       - SHA256SUMS
       - '*.sig'
       - tests/test_qemu_vm_acceptance.py
+      - tests/test_qemu_default_version.py
       - tests/test_post_install_health.py
       - tests/test_first_reboot_hardening.py
       - tests/test_qemu_reboot_wait.py
@@ -74,6 +75,7 @@ jobs:
           bash -n tools/run-qemu-vm-acceptance.sh
           bash -n tools/qemu-guest-install.sh
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
+          python3 -m unittest discover -s tests -p 'test_qemu_default_version.py' -v
           python3 -m unittest discover -s tests -p 'test_systemd_resolved_dns.py' -v
 
       - name: Reclaim runner disk
