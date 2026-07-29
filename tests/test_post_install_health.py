@@ -1,5 +1,6 @@
 import pathlib
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -7,6 +8,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HARDENER = ROOT / "tools" / "harden_install.py"
 IMPLEMENTATION = ROOT / "tools" / "harden_install_impl.py"
+PATCHER = ROOT / "tools" / "patch_cli_runtime_env.py"
 MATRIX = ROOT / "test-matrix.sh"
 BASE = ROOT / "install.base.sh"
 EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
@@ -23,6 +25,20 @@ def git_blob_sha(path: pathlib.Path) -> str:
     return result.stdout.strip()
 
 
+def extract_signed_source(suffix: str, destination: pathlib.Path) -> None:
+    archives = sorted(ROOT.glob("hostpanel-*-source.tar.gz"))
+    if len(archives) != 1:
+        raise RuntimeError(f"expected one signed source archive, found {len(archives)}")
+    with tarfile.open(archives[0], "r:gz") as archive:
+        matches = [member for member in archive.getmembers() if member.name.endswith(suffix)]
+        if len(matches) != 1:
+            raise RuntimeError(f"expected one {suffix}, found {len(matches)}")
+        handle = archive.extractfile(matches[0])
+        if handle is None:
+            raise RuntimeError(f"could not read {suffix}")
+        destination.write_bytes(handle.read())
+
+
 class PostInstallHealthTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -35,11 +51,32 @@ class PostInstallHealthTests(unittest.TestCase):
         )
         cls.generated = cls.generated_path.read_text(encoding="utf-8")
         cls.wrapper = HARDENER.read_text(encoding="utf-8")
+        cls.patcher = PATCHER.read_text(encoding="utf-8")
         cls.matrix = MATRIX.read_text(encoding="utf-8")
+
+        cls.runtime_temp = tempfile.TemporaryDirectory(prefix="hostpanel-cli-runtime-")
+        runtime_root = pathlib.Path(cls.runtime_temp.name)
+        cls.backup_path = runtime_root / "hostpanel-backup"
+        cls.doctor_path = runtime_root / "hostpanel-doctor"
+        extract_signed_source("/app/hostpanel-backup", cls.backup_path)
+        extract_signed_source("/app/hostpanel-doctor", cls.doctor_path)
+        for _ in range(2):
+            subprocess.run(
+                ["python3", str(PATCHER), str(cls.backup_path), str(cls.doctor_path)],
+                cwd=ROOT,
+                check=True,
+            )
+        subprocess.run(
+            ["python3", "-m", "py_compile", str(cls.backup_path), str(cls.doctor_path)],
+            check=True,
+        )
+        cls.patched_backup = cls.backup_path.read_text(encoding="utf-8")
+        cls.patched_doctor = cls.doctor_path.read_text(encoding="utf-8")
 
     @classmethod
     def tearDownClass(cls):
         cls.generated_path.unlink(missing_ok=True)
+        cls.runtime_temp.cleanup()
 
     def test_blob_pinned_implementation_is_present(self):
         self.assertTrue(IMPLEMENTATION.is_file())
@@ -60,34 +97,47 @@ class PostInstallHealthTests(unittest.TestCase):
         self.assertLess(wrapper_copy, implementation_copy)
         self.assertLess(implementation_copy, runtime_copy)
 
-    def test_cli_environment_loader_is_installed_before_backup(self):
-        injection = self.generated.index(
-            "Could not apply the reviewed CLI runtime environment patch"
+    def test_cli_environment_patcher_runs_before_backup(self):
+        patcher = self.generated.index(
+            'python3 "$SOURCE_ROOT/tools/patch_cli_runtime_env.py"'
         )
         compile_check = self.generated.index(
-            "Patched CLI runtime environment loaders do not compile", injection
+            "Patched CLI runtime environment loaders do not compile", patcher
         )
         backup = self.generated.index('say "Creating the initial verified backup"')
-        self.assertLess(injection, compile_check)
+        self.assertLess(patcher, compile_check)
         self.assertLess(compile_check, backup)
-        self.assertEqual(self.generated.count("_load_runtime_environment()"), 4)
+        self.assertIn(
+            '[[ -f "$SOURCE_ROOT/tools/patch_cli_runtime_env.py" && ! -L "$SOURCE_ROOT/tools/patch_cli_runtime_env.py" ]]',
+            self.generated,
+        )
 
     def test_cli_environment_loader_is_strict_and_non_shell(self):
-        loader = self.generated.index(
-            '_RUNTIME_ENV_KEY = _runtime_re.compile(r"HP_[A-Z0-9_]{1,128}")'
-        )
-        block = self.generated[loader:loader + 1900]
-        self.assertIn("config.stat(follow_symlinks=False)", block)
-        self.assertIn("metadata.st_uid != 0", block)
-        self.assertIn("metadata.st_mode & 0o022", block)
-        self.assertIn("or key in seen", block)
-        self.assertIn("_runtime_os.environ.setdefault(key, value)", block)
+        self.assertIn("config.stat(follow_symlinks=False)", self.patcher)
+        self.assertIn("metadata.st_uid != 0", self.patcher)
+        self.assertIn("metadata.st_mode & 0o022", self.patcher)
+        self.assertIn("or key in seen", self.patcher)
+        self.assertIn("_runtime_os.environ.setdefault(key, value)", self.patcher)
         self.assertIn(
             'required = ("HP_SECRET", "HP_DATABASE_URL_FILE", "HP_MASTER_KEY_FILE")',
-            block,
+            self.patcher,
         )
         self.assertNotIn('. "$PANEL_DIR/config.env"', self.generated)
         self.assertNotIn('source "$PANEL_DIR/config.env"', self.generated)
+
+    def test_signed_clis_are_patched_idempotently_and_compile(self):
+        for text in (self.patched_backup, self.patched_doctor):
+            self.assertEqual(text.count("def _load_runtime_environment()"), 1)
+            self.assertEqual(text.count("_load_runtime_environment()"), 2)
+            self.assertIn('required = ("HP_SECRET", "HP_DATABASE_URL_FILE", "HP_MASTER_KEY_FILE")', text)
+        self.assertLess(
+            self.patched_backup.index("_load_runtime_environment()"),
+            self.patched_backup.index("from modules import backups"),
+        )
+        self.assertLess(
+            self.patched_doctor.index("_load_runtime_environment()"),
+            self.patched_doctor.index("import osrelease"),
+        )
 
     def test_initial_backup_precedes_doctor_for_backup_role(self):
         backup = self.generated.index('say "Creating the initial verified backup"')
