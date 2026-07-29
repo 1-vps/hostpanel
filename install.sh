@@ -176,6 +176,64 @@ try:
 finally:
     temporary.unlink(missing_ok=True)
 PYUVICORNEXEC
+python3 - "$GENERATED_INSTALLER" <<'PYQUOTEDSQL' \
+  || die "Could not apply the reviewed quoted SQL identifier fix"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe generated installer target: {path}")
+old = '''    pathlib.Path(sys.argv[1]): (
+        (
+            "traffic cursor schema",
+            "    offset       INTEGER NOT NULL DEFAULT 0,",
+            "    cursor_offset INTEGER NOT NULL DEFAULT 0,",
+            1,
+        ),
+    ),'''
+new = '''    pathlib.Path(sys.argv[1]): (
+        (
+            "traffic cursor schema",
+            "    offset       INTEGER NOT NULL DEFAULT 0,",
+            "    cursor_offset INTEGER NOT NULL DEFAULT 0,",
+            1,
+        ),
+        (
+            "dynamic user update identifiers",
+            '    assignments = ", ".join(f"{key} = ?" for key in updates)',
+            '    assignments = ", ".join(f\\'"{key}" = ?\\' for key in updates)',
+            1,
+        ),
+        (
+            "schema migration identifiers",
+            '                db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")',
+            '                db.execute(f\\'ALTER TABLE "{table}" ADD COLUMN "{name}" {definition}\\')',
+            1,
+        ),
+    ),'''
+text = path.read_text(encoding="utf-8")
+old_count = text.count(old)
+new_count = text.count(new)
+if new_count == 1:
+    updated = text
+elif old_count == 1 and new_count == 0:
+    updated = text.replace(old, new, 1)
+else:
+    raise SystemExit(
+        f"unexpected quoted SQL identifier patch shape: old={old_count} new={new_count}"
+    )
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{path.name}.quoted-sql.{os.getpid()}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYQUOTEDSQL
 python3 - "$GENERATED_INSTALLER" <<'PYPROXYLOG' \
   || die "Could not apply the reviewed proxy traffic log pre-start fix"
 import os
