@@ -3,9 +3,10 @@
 # and run the production VM validator without external VPS credentials.
 set -Eeuo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 WORK_DIR="${RUNNER_TEMP:-/tmp}/hostpanel-qemu-acceptance"
-ARTIFACT_DIR="$REPO_ROOT/artifacts/qemu-vm-acceptance"
+ARTIFACT_ROOT="$REPO_ROOT/artifacts"
+ARTIFACT_DIR="$ARTIFACT_ROOT/qemu-vm-acceptance"
 IMAGE_URL="${HP_QEMU_IMAGE_URL:-https://cloud-images.ubuntu.com/releases/noble/release-20260725/ubuntu-24.04-server-cloudimg-amd64.img}"
 IMAGE_SHA256="${HP_QEMU_IMAGE_SHA256:-d1940f7d69d343355e183dff1e08a59852d32e7309baa7a4bad8365b11b005ac}"
 REVIEWED_COMMIT_SHA="${HP_QEMU_REVIEWED_COMMIT_SHA:-}"
@@ -21,13 +22,22 @@ GUEST_IP="${HP_QEMU_GUEST_IP:-10.0.2.15}"
 ADMIN_CIDR="${HP_QEMU_ADMIN_CIDR:-10.0.2.2/32}"
 QEMU_PID=""
 
-mkdir -p "$WORK_DIR" "$ARTIFACT_DIR"
-chmod 700 "$WORK_DIR"
-rm -rf "$ARTIFACT_DIR"/*
-exec > >(tee "$ARTIFACT_DIR/runner.log") 2>&1
-
 die(){ printf 'Error: %s\n' "$*" >&2; exit 1; }
 require(){ command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
+for artifact_path in "$ARTIFACT_ROOT" "$ARTIFACT_DIR"; do
+  if [[ -e "$artifact_path" || -L "$artifact_path" ]]; then
+    [[ -d "$artifact_path" && ! -L "$artifact_path" ]] \
+      || die "unsafe artifact directory: $artifact_path"
+  fi
+done
+mkdir -p "$WORK_DIR" "$ARTIFACT_DIR"
+[[ -d "$ARTIFACT_ROOT" && ! -L "$ARTIFACT_ROOT" \
+   && -d "$ARTIFACT_DIR" && ! -L "$ARTIFACT_DIR" ]] \
+  || die 'artifact directories changed during setup'
+chmod 700 "$WORK_DIR" "$ARTIFACT_DIR"
+find "$ARTIFACT_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+exec > >(tee "$ARTIFACT_DIR/runner.log") 2>&1
+
 qemu_pid_is_ours(){
   local cmdline
   [[ "$QEMU_PID" =~ ^[0-9]+$ && -r "/proc/$QEMU_PID/cmdline" ]] || return 1
@@ -138,10 +148,32 @@ done
 [[ "$EXPECTED_VERSION" =~ ^[0-9]+(\.[0-9]+){2}([-+][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] \
   || die 'HP_QEMU_EXPECTED_VERSION must be a release version'
 case "$MTA" in postfix|exim) ;; *) die "unsupported MTA: $MTA" ;; esac
-for port in "$SSH_PORT" "$PANEL_FORWARD_PORT"; do
+HOST_FORWARD_PORTS=(
+  "$SSH_PORT" "$PANEL_FORWARD_PORT" 30025 30143 30993 30080 30443
+)
+for port in "${HOST_FORWARD_PORTS[@]}"; do
   [[ "$port" =~ ^[0-9]+$ ]] && ((port >= 1024 && port <= 65535)) \
     || die "invalid unprivileged host port: $port"
 done
+python3 - "${HOST_FORWARD_PORTS[@]}" <<'PYPORTS' \
+  || die 'QEMU host-forward ports must be unique and free on 127.0.0.1'
+import socket
+import sys
+
+seen = set()
+sockets = []
+for raw in sys.argv[1:]:
+    port = int(raw)
+    if port in seen:
+        raise SystemExit(f"duplicate QEMU host-forward port: {port}")
+    seen.add(port)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError as exc:
+        raise SystemExit(f"QEMU host-forward port {port} is unavailable: {exc}") from exc
+    sockets.append(sock)
+PYPORTS
 for source_file in \
   "$REPO_ROOT/bootstrap-install.sh" \
   "$REPO_ROOT/tools/validate-production-vm.sh" \
