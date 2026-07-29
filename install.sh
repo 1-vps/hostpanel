@@ -105,6 +105,41 @@ try:
 finally:
     temporary.unlink(missing_ok=True)
 PYPRIVMANIFEST
+python3 - "$GENERATED_INSTALLER" <<'PYVENVRUNTIME' \
+  || die "Could not apply the reviewed runtime permission fix"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe generated installer target: {path}")
+old = '''chown -R root:root "$PANEL_DIR/app" "$PANEL_DIR/ops" "$PANEL_DIR/venvs" "$PANEL_DIR/plugins"
+find "$PANEL_DIR/app" -type d -exec chmod 755 {} +'''
+new = '''chown -R root:root "$PANEL_DIR/app" "$PANEL_DIR/ops" "$PANEL_DIR/venvs" "$PANEL_DIR/plugins"
+chmod -R a+rX "$PANEL_DIR/venvs"
+find "$PANEL_DIR/app" -type d -exec chmod 755 {} +'''
+text = path.read_text(encoding="utf-8")
+old_count = text.count(old)
+new_count = text.count(new)
+if new_count == 1:
+    updated = text
+elif old_count == 1 and new_count == 0:
+    updated = text.replace(old, new, 1)
+else:
+    raise SystemExit(
+        f"unexpected runtime permission shape: old={old_count} new={new_count}"
+    )
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{path.name}.runtime-permissions.{os.getpid()}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYVENVRUNTIME
 python3 - "$GENERATED_INSTALLER" <<'PYPROXYLOG' \
   || die "Could not apply the reviewed proxy traffic log pre-start fix"
 import os
