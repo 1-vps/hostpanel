@@ -60,6 +60,27 @@ class FirstRebootHardeningTests(unittest.TestCase):
         )
         self.assertIn('systemctl reset-failed openipmi.service', self.generated)
 
+    def test_plugin_tree_is_readable_but_not_writable_by_panel(self):
+        restrictive = self.generated.index(
+            'chmod 750 /var/lib/hostpanel/wp-smart /var/lib/hostpanel/disaster-restore'
+        )
+        ownership = self.generated.index(
+            'chown -R root:"$PANEL_USER" /opt/hostpanel/plugins', restrictive
+        )
+        directories = self.generated.index(
+            'find /opt/hostpanel/plugins -type d -exec chmod 750 {} +', ownership
+        )
+        files = self.generated.index(
+            'find /opt/hostpanel/plugins -type f -exec chmod 640 {} +', directories
+        )
+        self.assertLess(restrictive, ownership)
+        self.assertLess(ownership, directories)
+        self.assertLess(directories, files)
+        self.assertNotIn(
+            'chown -R "$PANEL_USER:$PANEL_USER" /opt/hostpanel/plugins',
+            self.generated,
+        )
+
     def test_generated_installer_has_valid_bash_syntax(self):
         subprocess.run(["bash", "-n", str(self.generated_path)], check=True)
 
