@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Print non-secret source snippets around PostgreSQL reserved identifiers."""
+"""Print exact non-secret source literals used by runtime compatibility patches."""
 from __future__ import annotations
 
 import pathlib
-import re
 import tarfile
 
 
@@ -12,46 +11,27 @@ ARCHIVES = sorted(ROOT.glob("hostpanel-*-source.tar.gz"))
 if len(ARCHIVES) != 1:
     raise SystemExit(f"expected exactly one source tarball, found {len(ARCHIVES)}")
 
-PATTERNS = (
-    re.compile(r"\boffset\b", re.I),
-    re.compile(r"\blimit\b", re.I),
-)
-interesting_names: set[str] = set()
+TARGETS = {
+    "/app/store.py": ("traffic_cursors", "offset"),
+    "/app/platform_store.py": ("platform_log_cursors", 'cursor["offset"]', "offset"),
+}
+found: set[str] = set()
 
 with tarfile.open(ARCHIVES[0], "r:gz") as archive:
     for member in archive.getmembers():
-        if not member.isfile():
-            continue
-        if pathlib.PurePosixPath(member.name).suffix.lower() not in {
-            ".py", ".sql", ".sh", ".html", ".js", ".json", ".toml", ".yaml", ".yml"
-        }:
+        target = next((suffix for suffix in TARGETS if member.name.endswith(suffix)), None)
+        if target is None or not member.isfile():
             continue
         handle = archive.extractfile(member)
         if handle is None:
             continue
-        text = handle.read().decode("utf-8", errors="replace")
-        lines = text.splitlines()
-        hits = [
-            index
-            for index, line in enumerate(lines)
-            if any(pattern.search(line) for pattern in PATTERNS)
-        ]
-        if not hits:
-            continue
-        interesting_names.add(member.name)
-        print(f"\n### {member.name}")
-        emitted: set[int] = set()
-        for hit in hits:
-            start = max(0, hit - 10)
-            end = min(len(lines), hit + 11)
-            for index in range(start, end):
-                if index in emitted:
-                    continue
-                emitted.add(index)
-                print(f"{index + 1:5d}: {lines[index]}")
+        lines = handle.read().decode("utf-8", errors="strict").splitlines()
+        print(f"### {member.name}")
+        for number, line in enumerate(lines, 1):
+            if any(token in line for token in TARGETS[target]):
+                print(f"{number}: {line!r}")
+        found.add(target)
 
-if not interesting_names:
-    raise SystemExit("no offset/limit source snippets found")
-print("\nRelevant files:")
-for name in sorted(interesting_names):
-    print(name)
+missing = set(TARGETS) - found
+if missing:
+    raise SystemExit(f"missing reviewed source members: {sorted(missing)}")
