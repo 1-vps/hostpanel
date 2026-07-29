@@ -70,6 +70,23 @@ collect_failure_evidence(){
         /usr/local/lsws/conf/hostpanel/hostpanel.conf 2>/dev/null \
         | tail -n 120 || true
     fi
+    if [[ "$stage" == 'Registering the systemd service' ]]; then
+      printf '%s\n' '--- scoped hostpanel service state ---'
+      systemctl show hostpanel.service \
+        --property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,FragmentPath \
+        --no-pager 2>&1 || true
+      printf '%s\n' '--- scoped redacted hostpanel service errors ---'
+      {
+        if [[ -r "$PRIVATE_LOG" ]]; then
+          grep -Eai '(hostpanel\.service|uvicorn|traceback|exception|error|failed|permission denied|no such file|module.*not found|cannot|could not)' \
+            "$PRIVATE_LOG" || true
+        fi
+        journalctl -u hostpanel.service --no-pager -n 240 2>&1 || true
+      } \
+        | grep -Evai '(password|passwd|secret|token|credential|private[ _-]?key|api[ _-]?key|admin[ _-]?(user|login))' \
+        | sed -E 's#((postgres(ql)?|redis|mysql|mariadb)://[^:/[:space:]]+:)[^@[:space:]]+@#\1[REDACTED]@#g' \
+        | tail -n 240 || true
+    fi
     if [[ "$stage" == 'Granting the panel controlled root actions' ]]; then
       printf '%s\n' '--- scoped pre-rollback root-action errors ---'
       if [[ -r "$PRIVATE_LOG" ]]; then
