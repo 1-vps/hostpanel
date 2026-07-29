@@ -131,6 +131,9 @@ esac'''
     doctor_cron_old = r'''0 6 * * 1 root $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-doctor --quiet >> /var/log/hostpanel-doctor.log 2>&1'''
     doctor_cron_new = r'''0 6 * * 1 root HP_DB=$PANEL_DIR/hostpanel.db HP_DATABASE_URL_FILE=$PANEL_DIR/credentials/database-url HP_MASTER_KEY_FILE=$PANEL_DIR/credentials/master.key HP_VHOST_ROOT=$VHOST_ROOT HP_BACKUP_DIR=$BACKUP_DIR $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-doctor --quiet >> /var/log/hostpanel-doctor.log 2>&1'''
 
+    postsrsd_old = r'''POSTFIX_PACKAGES=(postfix postfix-pcre opendkim postsrsd)'''
+    postsrsd_new = r'''POSTFIX_PACKAGES=(postfix postfix-pcre opendkim)'''
+
     runtime_old = r'''sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''
     runtime_new = r'''CLI_RUNTIME_PATCHER="$SOURCE_ROOT/tools/patch_cli_runtime_env.py"
 if [[ ! -f "$CLI_RUNTIME_PATCHER" || -L "$CLI_RUNTIME_PATCHER" ]]; then
@@ -168,6 +171,9 @@ sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''.replace(
     )
     updated = replace_reviewed_shape(
         updated, doctor_cron_old, doctor_cron_new, "doctor cron environment"
+    )
+    updated = replace_reviewed_shape(
+        updated, postsrsd_old, postsrsd_new, "unused PostSRSd package"
     )
     updated = replace_reviewed_shape(
         updated, runtime_old, runtime_new, "CLI runtime environment injection"
