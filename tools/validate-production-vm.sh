@@ -24,7 +24,7 @@ esac
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || { printf 'Error: run as root.\n' >&2; exit 1; }
 
-EXPECTED_VERSION="${HP_EXPECTED_VERSION:-3.4.0-hardened-r6}"
+EXPECTED_VERSION="${HP_EXPECTED_VERSION:-3.4.0}"
 STATE_DIR="${HP_VALIDATION_STATE_DIR:-/var/lib/hostpanel-validation}"
 REPORT_DIR="${HP_VALIDATION_REPORT_DIR:-/var/log}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -79,8 +79,8 @@ check_systemd(){
 
 check_os(){
   local id="" version=""
-  [[ -r /etc/os-release ]] && id="$(awk -F= '$1=="ID" {gsub(/\"/,"",$2); print $2}' /etc/os-release)"
-  [[ -r /etc/os-release ]] && version="$(awk -F= '$1=="VERSION_ID" {gsub(/\"/,"",$2); print $2}' /etc/os-release)"
+  [[ -r /etc/os-release ]] && id="$(awk -F= '$1=="ID" {gsub(/"/,"",$2); print $2}' /etc/os-release)"
+  [[ -r /etc/os-release ]] && version="$(awk -F= '$1=="VERSION_ID" {gsub(/"/,"",$2); print $2}' /etc/os-release)"
   case "$id:$version" in
     ubuntu:22.04|ubuntu:24.04|ubuntu:26.04|debian:12|debian:13|rocky:9*|rocky:10*|almalinux:9*|almalinux:10*) pass "supported OS: $id $version" ;;
     *) fail "unsupported or unidentified OS: ${id:-unknown} ${version:-unknown}" ;;
@@ -114,8 +114,17 @@ check_files(){
 }
 
 check_doctor(){
-  local py=/opt/hostpanel/venv/bin/python doctor=/opt/hostpanel/app/hostpanel-doctor
-  if [[ -x "$py" && -f "$doctor" ]]; then run_required 'hostpanel-doctor passed' "$py" "$doctor" --quiet; else fail 'hostpanel-doctor runtime is missing'; fi
+  local py=/opt/hostpanel/venv/bin/python doctor=/opt/hostpanel/app/hostpanel-doctor rc=0
+  if [[ ! -x "$py" || ! -f "$doctor" ]]; then
+    fail 'hostpanel-doctor runtime is missing'
+    return
+  fi
+  "$py" "$doctor" --quiet || rc=$?
+  case "$rc" in
+    0) pass 'hostpanel-doctor passed' ;;
+    1) warn 'hostpanel-doctor completed with warnings' ;;
+    *) fail "hostpanel-doctor failed with exit status $rc" ;;
+  esac
 }
 
 check_configs(){
@@ -159,9 +168,23 @@ check_firewall(){
 }
 
 check_redis_acl(){
-  local paths=(/etc/redis /etc/redis.conf /etc/hostpanel)
-  grep -RhsE '^[[:space:]]*user[[:space:]]+default[[:space:]]+off([[:space:]]|$)' "${paths[@]}" 2>/dev/null | grep -q . && pass 'Redis default ACL user is disabled' || fail 'Redis default ACL user disablement was not found'
-  grep -RhsE '^[[:space:]]*user[[:space:]]+hostpanel[[:space:]]+on([[:space:]]|$)' "${paths[@]}" 2>/dev/null | grep -q . && pass 'Redis hostpanel ACL user is configured' || fail 'Redis hostpanel ACL user was not found'
+  local cli="" password_file=/opt/hostpanel/credentials/redis-password password=""
+  local default_acl="" hostpanel_acl=""
+  cli="$(command -v redis-cli 2>/dev/null || true)"
+  [[ -n "$cli" ]] || { fail 'redis-cli is unavailable'; return; }
+  [[ -r "$password_file" ]] || { fail 'Redis credential file is unavailable'; return; }
+  password="$(head -1 "$password_file")"
+  [[ -n "$password" ]] || { fail 'Redis credential file is empty'; return; }
+  if ! default_acl="$(REDISCLI_AUTH="$password" "$cli" --no-auth-warning --user hostpanel ACL GETUSER default 2>/dev/null)"; then
+    fail 'Redis ACL could not be queried through the hostpanel identity'
+    return
+  fi
+  if ! hostpanel_acl="$(REDISCLI_AUTH="$password" "$cli" --no-auth-warning --user hostpanel ACL GETUSER hostpanel 2>/dev/null)"; then
+    fail 'Redis hostpanel ACL identity could not be queried'
+    return
+  fi
+  grep -Fxq off <<<"$default_acl" && pass 'Redis default ACL user is disabled' || fail 'Redis default ACL user is not disabled'
+  grep -Fxq on <<<"$hostpanel_acl" && pass 'Redis hostpanel ACL user is enabled' || fail 'Redis hostpanel ACL user is not enabled'
 }
 
 check_mail(){

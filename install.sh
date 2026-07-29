@@ -38,6 +38,355 @@ GENERATED_INSTALLER="$(mktemp "$SCRIPT_DIR/.install.hardened.XXXXXX")" \
 chmod 700 "$GENERATED_INSTALLER"
 python3 "$HARDENER" "$BASE_INSTALLER" "$GENERATED_INSTALLER" \
   || die "Could not derive the hardened installer"
+python3 - "$GENERATED_INSTALLER" <<'PYPRIVMANIFEST' \
+  || die "Could not apply the reviewed privileged manifest parser"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe generated installer target: {path}")
+old = '''while IFS= read -r worker; do
+  [[ -z "$worker" || "$worker" == \\#* ]] && continue
+  [[ -f "$PANEL_DIR/app/$worker" ]] || die "privileged file listed but missing: $worker"
+  chmod 755 "$PANEL_DIR/app/$worker"
+done <"$PANEL_DIR/app/privileged-files.txt"'''
+new = '''while IFS= read -r manifest_line || [[ -n "$manifest_line" ]]; do
+  [[ "$manifest_line" =~ ^[[:space:]]*$ || "$manifest_line" =~ ^[[:space:]]*# ]] && continue
+  read -r manifest_path manifest_owner manifest_mode manifest_extra <<<"$manifest_line"
+  [[ -n "$manifest_path" && -z "${manifest_extra:-}" ]] \\
+    || die "malformed privileged file manifest entry"
+  [[ "$manifest_path" != /* && "$manifest_path" != *..* && "$manifest_path" != *//* ]] \\
+    || die "unsafe privileged file manifest path: $manifest_path"
+  if [[ "$manifest_path" == */* ]]; then
+    [[ "$manifest_path" == app/* && "$manifest_path" != app/ ]] \\
+      || die "privileged manifest paths with directories must be app-relative: $manifest_path"
+    manifest_target="$PANEL_DIR/$manifest_path"
+  else
+    manifest_target="$PANEL_DIR/app/$manifest_path"
+  fi
+  if [[ -n "${manifest_owner:-}" || -n "${manifest_mode:-}" ]]; then
+    [[ -n "${manifest_owner:-}" && -n "${manifest_mode:-}" ]] \\
+      || die "privileged manifest owner and mode must be specified together: $manifest_path"
+  else
+    manifest_owner=root:root
+    manifest_mode=0755
+  fi
+  [[ "$manifest_owner" =~ ^[A-Za-z_][A-Za-z0-9_-]*:[A-Za-z_][A-Za-z0-9_-]*$ ]] \\
+    || die "invalid privileged manifest owner: $manifest_owner"
+  [[ "$manifest_mode" =~ ^0?[0-7]{3}$ ]] \\
+    || die "invalid privileged manifest mode: $manifest_mode"
+  [[ -f "$manifest_target" && ! -L "$manifest_target" ]] \\
+    || die "privileged file listed but missing or unsafe: $manifest_path"
+  chown -- "$manifest_owner" "$manifest_target" \\
+    || die "could not set privileged file ownership: $manifest_path"
+  chmod -- "$manifest_mode" "$manifest_target" \\
+    || die "could not set privileged file mode: $manifest_path"
+done <"$PANEL_DIR/app/privileged-files.txt"'''
+text = path.read_text(encoding="utf-8")
+old_count = text.count(old)
+new_count = text.count(new)
+if old_count == 1 and new_count == 0:
+    updated = text.replace(old, new, 1)
+elif old_count == 0 and new_count == 1:
+    updated = text
+else:
+    raise SystemExit(
+        f"unexpected privileged manifest parser shape: old={old_count} new={new_count}"
+    )
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{path.name}.privileged-manifest.{os.getpid()}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYPRIVMANIFEST
+python3 - "$GENERATED_INSTALLER" <<'PYVENVRUNTIME' \
+  || die "Could not apply the reviewed runtime permission fix"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe generated installer target: {path}")
+old = '''chown -R root:root "$PANEL_DIR/app" "$PANEL_DIR/ops" "$PANEL_DIR/venvs" "$PANEL_DIR/plugins"
+find "$PANEL_DIR/app" -type d -exec chmod 755 {} +'''
+new = '''chown -R root:root "$PANEL_DIR/app" "$PANEL_DIR/ops" "$PANEL_DIR/venvs" "$PANEL_DIR/plugins"
+chmod -R a+rX "$PANEL_DIR/venvs"
+find "$PANEL_DIR/app" -type d -exec chmod 755 {} +'''
+text = path.read_text(encoding="utf-8")
+old_count = text.count(old)
+new_count = text.count(new)
+if new_count == 1:
+    updated = text
+elif old_count == 1 and new_count == 0:
+    updated = text.replace(old, new, 1)
+else:
+    raise SystemExit(
+        f"unexpected runtime permission shape: old={old_count} new={new_count}"
+    )
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{path.name}.runtime-permissions.{os.getpid()}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYVENVRUNTIME
+python3 - "$GENERATED_INSTALLER" <<'PYUVICORNEXEC' \
+  || die "Could not apply the reviewed stable Uvicorn execution fix"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe generated installer target: {path}")
+
+def replace_reviewed_shape(text, old, new, label):
+    old_count = text.count(old)
+    new_count = text.count(new)
+    if new_count == 1 and old_count == 0:
+        return text
+    if old_count == 1 and new_count == 0:
+        return text.replace(old, new, 1)
+    raise SystemExit(
+        f"unexpected {label} shape: old={old_count} new={new_count}"
+    )
+
+service_old = '''ExecStart=$PANEL_DIR/venv/bin/uvicorn main:app --host 127.0.0.1 --port $PANEL_BACKEND_PORT \\
+  --proxy-headers --forwarded-allow-ips=127.0.0.1 \\
+  --limit-concurrency 192 --backlog 256 --timeout-keep-alive 5'''
+service_new = '''ExecStart=$PANEL_DIR/venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port $PANEL_BACKEND_PORT \\
+  --proxy-headers --forwarded-allow-ips=127.0.0.1 \\
+  --limit-concurrency 192 --backlog 256 --timeout-keep-alive 5'''
+runtime_old = '''ln -sfn "venvs/$RUNTIME_VERSION" "$PANEL_DIR/venv"
+ok "fresh version-locked runtime activated in venvs/$RUNTIME_VERSION"'''
+runtime_new = '''ln -sfn "venvs/$RUNTIME_VERSION" "$PANEL_DIR/venv"
+cat >"$RUNTIME_DIR/bin/uvicorn" <<EOFUVICORNWRAPPER
+#!/bin/sh
+exec "$PANEL_DIR/venv/bin/python" -m uvicorn "\$@"
+EOFUVICORNWRAPPER
+chmod 755 "$RUNTIME_DIR/bin/uvicorn"
+ok "fresh version-locked runtime activated in venvs/$RUNTIME_VERSION"'''
+text = path.read_text(encoding="utf-8")
+updated = replace_reviewed_shape(
+    text, service_old, service_new, "Uvicorn service execution"
+)
+updated = replace_reviewed_shape(
+    updated, runtime_old, runtime_new, "relocatable Uvicorn wrapper"
+)
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{path.name}.uvicorn-exec.{os.getpid()}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYUVICORNEXEC
+python3 - "$GENERATED_INSTALLER" <<'PYQUOTEDSQL' \
+  || die "Could not apply the reviewed quoted SQL identifier fix"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe generated installer target: {path}")
+old = '''    pathlib.Path(sys.argv[1]): (
+        (
+            "traffic cursor schema",
+            "    offset       INTEGER NOT NULL DEFAULT 0,",
+            "    cursor_offset INTEGER NOT NULL DEFAULT 0,",
+            1,
+        ),
+    ),'''
+new = '''    pathlib.Path(sys.argv[1]): (
+        (
+            "traffic cursor schema",
+            "    offset       INTEGER NOT NULL DEFAULT 0,",
+            "    cursor_offset INTEGER NOT NULL DEFAULT 0,",
+            1,
+        ),
+        (
+            "dynamic user update identifiers",
+            '    assignments = ", ".join(f"{key} = ?" for key in updates)',
+            '    assignments = ", ".join(f\\'"{key}" = ?\\' for key in updates)',
+            1,
+        ),
+        (
+            "schema migration identifiers",
+            '                db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")',
+            '                db.execute(f\\'ALTER TABLE "{table}" ADD COLUMN "{name}" {definition}\\')',
+            1,
+        ),
+    ),'''
+text = path.read_text(encoding="utf-8")
+old_count = text.count(old)
+new_count = text.count(new)
+if new_count == 1:
+    updated = text
+elif old_count == 1 and new_count == 0:
+    updated = text.replace(old, new, 1)
+else:
+    raise SystemExit(
+        f"unexpected quoted SQL identifier patch shape: old={old_count} new={new_count}"
+    )
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{path.name}.quoted-sql.{os.getpid()}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYQUOTEDSQL
+python3 - "$GENERATED_INSTALLER" <<'PYPRIVVERIFY' \
+  || die "Could not apply the reviewed privileged manifest verifier fix"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe generated installer target: {path}")
+old = 'sync_release_tree "$SOURCE_ROOT/app" "$PANEL_DIR/app"\npython3 - "$PANEL_DIR/app/dbcompat.py"'
+new = 'sync_release_tree "$SOURCE_ROOT/app" "$PANEL_DIR/app"\npython3 - "$PANEL_DIR/app/security_utils.py" <<\'PYPRIVVERIFYRUNTIME\' >>"$LOG" 2>&1 \\\n  || die "Could not apply the reviewed privileged manifest verification patch"\nimport os\nimport pathlib\nimport stat\nimport sys\n\npath = pathlib.Path(sys.argv[1])\nif not path.is_file() or path.is_symlink():\n    raise SystemExit(f"unsafe privileged verification target: {path}")\nold = \'    else:\\n        privileged = {\\n            line.strip() for line in manifest.read_text().splitlines()\\n            if line.strip() and not line.lstrip().startswith("#")\\n        }\'\nnew = \'    else:\\n        privileged = set()\\n        for raw in manifest.read_text().splitlines():\\n            line = raw.strip()\\n            if not line or line.lstrip().startswith("#"):\\n                continue\\n            fields = line.split()\\n            if len(fields) not in (1, 3):\\n                failures.append("malformed privileged-files.txt entry")\\n                continue\\n            rel = fields[0]\\n            if rel.startswith("app/"):\\n                rel = rel[4:]\\n            elif "/" in rel:\\n                failures.append(f"unsafe privileged manifest path: {rel}")\\n                continue\\n            parts = rel.split("/")\\n            if (not rel or rel.startswith("/")\\n                    or any(part in {"", ".", ".."} for part in parts)):\\n                failures.append(f"unsafe privileged manifest path: {rel}")\\n                continue\\n            privileged.add(rel)\'\ntext = path.read_text(encoding="utf-8")\nold_count = text.count(old)\nnew_count = text.count(new)\nif old_count == 1 and new_count == 0:\n    updated = text.replace(old, new, 1)\nelif old_count == 0 and new_count == 1:\n    updated = text\nelse:\n    raise SystemExit(\n        f"unexpected privileged verification parser shape: old={old_count} new={new_count}"\n    )\nmode = stat.S_IMODE(path.stat().st_mode)\ntemporary = path.with_name(f".{path.name}.privileged-verifier.{os.getpid()}")\ntry:\n    temporary.write_text(updated, encoding="utf-8")\n    os.chmod(temporary, mode)\n    os.replace(temporary, path)\nfinally:\n    temporary.unlink(missing_ok=True)\nPYPRIVVERIFYRUNTIME\npython3 -m py_compile "$PANEL_DIR/app/security_utils.py" >>"$LOG" 2>&1 \\\n  || die "Patched privileged manifest verifier does not compile"\npython3 - "$PANEL_DIR/app/dbcompat.py"'
+text = path.read_text(encoding="utf-8")
+old_count = text.count(old)
+new_count = text.count(new)
+if new_count == 1:
+    updated = text
+elif old_count == 1 and new_count == 0:
+    updated = text.replace(old, new, 1)
+else:
+    raise SystemExit(
+        f"unexpected privileged verifier injection shape: old={old_count} new={new_count}"
+    )
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{path.name}.privileged-verifier-injection.{os.getpid()}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYPRIVVERIFY
+python3 - "$GENERATED_INSTALLER" <<'PYREADINESSHOST' \
+  || die "Could not apply the reviewed readiness Host header fix"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe generated installer target: {path}")
+
+def replace_reviewed_shape(text, old, new, label):
+    old_count = text.count(old)
+    new_count = text.count(new)
+    if new_count == 1 and old_count == 0:
+        return text
+    if old_count == 1 and new_count == 0:
+        return text.replace(old, new, 1)
+    raise SystemExit(
+        f"unexpected {label} shape: old={old_count} new={new_count}"
+    )
+
+probe_old = '''READINESS_RESPONSE="$(curl --silent --show-error --fail --max-time 5 \\
+    -H "x-hostpanel-readiness: $READINESS_TOKEN" \\
+    "http://127.0.0.1:$PANEL_BACKEND_PORT/api/internal/readiness" \\
+    2>>"$LOG" || true)"'''
+probe_new = '''READINESS_RESPONSE="$(curl --silent --show-error --fail-with-body --max-time 5 \\
+    -H "Host: $PANEL_HOST" \\
+    -H "x-hostpanel-readiness: $READINESS_TOKEN" \\
+    "http://127.0.0.1:$PANEL_BACKEND_PORT/api/internal/readiness" \\
+    2>>"$LOG" || true)"'''
+failure_old = '''[[ "$READINESS_OK" == yes ]] \\
+  || die "Panel service started but its authenticated readiness check failed. Check: journalctl -u hostpanel -n 50"'''
+failure_new = '''if [[ "$READINESS_OK" != yes ]]; then
+  printf 'Readiness response: %.500s\\n' "$READINESS_RESPONSE" >>"$LOG"
+  die "Panel service started but its authenticated readiness check failed. Check: journalctl -u hostpanel -n 50"
+fi'''
+text = path.read_text(encoding="utf-8")
+updated = replace_reviewed_shape(
+    text, probe_old, probe_new, "readiness probe Host header"
+)
+updated = replace_reviewed_shape(
+    updated, failure_old, failure_new, "readiness failure diagnostics"
+)
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{path.name}.readiness-host.{os.getpid()}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYREADINESSHOST
+python3 - "$GENERATED_INSTALLER" <<'PYPROXYLOG' \
+  || die "Could not apply the reviewed proxy traffic log pre-start fix"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe generated installer target: {path}")
+old = '''systemctl daemon-reload
+mkdir -p /var/lib/hostpanel /var/lib/hostpanel/migrations /var/lib/hostpanel/root-work
+chown "$PANEL_USER:$PANEL_USER" /var/lib/hostpanel /var/lib/hostpanel/migrations
+chown root:root /var/lib/hostpanel/root-work
+chmod 700 /var/lib/hostpanel/migrations /var/lib/hostpanel/root-work
+systemctl enable --now hostpanel >>"$LOG" 2>&1'''
+new = '''PROXY_TRAFFIC_LOG=/var/log/hostpanel-proxy-traffic.log
+if [[ -e "$PROXY_TRAFFIC_LOG" ]]; then
+  [[ -f "$PROXY_TRAFFIC_LOG" && ! -L "$PROXY_TRAFFIC_LOG" ]] \\
+    || die "Proxy traffic log exists but is not a safe regular file"
+else
+  install -o "$PANEL_USER" -g "$PANEL_USER" -m 640 /dev/null "$PROXY_TRAFFIC_LOG"
+fi
+chown "$PANEL_USER:$PANEL_USER" "$PROXY_TRAFFIC_LOG"
+chmod 640 "$PROXY_TRAFFIC_LOG"
+systemctl daemon-reload
+mkdir -p /var/lib/hostpanel /var/lib/hostpanel/migrations /var/lib/hostpanel/root-work
+chown "$PANEL_USER:$PANEL_USER" /var/lib/hostpanel /var/lib/hostpanel/migrations
+chown root:root /var/lib/hostpanel/root-work
+chmod 700 /var/lib/hostpanel/migrations /var/lib/hostpanel/root-work
+systemctl enable --now hostpanel >>"$LOG" 2>&1'''
+text = path.read_text(encoding="utf-8")
+old_count = text.count(old)
+new_count = text.count(new)
+if new_count == 1:
+    updated = text
+elif old_count == 1 and new_count == 0:
+    updated = text.replace(old, new, 1)
+else:
+    raise SystemExit(
+        f"unexpected proxy traffic log pre-start shape: old={old_count} new={new_count}"
+    )
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{path.name}.proxy-log.{os.getpid()}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYPROXYLOG
 bash -n "$GENERATED_INSTALLER" \
   || die "The derived installer failed Bash syntax validation"
 
