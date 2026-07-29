@@ -62,11 +62,17 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
         for line in manifest_handle.read().decode("utf-8", errors="strict").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
-    app_prefix = manifest_name.removesuffix("privileged-files.txt")
+    release_prefix = manifest_name.split("/app/privileged-files.txt", 1)[0] + "/"
+    app_prefix = release_prefix + "app/"
     print(f"### {manifest_name}")
     for entry in manifest_entries:
-        target = f"{app_prefix}{entry}"
-        print(f"{entry!r}: {'present' if target in members else 'MISSING'}")
+        fields = entry.split()
+        path = fields[0]
+        target = f"{release_prefix}{path}" if "/" in path else f"{app_prefix}{path}"
+        print(
+            f"{entry!r}: {'present' if target in members else 'MISSING'} "
+            f"target={target!r}"
+        )
 
 if not found:
     raise SystemExit("no reviewed cursor source literals found")
