@@ -51,10 +51,11 @@ def _module_replace_once(text: str, old: str, new: str, label: str) -> str:
 
 
 def _replace_once(text: str, old: str, new: str, label: str) -> str:
+    expected = 2 if label == "Dovecot passwd-file block syntax" else 1
     count = text.count(old)
-    if count != 1:
-        raise SystemExit(f"{label}: expected exactly one match, found {count}")
-    return text.replace(old, new, 1)
+    if count != expected:
+        raise SystemExit(f"{label}: expected exactly {expected} match(es), found {count}")
+    return text.replace(old, new, expected)
 
 
 def _regex_once(text: str, pattern: str, replacement: str, label: str) -> str:
