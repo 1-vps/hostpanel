@@ -201,6 +201,15 @@ class PostInstallHealthTests(unittest.TestCase):
         )
         self.assertIn('service("apache"): False', self.patched_doctor)
 
+    def test_unused_postsrsd_package_is_not_installed(self):
+        self.assertIn(
+            "POSTFIX_PACKAGES=(postfix postfix-pcre opendkim)", self.generated
+        )
+        self.assertNotIn(
+            "POSTFIX_PACKAGES=(postfix postfix-pcre opendkim postsrsd)",
+            self.generated,
+        )
+
     def test_initial_backup_precedes_doctor_for_backup_role(self):
         backup = self.generated.index('say "Creating the initial verified backup"')
         command = self.generated.index('"$PANEL_DIR/app/hostpanel-backup"', backup)
