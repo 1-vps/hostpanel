@@ -60,6 +60,35 @@ class PostInstallHealthTests(unittest.TestCase):
         self.assertLess(wrapper_copy, implementation_copy)
         self.assertLess(implementation_copy, runtime_copy)
 
+    def test_cli_environment_loader_is_installed_before_backup(self):
+        injection = self.generated.index(
+            "Could not apply the reviewed CLI runtime environment patch"
+        )
+        compile_check = self.generated.index(
+            "Patched CLI runtime environment loaders do not compile", injection
+        )
+        backup = self.generated.index('say "Creating the initial verified backup"')
+        self.assertLess(injection, compile_check)
+        self.assertLess(compile_check, backup)
+        self.assertEqual(self.generated.count("_load_runtime_environment()"), 4)
+
+    def test_cli_environment_loader_is_strict_and_non_shell(self):
+        loader = self.generated.index(
+            '_RUNTIME_ENV_KEY = _runtime_re.compile(r"HP_[A-Z0-9_]{1,128}")'
+        )
+        block = self.generated[loader:loader + 1900]
+        self.assertIn("config.stat(follow_symlinks=False)", block)
+        self.assertIn("metadata.st_uid != 0", block)
+        self.assertIn("metadata.st_mode & 0o022", block)
+        self.assertIn("or key in seen", block)
+        self.assertIn("_runtime_os.environ.setdefault(key, value)", block)
+        self.assertIn(
+            'required = ("HP_SECRET", "HP_DATABASE_URL_FILE", "HP_MASTER_KEY_FILE")',
+            block,
+        )
+        self.assertNotIn('. "$PANEL_DIR/config.env"', self.generated)
+        self.assertNotIn('source "$PANEL_DIR/config.env"', self.generated)
+
     def test_initial_backup_precedes_doctor_for_backup_role(self):
         backup = self.generated.index('say "Creating the initial verified backup"')
         command = self.generated.index('"$PANEL_DIR/app/hostpanel-backup"', backup)
