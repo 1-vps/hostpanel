@@ -1,14 +1,23 @@
 # HostPanel setup
 
-This guide installs `3.4.0-hardened-r6` from the signed
-`3.4.0-hardened-r5` base release through the validated installer overlay
+This guide installs the `3.4.0-hardened-r6` working release from the signed
+`3.4.0-hardened-r5` base release through the QEMU-validated installer overlay
 commit:
 
 ```text
-01f171b489bc9971eab4e3ebe7aad58f10255124
+9c38d0095563ea33efd14124babfd29556c0da46
 ```
 
-The same full commit SHA must be used in the download URL and in `HP_REPO_REF`.
+That implementation was squash-merged to `main` as:
+
+```text
+6a2b8f76ece798408ef7b04586e73be8c3041750
+```
+
+The same full reviewed overlay SHA must be used in the download URL and in
+`HP_REPO_REF`. The signed source archive writes `3.4.0` to
+`/opt/hostpanel/VERSION`; the `hardened-r5` and `hardened-r6` identifiers are
+signed-package and installer-overlay revision labels.
 
 ## Security model
 
@@ -16,7 +25,8 @@ The bootstrap does not trust a public key fetched beside the archive it verifies
 It contains the release verification key directly and uses it to authenticate
 the signed `3.4.0-hardened-r5` base archive. It separately verifies each
 installer overlay file against the operator-supplied full Git commit object.
-The overlay derives and installs the working release `3.4.0-hardened-r6`.
+The overlay derives the `3.4.0-hardened-r6` working release while preserving the
+signed source archive's installed application version `3.4.0`.
 
 The installed root script is derived deterministically from a preserved base
 installer. Every expected replacement must match exactly once; otherwise the
@@ -86,7 +96,7 @@ sudo dnf install -y ca-certificates curl git openssl python3
 Do not run an unpinned branch URL as root.
 
 ```bash
-REVIEWED_COMMIT_SHA=01f171b489bc9971eab4e3ebe7aad58f10255124
+REVIEWED_COMMIT_SHA=9c38d0095563ea33efd14124babfd29556c0da46
 
 sudo curl -fsSL \
   "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
@@ -95,10 +105,10 @@ sudo chmod 700 /root/bootstrap-install.sh
 sudo bash -n /root/bootstrap-install.sh
 ```
 
-This commit passed deterministic installer generation, Bash syntax, ShellCheck,
-all nine supported-OS preflight jobs, signed-archive verification, the Ubuntu
-26.04/Python 3.14 locked-runtime installation test, and the production-VM
-validation harness tests.
+This exact commit passed deterministic installer generation, Bash syntax,
+ShellCheck, all nine supported-OS preflight jobs, signed-archive verification,
+the Ubuntu 26.04/Python 3.14 locked-runtime installation test, the production VM
+validation harness, and the full secretless QEMU install/reboot acceptance run.
 
 ## 4. Run the preflight
 
@@ -212,11 +222,14 @@ sudo /opt/hostpanel/venv/bin/python \
   /opt/hostpanel/app/hostpanel-doctor
 ```
 
-Expected installed version:
+Expected installed application version:
 
 ```text
-3.4.0-hardened-r6
+3.4.0
 ```
+
+The repository working-release label remains `3.4.0-hardened-r6`. Do not infer
+the installed `VERSION` value from the signed archive filename or overlay label.
 
 Inspect the root-only installer log:
 
@@ -224,7 +237,8 @@ Inspect the root-only installer log:
 /var/log/hostpanel-install.log
 ```
 
-Download and syntax-check the production VM validator from the same commit:
+Download and syntax-check the production VM validator from the same reviewed
+commit:
 
 ```bash
 sudo curl -fsSL \
@@ -237,7 +251,32 @@ sudo bash -n /root/validate-production-vm.sh
 Run its non-destructive checks before and after a verified reboot as described in
 [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md).
 
-## 9. Production acceptance
+## 9. Run the secretless QEMU acceptance workflow
+
+Maintainers and contributors can reproduce the repository's real-systemd
+acceptance without provider credentials. The workflow boots a checksum-pinned
+Ubuntu 24.04 cloud image, provisions an ephemeral SSH key, installs the reviewed
+commit, runs pre-reboot validation and doctor, performs a real reboot, requires
+stable post-reboot backend readiness, reruns validation, and collects only
+bounded non-sensitive evidence.
+
+Run it from the repository Actions UI or with GitHub CLI:
+
+```bash
+gh workflow run qemu-vm-acceptance.yml -f mta=postfix
+gh run watch
+```
+
+Use `mta=exim` for the Exim path. The workflow requires no GitHub secrets and
+uses read-only repository permissions. The full VM job is intentionally skipped
+for pull requests from forks.
+
+The QEMU workflow validates systemd lifecycle, services, firewall behavior,
+panel response, local DNS, Redis ACLs, and forwarded web/mail listeners. It does
+not replace provider-backed validation of public IPv4/IPv6, inbound Internet
+reachability, reverse DNS, or trusted public certificate issuance.
+
+## 10. Production acceptance
 
 Before serving customers:
 

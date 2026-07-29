@@ -4,9 +4,11 @@ HostPanel is a multi-tenant Linux hosting control panel for web, DNS, mail,
 databases, backups, certificates, firewall policy, monitoring, and infrastructure
 operations.
 
-**Current working release:** `3.4.0-hardened-r6`  
+**Current working release label:** `3.4.0-hardened-r6`  
 **Signed base release:** `3.4.0-hardened-r5`  
-**Validated installer overlay:** `01f171b489bc9971eab4e3ebe7aad58f10255124`  
+**Installed `/opt/hostpanel/VERSION`:** `3.4.0`  
+**QEMU-validated installer overlay:** `9c38d0095563ea33efd14124babfd29556c0da46`  
+**Merged implementation:** `6a2b8f76ece798408ef7b04586e73be8c3041750`  
 **License:** MIT
 
 > HostPanel changes operating-system packages, service configuration, firewall
@@ -23,7 +25,12 @@ The bootstrap has two independent verification layers:
 1. an embedded long-lived release public key verifies the signed
    `3.4.0-hardened-r5` source archive;
 2. the operator-supplied full Git commit SHA authenticates the installer overlay
-   that derives and installs `3.4.0-hardened-r6`.
+   that derives the `3.4.0-hardened-r6` working release.
+
+The signed source archive contains the installed application version `3.4.0`.
+The `hardened-r5` and `hardened-r6` identifiers describe the signed packaging
+and reviewed installer-overlay revisions; they are not the value written to
+`/opt/hostpanel/VERSION`.
 
 Every overlay file is checked against its Git object before use. The preserved
 base installer is also checked by its expected Git blob ID before the generated
@@ -46,12 +53,13 @@ packages.
 
 ## Download the pinned bootstrap
 
-The commands below use the installer commit that passed deterministic generation,
-ShellCheck, all supported-OS preflights, signed-archive verification, the Ubuntu
-26.04/Python 3.14 locked-runtime test, and the production-VM harness checks.
+The commands below use the exact installer-overlay commit that passed
+deterministic generation, ShellCheck, all supported-OS preflights,
+signed-archive verification, the Ubuntu 26.04/Python 3.14 locked-runtime test,
+and the secretless QEMU install/reboot acceptance workflow.
 
 ```bash
-REVIEWED_COMMIT_SHA=01f171b489bc9971eab4e3ebe7aad58f10255124
+REVIEWED_COMMIT_SHA=9c38d0095563ea33efd14124babfd29556c0da46
 
 sudo curl -fsSL \
   "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
@@ -122,17 +130,47 @@ sudo /opt/hostpanel/venv/bin/python \
   /opt/hostpanel/app/hostpanel-doctor
 ```
 
-Expected installed version:
+Expected installed application version:
 
 ```text
-3.4.0-hardened-r6
+3.4.0
 ```
+
+The repository working-release label is `3.4.0-hardened-r6`; do not infer the
+installed `VERSION` value from the signed archive filename or overlay label.
 
 Installer log:
 
 ```text
 /var/log/hostpanel-install.log
 ```
+
+## Secretless QEMU acceptance
+
+The repository includes [`.github/workflows/qemu-vm-acceptance.yml`](.github/workflows/qemu-vm-acceptance.yml).
+It boots a checksum-pinned Ubuntu 24.04 cloud image with an ephemeral SSH key,
+installs the reviewed commit, runs the production validator and doctor, performs
+a real systemd reboot, waits for stable backend readiness, reruns post-reboot
+validation, and probes forwarded panel, web, mail, DNS, and Redis paths.
+
+The workflow uses read-only repository permissions and no GitHub secrets. Its
+uploaded artifact is restricted to validated, non-sensitive evidence; generated
+credentials and the full installer log remain inside the guest.
+
+Maintainers can run it from the Actions UI or with GitHub CLI:
+
+```bash
+gh workflow run qemu-vm-acceptance.yml -f mta=postfix
+gh run watch
+```
+
+Use `mta=exim` to validate the Exim path. Pull requests from forks do not execute
+the full VM job because untrusted fork code must not receive the same runner
+trust boundary.
+
+This workflow complements, but does not replace, provider-backed testing for
+public IPv4/IPv6, inbound Internet reachability, reverse DNS, and trusted public
+certificate issuance.
 
 ## Production validation required
 
@@ -147,7 +185,7 @@ Before serving customers:
 
 ## Maintained documentation
 
-- [`SETUP.md`](SETUP.md) — installation, reinstall, verification, and recovery
+- [`SETUP.md`](SETUP.md) — installation, reinstall, verification, QEMU acceptance, and recovery
 - [`CONFIGURATION.md`](CONFIGURATION.md)
 - [`SECURITY.md`](SECURITY.md)
 - [`FIREWALL.md`](FIREWALL.md)
