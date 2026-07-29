@@ -19,6 +19,7 @@ source /root/hostpanel-qemu.env
 EVIDENCE=/root/hostpanel-qemu-evidence
 PREFLIGHT_LOG="$EVIDENCE/preflight.log"
 PRIVATE_LOG=/root/hostpanel-qemu-private-install.log
+FAILURE_PHASE=installation
 install -d -o root -g root -m 700 "$EVIDENCE"
 : > "$PRIVATE_LOG"
 chmod 600 "$PRIVATE_LOG"
@@ -31,6 +32,11 @@ collect_failure_evidence(){
   fi
   {
     printf 'exit_status=%s\n' "$status"
+    printf 'failure_phase=%s\n' "$FAILURE_PHASE"
+    printf 'expected_version=%s\n' "$HP_EXPECTED_VERSION"
+    if [[ -r /opt/hostpanel/VERSION ]]; then
+      printf 'installed_version=%s\n' "$(tr -d '[:space:]' </opt/hostpanel/VERSION)"
+    fi
     printf '%s\n' '--- install state ---'
     if [[ -r /etc/hostpanel/install-state ]]; then
       cat /etc/hostpanel/install-state
@@ -106,7 +112,7 @@ collect_failure_evidence(){
     fi
   } > "$EVIDENCE/install-failure-summary.txt"
   chmod 600 "$EVIDENCE/install-failure-summary.txt"
-  printf 'Guest installation failed; exported stage and redacted error evidence only.\n' >&2
+  printf 'Guest %s failed; exported stage and redacted error evidence only.\n' "$FAILURE_PHASE" >&2
   exit "$status"
 }
 trap collect_failure_evidence ERR
@@ -152,7 +158,13 @@ fi
 echo 'Running full installation; generated credentials stay in the root-only guest log.'
 env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
 
-test "$(tr -d '[:space:]' < /opt/hostpanel/VERSION)" = "$HP_EXPECTED_VERSION"
+FAILURE_PHASE=pre-reboot-validation
+ACTUAL_VERSION="$(tr -d '[:space:]' < /opt/hostpanel/VERSION)"
+if [[ "$ACTUAL_VERSION" != "$HP_EXPECTED_VERSION" ]]; then
+  printf 'Installed version mismatch: expected %s, got %s\n' \
+    "$HP_EXPECTED_VERSION" "$ACTUAL_VERSION" >&2
+  false
+fi
 env \
   HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
   HP_PANEL_HOST="$HP_PANEL_HOST" \
