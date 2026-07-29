@@ -140,6 +140,42 @@ try:
 finally:
     temporary.unlink(missing_ok=True)
 PYVENVRUNTIME
+python3 - "$GENERATED_INSTALLER" <<'PYUVICORNEXEC' \
+  || die "Could not apply the reviewed stable Uvicorn execution fix"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe generated installer target: {path}")
+old = '''ExecStart=$PANEL_DIR/venv/bin/uvicorn main:app --host 127.0.0.1 --port $PANEL_BACKEND_PORT \\
+  --proxy-headers --forwarded-allow-ips=127.0.0.1 \\
+  --limit-concurrency 192 --backlog 256 --timeout-keep-alive 5'''
+new = '''ExecStart=$PANEL_DIR/venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port $PANEL_BACKEND_PORT \\
+  --proxy-headers --forwarded-allow-ips=127.0.0.1 \\
+  --limit-concurrency 192 --backlog 256 --timeout-keep-alive 5'''
+text = path.read_text(encoding="utf-8")
+old_count = text.count(old)
+new_count = text.count(new)
+if new_count == 1:
+    updated = text
+elif old_count == 1 and new_count == 0:
+    updated = text.replace(old, new, 1)
+else:
+    raise SystemExit(
+        f"unexpected Uvicorn execution shape: old={old_count} new={new_count}"
+    )
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{path.name}.uvicorn-exec.{os.getpid()}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYUVICORNEXEC
 python3 - "$GENERATED_INSTALLER" <<'PYPROXYLOG' \
   || die "Could not apply the reviewed proxy traffic log pre-start fix"
 import os
