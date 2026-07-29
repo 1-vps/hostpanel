@@ -215,10 +215,12 @@ userdb {
 chmod 644 /usr/lib/dovecot/sieve/report-spam.sieve /usr/lib/dovecot/sieve/report-ham.sieve
 /usr/bin/sievec /usr/lib/dovecot/sieve/report-spam.sieve
 /usr/bin/sievec /usr/lib/dovecot/sieve/report-ham.sieve
-cat >/etc/dovecot/conf.d/90-sieve-hostpanel.conf <<'EOF' ''',
+cat >/etc/dovecot/conf.d/90-sieve-hostpanel.conf <<'EOF'
+# Managed by HostPanel''',
         '''chmod 755 /usr/lib/dovecot/sieve/hostpanel-rspamc-spam /usr/lib/dovecot/sieve/hostpanel-rspamc-ham
 chmod 644 /usr/lib/dovecot/sieve/report-spam.sieve /usr/lib/dovecot/sieve/report-ham.sieve
-cat >/etc/dovecot/conf.d/90-sieve-hostpanel.conf <<'EOF' ''',
+cat >/etc/dovecot/conf.d/90-sieve-hostpanel.conf <<'EOF'
+# Managed by HostPanel''',
         "defer Sieve compilation until plugin configuration",
     )
     text = _replace_once(
