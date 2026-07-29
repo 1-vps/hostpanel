@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
-EXPECTED_CLI_PATCHER_BLOB = "3f60fe91ee4de8945bf79e3b753e6d8a2bb4b3af"
+EXPECTED_CLI_PATCHER_BLOB = "0bb8c538376ba81cb8ddc6dc6031139498a3ff2f"
 IMPLEMENTATION_NAME = "harden_install_impl.py"
 
 # Compatibility markers remain visible in this audited entrypoint because the
@@ -149,9 +149,11 @@ CLI_RUNTIME_PATCHER_BLOB="$(git hash-object --no-filters "$CLI_RUNTIME_PATCHER")
 [[ "$CLI_RUNTIME_PATCHER_BLOB" == "__EXPECTED_CLI_PATCHER_BLOB__" ]] \
   || die "The CLI runtime environment patcher does not match the reviewed Git blob"
 python3 "$CLI_RUNTIME_PATCHER" \
-  "$PANEL_DIR/app/hostpanel-backup" "$PANEL_DIR/app/hostpanel-doctor" >>"$LOG" 2>&1 \
+  "$PANEL_DIR/app/hostpanel-backup" "$PANEL_DIR/app/hostpanel-doctor" \
+  "$PANEL_DIR/app/hostpanel-mysql-admin" >>"$LOG" 2>&1 \
   || die "Could not apply the reviewed CLI runtime environment patch"
-python3 -m py_compile "$PANEL_DIR/app/hostpanel-backup" "$PANEL_DIR/app/hostpanel-doctor" >>"$LOG" 2>&1 \
+python3 -m py_compile "$PANEL_DIR/app/hostpanel-backup" "$PANEL_DIR/app/hostpanel-doctor" \
+  "$PANEL_DIR/app/hostpanel-mysql-admin" >>"$LOG" 2>&1 \
   || die "Patched CLI runtime environment loaders do not compile"
 sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''.replace(
         "__EXPECTED_CLI_PATCHER_BLOB__", EXPECTED_CLI_PATCHER_BLOB
