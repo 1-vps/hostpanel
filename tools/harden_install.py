@@ -393,6 +393,15 @@ sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"''',
 
     text = _replace_once(
         text,
+        '''/etc/hostpanel/mail-convenience/retention "$PANEL_DIR/plugins" \
+         /var/lib/hostpanel/quarantine''',
+        '''/etc/hostpanel/mail-convenience/retention "$PANEL_DIR/plugins" "$PANEL_DIR/venvs" \
+         /var/lib/hostpanel/quarantine''',
+        "root action runtime directories",
+    )
+
+    text = _replace_once(
+        text,
         '  die "OpenLiteSpeed binary is missing after installation"',
         '  warn "OpenLiteSpeed backend unavailable; nginx and Apache remain active"',
         "OpenLiteSpeed optional fallback",
