@@ -178,6 +178,16 @@ Wants=$SERVICE_WANTS'''
     quota_new = r'''      QUOTA_STATE="$QUOTA_MOUNT needs usrquota in its mount options — update fstab, remount, then initialise quotas"
       warn "Automatic fstab quota changes are disabled; prepare $QUOTA_MOUNT explicitly before enforcing plan quotas"'''
 
+    plugin_permissions_old = r'''chmod 750 /var/lib/hostpanel/wp-smart /var/lib/hostpanel/disaster-restore \
+         /var/lib/hostpanel/expansion /var/lib/hostpanel/expansion-agent /opt/hostpanel/plugins
+chmod 711 /var/lib/hostpanel/wp-sso'''
+    plugin_permissions_new = r'''chmod 750 /var/lib/hostpanel/wp-smart /var/lib/hostpanel/disaster-restore \
+         /var/lib/hostpanel/expansion /var/lib/hostpanel/expansion-agent /opt/hostpanel/plugins
+chown -R root:"$PANEL_USER" /opt/hostpanel/plugins
+find /opt/hostpanel/plugins -type d -exec chmod 750 {} +
+find /opt/hostpanel/plugins -type f -exec chmod 640 {} +
+chmod 711 /var/lib/hostpanel/wp-sso'''
+
     runtime_old = r'''sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''
     runtime_new = r'''CLI_RUNTIME_PATCHER="$SOURCE_ROOT/tools/patch_cli_runtime_env.py"
 if [[ ! -f "$CLI_RUNTIME_PATCHER" || -L "$CLI_RUNTIME_PATCHER" ]]; then
@@ -224,6 +234,12 @@ sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''.replace(
     )
     updated = replace_reviewed_shape(
         updated, quota_old, quota_new, "explicit quota provisioning"
+    )
+    updated = replace_reviewed_shape(
+        updated,
+        plugin_permissions_old,
+        plugin_permissions_new,
+        "read-only plugin runtime access",
     )
     updated = replace_reviewed_shape(
         updated, runtime_old, runtime_new, "CLI runtime environment injection"
