@@ -16,6 +16,8 @@ on:
       - .github/workflows/qemu-vm-acceptance.yml
       - tools/run-qemu-vm-acceptance.sh
       - tools/validate-production-vm.sh
+      - tools/harden_install.py
+      - tools/harden_install_runtime.py
       - bootstrap-install.sh
       - install.sh
       - install.base.sh
@@ -24,6 +26,7 @@ on:
       - SHA256SUMS
       - '*.sig'
       - tests/test_qemu_vm_acceptance.py
+      - tests/test_systemd_resolved_dns.py
 
 permissions:
   contents: read
@@ -53,6 +56,7 @@ jobs:
           set -euo pipefail
           bash -n tools/run-qemu-vm-acceptance.sh
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
+          python3 -m unittest discover -s tests -p 'test_systemd_resolved_dns.py' -v
 
       - name: Reclaim runner disk
         run: |
