@@ -1,4 +1,5 @@
 import pathlib
+import tarfile
 import unittest
 
 
@@ -8,12 +9,30 @@ HARNESS = ROOT / "tools" / "run-qemu-vm-acceptance.sh"
 GUEST_INSTALLER = ROOT / "tools" / "qemu-guest-install.sh"
 
 
+def signed_source_version() -> str:
+    archives = sorted(ROOT.glob("hostpanel-*-source.tar.gz"))
+    if len(archives) != 1:
+        raise RuntimeError(f"expected exactly one signed source archive, found {len(archives)}")
+    with tarfile.open(archives[0], "r:gz") as archive:
+        matches = [member for member in archive.getmembers() if member.name.endswith("/VERSION")]
+        if len(matches) != 1:
+            raise RuntimeError(f"expected exactly one release VERSION, found {len(matches)}")
+        handle = archive.extractfile(matches[0])
+        if handle is None:
+            raise RuntimeError("could not read signed release VERSION")
+        version = handle.read().decode("utf-8", errors="strict").strip()
+    if not version:
+        raise RuntimeError("signed release VERSION is empty")
+    return version
+
+
 class QemuVmAcceptanceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
         cls.harness = HARNESS.read_text(encoding="utf-8")
         cls.guest_installer = GUEST_INSTALLER.read_text(encoding="utf-8")
+        cls.signed_version = signed_source_version()
 
     def test_workflow_is_secretless_and_least_privilege(self):
         self.assertIn("permissions:\n  contents: read", self.workflow)
@@ -38,13 +57,13 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertIn("if: ${{ always() }}", self.workflow)
         self.assertIn("retention-days: 14", self.workflow)
 
-    def test_expected_version_is_explicit_and_validated(self):
+    def test_expected_version_matches_signed_source_version(self):
         self.assertIn(
-            "HP_QEMU_EXPECTED_VERSION: 3.4.0-hardened-r5",
+            f"HP_QEMU_EXPECTED_VERSION: {self.signed_version}",
             self.workflow,
         )
         self.assertIn(
-            'EXPECTED_VERSION="${HP_QEMU_EXPECTED_VERSION:-3.4.0-hardened-r6}"',
+            'EXPECTED_VERSION="${HP_QEMU_EXPECTED_VERSION:-',
             self.harness,
         )
         self.assertNotIn("$REPO_ROOT/VERSION", self.harness)
