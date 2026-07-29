@@ -53,6 +53,16 @@ class ReservedSqlIdentifierTests(unittest.TestCase):
         self.assertIn("traffic_cursors", store)
         self.assertIn("platform_log_cursors", platform_store)
         self.assertEqual(
+            store.count('    assignments = ", ".join(f"{key} = ?" for key in updates)'),
+            1,
+        )
+        self.assertEqual(
+            store.count(
+                '                db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")'
+            ),
+            1,
+        )
+        self.assertEqual(
             platform_worker.count(
                 "SELECT inode,offset FROM platform_log_cursors WHERE source=?"
             ),
@@ -102,6 +112,22 @@ class ReservedSqlIdentifierTests(unittest.TestCase):
             'python3 -m py_compile "$PANEL_DIR/app/store.py" "$PANEL_DIR/app/platform_store.py" "$PANEL_DIR/app/platform_worker.py"',
             text,
         )
+
+    def test_launcher_quotes_whitelisted_dynamic_identifiers(self):
+        launcher = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertEqual(launcher.count("PYQUOTEDSQL"), 2)
+        self.assertIn("dynamic user update identifiers", launcher)
+        self.assertIn("schema migration identifiers", launcher)
+        self.assertIn(
+            r'''assignments = ", ".join(f\\'"{key}" = ?\\' for key in updates)''',
+            launcher,
+        )
+        self.assertIn(
+            r'''db.execute(f\\'ALTER TABLE "{table}" ADD COLUMN "{name}" {definition}\\')''',
+            launcher,
+        )
+        self.assertIn("unexpected quoted SQL identifier patch shape", launcher)
+        self.assertIn("os.replace(temporary, path)", launcher)
 
     def test_launcher_uses_the_updated_hardener(self):
         launcher = (ROOT / "install.sh").read_text(encoding="utf-8")
