@@ -185,6 +185,7 @@ set -Eeuo pipefail
 umask 077
 source /tmp/guest.env
 EVIDENCE=/root/hostpanel-qemu-evidence
+PREFLIGHT_LOG="$EVIDENCE/preflight.log"
 PRIVATE_LOG=/root/hostpanel-qemu-private-install.log
 install -d -o root -g root -m 700 "$EVIDENCE"
 : > "$PRIVATE_LOG"
@@ -206,8 +207,12 @@ common_env=(
   HP_RSPAMD_REPO=off
 )
 install_args=(--mta "$HP_MTA")
-echo 'Running installer preflight; detailed output stays in a root-only guest log.'
-env "${common_env[@]}" bash /root/bootstrap-install.sh --check "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
+echo 'Running installer preflight; its non-secret diagnostics are exported as evidence.'
+if ! env "${common_env[@]}" bash /root/bootstrap-install.sh --check "${install_args[@]}" > "$PREFLIGHT_LOG" 2>&1; then
+  echo 'Installer preflight failed:' >&2
+  tail -n 200 "$PREFLIGHT_LOG" >&2
+  exit 1
+fi
 echo 'Running full installation; generated credentials stay in the root-only guest log.'
 env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
 
