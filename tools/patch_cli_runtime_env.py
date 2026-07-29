@@ -76,8 +76,8 @@ DOCTOR_LSWS_NEW = '''    if "web" in roles:
             service("apache"): False,
         })'''
 
-MYSQL_ADMIN_OLD = '''    prelude = "SET SESSION local_infile=0;\nSET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\n"'''
-MYSQL_ADMIN_NEW = '''    prelude = "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\n"'''
+MYSQL_ADMIN_OLD = '''    prelude = "SET SESSION local_infile=0;\\nSET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\\n"'''
+MYSQL_ADMIN_NEW = '''    prelude = "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\\n"'''
 
 
 def patch(target: pathlib.Path, old: str, new: str, label: str) -> None:
