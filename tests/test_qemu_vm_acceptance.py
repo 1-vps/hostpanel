@@ -32,6 +32,18 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertIn("if: ${{ always() }}", self.workflow)
         self.assertIn("retention-days: 14", self.workflow)
 
+    def test_expected_version_is_explicit_and_validated(self):
+        self.assertIn(
+            "HP_QEMU_EXPECTED_VERSION: 3.4.0-hardened-r6",
+            self.workflow,
+        )
+        self.assertIn(
+            'EXPECTED_VERSION="${HP_QEMU_EXPECTED_VERSION:-3.4.0-hardened-r6}"',
+            self.harness,
+        )
+        self.assertNotIn('$REPO_ROOT/VERSION', self.harness)
+        self.assertIn("HP_QEMU_EXPECTED_VERSION must be a release version", self.harness)
+
     def test_harness_uses_pinned_verified_ubuntu_image(self):
         self.assertIn(
             "release-20260725/ubuntu-24.04-server-cloudimg-amd64.img",
