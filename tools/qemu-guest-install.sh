@@ -4,7 +4,18 @@
 set -Eeuo pipefail
 umask 077
 
-source /tmp/guest.env
+for input in /tmp/guest.env /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh; do
+  [[ -f "$input" && ! -L "$input" ]] || {
+    printf 'Unsafe or missing QEMU guest input: %s\n' "$input" >&2
+    exit 1
+  }
+done
+[[ "$(stat -c '%u:%a:%h' /tmp/guest.env)" == "0:600:1" ]] || {
+  printf '%s\n' 'QEMU guest environment must be a root-owned 0600 regular file with one link.' >&2
+  exit 1
+}
+install -o root -g root -m 600 /tmp/guest.env /root/hostpanel-qemu.env
+source /root/hostpanel-qemu.env
 EVIDENCE=/root/hostpanel-qemu-evidence
 PREFLIGHT_LOG="$EVIDENCE/preflight.log"
 PRIVATE_LOG=/root/hostpanel-qemu-private-install.log
@@ -47,6 +58,22 @@ apt-get update -qq >> "$PRIVATE_LOG" 2>&1
 apt-get install -y -qq ca-certificates curl git openssl python3 >> "$PRIVATE_LOG" 2>&1
 install -o root -g root -m 700 /tmp/bootstrap-install.sh /root/bootstrap-install.sh
 install -o root -g root -m 700 /tmp/validate-production-vm.sh /root/validate-production-vm.sh
+
+cat > /root/hostpanel-qemu-post-reboot.sh <<'POSTREBOOT'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source /root/hostpanel-qemu.env
+EVIDENCE=/root/hostpanel-qemu-evidence
+env \
+  HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
+  HP_PANEL_HOST="$HP_PANEL_HOST" \
+  HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
+  bash /root/validate-production-vm.sh --post-reboot \
+  | tee "$EVIDENCE/post-reboot-validator.txt"
+/opt/hostpanel/venv/bin/python /opt/hostpanel/app/hostpanel-doctor --quiet \
+  | tee "$EVIDENCE/doctor.txt"
+POSTREBOOT
+chmod 700 /root/hostpanel-qemu-post-reboot.sh
 
 common_env=(
   HP_REPO_REF="$HP_REVIEWED_COMMIT_SHA"
