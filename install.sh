@@ -105,6 +105,57 @@ try:
 finally:
     temporary.unlink(missing_ok=True)
 PYPRIVMANIFEST
+python3 - "$GENERATED_INSTALLER" <<'PYPROXYLOG' \
+  || die "Could not apply the reviewed proxy traffic log pre-start fix"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe generated installer target: {path}")
+old = '''systemctl daemon-reload
+mkdir -p /var/lib/hostpanel /var/lib/hostpanel/migrations /var/lib/hostpanel/root-work
+chown "$PANEL_USER:$PANEL_USER" /var/lib/hostpanel /var/lib/hostpanel/migrations
+chown root:root /var/lib/hostpanel/root-work
+chmod 700 /var/lib/hostpanel/migrations /var/lib/hostpanel/root-work
+systemctl enable --now hostpanel >>"$LOG" 2>&1'''
+new = '''PROXY_TRAFFIC_LOG=/var/log/hostpanel-proxy-traffic.log
+if [[ -e "$PROXY_TRAFFIC_LOG" ]]; then
+  [[ -f "$PROXY_TRAFFIC_LOG" && ! -L "$PROXY_TRAFFIC_LOG" ]] \\
+    || die "Proxy traffic log exists but is not a safe regular file"
+else
+  install -o "$PANEL_USER" -g "$PANEL_USER" -m 640 /dev/null "$PROXY_TRAFFIC_LOG"
+fi
+chown "$PANEL_USER:$PANEL_USER" "$PROXY_TRAFFIC_LOG"
+chmod 640 "$PROXY_TRAFFIC_LOG"
+systemctl daemon-reload
+mkdir -p /var/lib/hostpanel /var/lib/hostpanel/migrations /var/lib/hostpanel/root-work
+chown "$PANEL_USER:$PANEL_USER" /var/lib/hostpanel /var/lib/hostpanel/migrations
+chown root:root /var/lib/hostpanel/root-work
+chmod 700 /var/lib/hostpanel/migrations /var/lib/hostpanel/root-work
+systemctl enable --now hostpanel >>"$LOG" 2>&1'''
+text = path.read_text(encoding="utf-8")
+old_count = text.count(old)
+new_count = text.count(new)
+if new_count == 1:
+    updated = text
+elif old_count == 1 and new_count == 0:
+    updated = text.replace(old, new, 1)
+else:
+    raise SystemExit(
+        f"unexpected proxy traffic log pre-start shape: old={old_count} new={new_count}"
+    )
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{path.name}.proxy-log.{os.getpid()}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYPROXYLOG
 bash -n "$GENERATED_INSTALLER" \
   || die "The derived installer failed Bash syntax validation"
 
