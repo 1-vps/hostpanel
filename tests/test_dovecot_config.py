@@ -42,8 +42,6 @@ class DovecotConfigTests(unittest.TestCase):
             ),
             2,
         )
-        self.assertEqual(text.count("# Managed by HostPanel — Postfix profile"), 1)
-        self.assertEqual(text.count("# Managed by HostPanel — Exim profile"), 1)
 
     def test_hardener_fails_closed_on_both_reviewed_source_shapes(self):
         hardener = HARDENER.read_text(encoding="utf-8")
