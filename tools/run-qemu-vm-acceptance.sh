@@ -116,9 +116,6 @@ collect_evidence(){
     if [[ -s "$WORK_DIR/guest-evidence.tgz" ]]; then
       extract_guest_evidence || printf '%s\n' 'Guest evidence archive failed safety validation.' >&2
     fi
-    ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
-      'sudo systemctl --failed --no-legend --plain; sudo journalctl -b -p warning..alert --no-pager -n 300' \
-      > "$ARTIFACT_DIR/guest-failure-diagnostics.txt" 2>&1 || true
   fi
   [[ ! -f "$WORK_DIR/console.log" ]] || cp "$WORK_DIR/console.log" "$ARTIFACT_DIR/qemu-console.log"
   df -h > "$ARTIFACT_DIR/runner-disk.txt" 2>&1 || true
