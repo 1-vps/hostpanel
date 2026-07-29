@@ -40,6 +40,8 @@ GATEWAY_TARGETS = (
     "/app/postgres_gateway.py",
     "/app/mysql_gateway.py",
     "/app/hostpanel-postgres-admin",
+    "/app/hostpanel-root",
+    "/app/core.py",
 )
 found = 0
 
@@ -54,6 +56,7 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
             "/app/hostpanel-doctor",
             "/app/hostpanel-backup",
             "/app/hostpanel-postgres-admin",
+            "/app/hostpanel-root",
         )
         if suffix not in {".py", ".sh", ".sql"} \
                 and not member.name.endswith(extensionless_targets):
