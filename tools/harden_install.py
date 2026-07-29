@@ -17,6 +17,24 @@ SPEC.loader.exec_module(MODULE)
 _original_module_replace_once = MODULE.replace_once
 _original_regex_once = MODULE.regex_once
 
+DBCOMPAT_CLASSIFIER_OLD = '''        for statement in statements:
+            match = re.match(r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)", statement, re.I)
+            (tables if match else others).append((match.group(1).lower(), statement) if match else statement)'''
+
+DBCOMPAT_CLASSIFIER_NEW = '''        for statement in statements:
+            classified = re.sub(
+                r"^\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*",
+                "",
+                statement,
+                flags=re.S,
+            )
+            match = re.match(
+                r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+                classified,
+                re.I,
+            )
+            (tables if match else others).append((match.group(1).lower(), statement) if match else statement)'''
+
 
 def _module_replace_once(text: str, old: str, new: str, label: str) -> str:
     # The rollback arrays are initialized near startup and cleared after a
@@ -195,6 +213,54 @@ say "Installing packages for roles: $ROLE_CSV"''',
     cron)                   printf 'cronie' ;;
     inotify-tools)          printf 'inotify-tools' ;;''',
         "RHEL cron package mapping",
+    )
+
+    # The signed r5 runtime sorts PostgreSQL CREATE TABLE statements by foreign
+    # key dependencies, but its classifier misses statements with leading SQL
+    # comments. Patch the installed copy atomically and fail closed if the
+    # reviewed source shape has changed.
+    runtime_patch = f'''sync_release_tree "$SOURCE_ROOT/app" "$PANEL_DIR/app"
+python3 - "$PANEL_DIR/app/dbcompat.py" <<'PYDBCOMPAT' >>"$LOG" 2>&1 \
+  || die "Could not apply the reviewed PostgreSQL schema compatibility patch"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe dbcompat target: {{path}}")
+old = {DBCOMPAT_CLASSIFIER_OLD!r}
+new = {DBCOMPAT_CLASSIFIER_NEW!r}
+text = path.read_text(encoding="utf-8")
+old_count = text.count(old)
+new_count = text.count(new)
+if old_count == 1 and new_count == 0:
+    updated = text.replace(old, new, 1)
+elif old_count == 0 and new_count == 1:
+    updated = text
+else:
+    raise SystemExit(
+        f"unexpected dbcompat classifier shape: old={{old_count}} new={{new_count}}"
+    )
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{{path.name}}.hostpanel.{{os.getpid()}}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYDBCOMPAT
+python3 -m py_compile "$PANEL_DIR/app/dbcompat.py" >>"$LOG" 2>&1 \
+  || die "Patched PostgreSQL compatibility module does not compile"
+sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''
+    text = _replace_once(
+        text,
+        '''sync_release_tree "$SOURCE_ROOT/app" "$PANEL_DIR/app"
+sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"''',
+        runtime_patch,
+        "PostgreSQL commented-table classifier patch",
     )
 
     # The Rspamd Redis password must not inherit a world-readable default mode.
