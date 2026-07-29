@@ -123,7 +123,6 @@ before upgrading a production server.
 
 ```bash
 cat /opt/hostpanel/VERSION
-cat /opt/hostpanel/RELEASE_VERSION 2>/dev/null || true
 readlink -f /opt/hostpanel/venv
 sudo nginx -t
 sudo systemctl status hostpanel nginx --no-pager --full
