@@ -23,7 +23,7 @@ DBCOMPAT_CLASSIFIER_OLD = r'''        for statement in statements:
 
 DBCOMPAT_CLASSIFIER_NEW = r'''        for statement in statements:
             classified = re.sub(
-                r"^\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*",
+                r"^\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*\s*",
                 "",
                 statement,
                 flags=re.S,
