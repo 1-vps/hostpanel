@@ -115,6 +115,17 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         )
         self.assertIn("install-failure-summary.txt", self.guest_installer)
 
+    def test_openlitespeed_failure_evidence_is_scoped_and_non_secret(self):
+        self.assertIn(
+            "Configuring OpenLiteSpeed as a private per-domain backend",
+            self.guest_installer,
+        )
+        self.assertIn("scoped OpenLiteSpeed configuration test", self.guest_installer)
+        self.assertIn("/usr/local/lsws/bin/openlitespeed -t", self.guest_installer)
+        self.assertIn("scoped OpenLiteSpeed managed directives", self.guest_installer)
+        self.assertIn("include|listener|address|secure|useIpInProxyHeader", self.guest_installer)
+        self.assertNotIn("cat /var/log/hostpanel-install.log", self.guest_installer)
+
 
 if __name__ == "__main__":
     unittest.main()
