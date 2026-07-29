@@ -32,6 +32,7 @@ TOKENS = (
     "postsrsd",
     "hostpanel-doctor",
     "hostpanel-backup",
+    "def create_backup",
     "BACKUP_DIR",
     "tar.gz",
 )
@@ -114,6 +115,9 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
             context_lines.update(range(1, len(lines) + 1))
         elif member.name.endswith("/app/hostpanel-backup"):
             context_label = "backup command"
+            context_lines.update(range(1, len(lines) + 1))
+        elif member.name.endswith("/app/modules/backups.py"):
+            context_label = "backup module"
             context_lines.update(range(1, len(lines) + 1))
         elif any(
             token in line
