@@ -40,7 +40,7 @@ class QemuVmAcceptanceTests(unittest.TestCase):
 
     def test_expected_version_is_explicit_and_validated(self):
         self.assertIn(
-            "HP_QEMU_EXPECTED_VERSION: 3.4.0-hardened-r6",
+            "HP_QEMU_EXPECTED_VERSION: 3.4.0-hardened-r5",
             self.workflow,
         )
         self.assertIn(
@@ -49,6 +49,14 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         )
         self.assertNotIn("$REPO_ROOT/VERSION", self.harness)
         self.assertIn("HP_QEMU_EXPECTED_VERSION must be a release version", self.harness)
+
+    def test_qemu_paths_cover_all_runtime_overlay_sources(self):
+        for path in (
+            "tools/harden_install_impl.py",
+            "tools/patch_cli_runtime_env.py",
+            "tests/test_post_install_health.py",
+        ):
+            self.assertIn(f"      - {path}", self.workflow)
 
     def test_harness_uses_pinned_verified_ubuntu_image(self):
         self.assertIn(
@@ -72,7 +80,7 @@ class QemuVmAcceptanceTests(unittest.TestCase):
 
     def test_qemu_cleanup_revalidates_pid_ownership(self):
         self.assertIn("qemu_pid_is_ours(){", self.harness)
-        self.assertIn('/proc/$QEMU_PID/cmdline', self.harness)
+        self.assertIn("/proc/$QEMU_PID/cmdline", self.harness)
         self.assertIn("qemu-system-x86_64", self.harness)
         self.assertIn('$WORK_DIR/disk.qcow2', self.harness)
         self.assertIn("qemu_pid_is_ours && kill -KILL", self.harness)
@@ -119,6 +127,10 @@ class QemuVmAcceptanceTests(unittest.TestCase):
     def test_failure_evidence_is_stage_based_and_redacted(self):
         self.assertIn("/etc/hostpanel/install-state", self.guest_installer)
         self.assertIn("redacted installer errors", self.guest_installer)
+        self.assertIn("failure_phase=%s", self.guest_installer)
+        self.assertIn("expected_version=%s", self.guest_installer)
+        self.assertIn("installed_version=%s", self.guest_installer)
+        self.assertIn("FAILURE_PHASE=pre-reboot-validation", self.guest_installer)
         self.assertIn(
             "password|passwd|secret|token|credential|private[ _-]?key",
             self.guest_installer,
