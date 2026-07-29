@@ -129,6 +129,15 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertNotIn("cat /var/log/hostpanel-install.log", self.guest_installer)
         self.assertNotIn('cat "$PRIVATE_LOG"', self.guest_installer)
 
+    def test_root_action_failure_evidence_is_scoped_and_non_secret(self):
+        self.assertIn("Granting the panel controlled root actions", self.guest_installer)
+        self.assertIn("scoped pre-rollback root-action errors", self.guest_installer)
+        self.assertIn("visudo|sudoers|chown:|chmod:|find:", self.guest_installer)
+        self.assertIn("scoped post-rollback sudoers validation", self.guest_installer)
+        self.assertIn("visudo -cf /etc/sudoers.d/hostpanel", self.guest_installer)
+        self.assertNotIn("cat /var/log/hostpanel-install.log", self.guest_installer)
+        self.assertNotIn('cat "$PRIVATE_LOG"', self.guest_installer)
+
 
 if __name__ == "__main__":
     unittest.main()
