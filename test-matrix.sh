@@ -104,6 +104,7 @@ copy_bundle(){
   docker cp "$SCRIPT_DIR/install.sh" "$cid:/root/hostpanel/install.sh" >/dev/null
   docker cp "$SCRIPT_DIR/install.base.sh" "$cid:/root/hostpanel/install.base.sh" >/dev/null
   docker cp "$SCRIPT_DIR/tools/harden_install.py" "$cid:/root/hostpanel/tools/harden_install.py" >/dev/null
+  docker cp "$SCRIPT_DIR/tools/harden_install_impl.py" "$cid:/root/hostpanel/tools/harden_install_impl.py" >/dev/null
   docker cp "$SCRIPT_DIR/tools/harden_install_runtime.py" "$cid:/root/hostpanel/tools/harden_install_runtime.py" >/dev/null
 }
 
