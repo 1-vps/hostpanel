@@ -1,4 +1,3 @@
-import hashlib
 import pathlib
 import subprocess
 import tempfile
@@ -8,14 +7,20 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HARDENER = ROOT / "tools" / "harden_install.py"
 IMPLEMENTATION = ROOT / "tools" / "harden_install_impl.py"
+MATRIX = ROOT / "test-matrix.sh"
 BASE = ROOT / "install.base.sh"
 EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
 
 
 def git_blob_sha(path: pathlib.Path) -> str:
-    data = path.read_bytes()
-    payload = f"blob {len(data)}\0".encode("ascii") + data
-    return hashlib.sha1(payload, usedforsecurity=False).hexdigest()
+    result = subprocess.run(
+        ["git", "hash-object", "--no-filters", str(path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
 
 
 class PostInstallHealthTests(unittest.TestCase):
@@ -30,6 +35,7 @@ class PostInstallHealthTests(unittest.TestCase):
         )
         cls.generated = cls.generated_path.read_text(encoding="utf-8")
         cls.wrapper = HARDENER.read_text(encoding="utf-8")
+        cls.matrix = MATRIX.read_text(encoding="utf-8")
 
     @classmethod
     def tearDownClass(cls):
@@ -40,6 +46,19 @@ class PostInstallHealthTests(unittest.TestCase):
         self.assertFalse(IMPLEMENTATION.is_symlink())
         self.assertEqual(git_blob_sha(IMPLEMENTATION), EXPECTED_IMPL_BLOB)
         self.assertIn(f'EXPECTED_IMPL_BLOB = "{EXPECTED_IMPL_BLOB}"', self.wrapper)
+
+    def test_os_matrix_copies_the_pinned_implementation(self):
+        wrapper_copy = self.matrix.index(
+            'docker cp "$SCRIPT_DIR/tools/harden_install.py"'
+        )
+        implementation_copy = self.matrix.index(
+            'docker cp "$SCRIPT_DIR/tools/harden_install_impl.py"'
+        )
+        runtime_copy = self.matrix.index(
+            'docker cp "$SCRIPT_DIR/tools/harden_install_runtime.py"'
+        )
+        self.assertLess(wrapper_copy, implementation_copy)
+        self.assertLess(implementation_copy, runtime_copy)
 
     def test_initial_backup_precedes_doctor_for_backup_role(self):
         backup = self.generated.index('say "Creating the initial verified backup"')
