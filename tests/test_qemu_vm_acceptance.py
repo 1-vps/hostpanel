@@ -24,6 +24,7 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertIn('setfacl -m "u:$(id -u):rw" /dev/kvm', self.workflow)
         self.assertNotIn("chmod a+rw /dev/kvm", self.workflow)
         self.assertNotIn("chmod a+rw /dev/kvm", self.harness)
+        self.assertNotIn("/opt/hostedtoolcache", self.workflow)
 
     def test_actions_are_commit_pinned_and_evidence_is_always_uploaded(self):
         self.assertIn(
