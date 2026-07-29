@@ -80,21 +80,28 @@ class DovecotConfigTests(unittest.TestCase):
         validate = text.index(
             'doveconf -n >>"$LOG" 2>&1 || die "Dovecot IMAPSieve configuration is invalid"'
         )
+        plugin_args = text.index("SIEVEC_PLUGIN_ARGS=(")
         spam = text.index(
-            '/usr/bin/sievec /usr/lib/dovecot/sieve/report-spam.sieve >>"$LOG" 2>&1'
+            '/usr/bin/sievec "${SIEVEC_PLUGIN_ARGS[@]}" /usr/lib/dovecot/sieve/report-spam.sieve'
         )
         ham = text.index(
-            '/usr/bin/sievec /usr/lib/dovecot/sieve/report-ham.sieve >>"$LOG" 2>&1'
+            '/usr/bin/sievec "${SIEVEC_PLUGIN_ARGS[@]}" /usr/lib/dovecot/sieve/report-ham.sieve'
         )
         restart = text.index('systemctl restart dovecot >>"$LOG" 2>&1')
         self.assertLess(config, validate)
-        self.assertLess(validate, spam)
+        self.assertLess(validate, plugin_args)
+        self.assertLess(plugin_args, spam)
         self.assertLess(spam, ham)
         self.assertLess(ham, restart)
-        self.assertNotIn(
-            "/usr/bin/sievec /usr/lib/dovecot/sieve/report-spam.sieve\n",
+        self.assertIn(
+            "-o 'sieve_plugins=sieve_imapsieve sieve_extprograms'",
             text,
         )
+        self.assertIn(
+            "-o 'sieve_global_extensions=+vnd.dovecot.pipe +vnd.dovecot.environment'",
+            text,
+        )
+        self.assertEqual(text.count('"${SIEVEC_PLUGIN_ARGS[@]}"'), 2)
         self.assertIn("Could not compile the spam-learning Sieve rule", text)
         self.assertIn("Could not compile the ham-learning Sieve rule", text)
 
@@ -107,6 +114,7 @@ class DovecotConfigTests(unittest.TestCase):
         self.assertIn("Dovecot LMTP plugin block syntax", hardener)
         self.assertIn("defer Sieve compilation until plugin configuration", hardener)
         self.assertIn("compile Sieve after plugin configuration", hardener)
+        self.assertIn("SIEVEC_PLUGIN_ARGS", hardener)
 
 
 if __name__ == "__main__":
