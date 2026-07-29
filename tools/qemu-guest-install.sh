@@ -129,14 +129,40 @@ cat > /root/hostpanel-qemu-post-reboot.sh <<'POSTREBOOT'
 set -Eeuo pipefail
 source /root/hostpanel-qemu.env
 EVIDENCE=/root/hostpanel-qemu-evidence
+for attempt in $(seq 1 30); do
+  systemctl is-active --quiet hostpanel.service && break
+  sleep 2
+done
+if ! systemctl is-active --quiet hostpanel.service; then
+  {
+    printf '%s\n' '--- scoped hostpanel service state after reboot ---'
+    systemctl show hostpanel.service \
+      --property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,FragmentPath \
+      --no-pager 2>&1 || true
+    printf '%s\n' '--- scoped redacted hostpanel service journal after reboot ---'
+    journalctl -u hostpanel.service --no-pager -n 240 2>&1 \
+      | grep -Evai '(password|passwd|secret|token|credential|private[ _-]?key|api[ _-]?key|admin[ _-]?(user|login))' \
+      | sed -E 's#((postgres(ql)?|redis|mysql|mariadb)://[^:/[:space:]]+:)[^@[:space:]]+@#\1[REDACTED]@#g' \
+      | tail -n 240 || true
+  } > "$EVIDENCE/hostpanel-post-reboot-failure.txt"
+  chmod 600 "$EVIDENCE/hostpanel-post-reboot-failure.txt"
+  exit 1
+fi
 env \
   HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
   HP_PANEL_HOST="$HP_PANEL_HOST" \
   HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
   bash /root/validate-production-vm.sh --post-reboot \
   | tee "$EVIDENCE/post-reboot-validator.txt"
+set +e
 /opt/hostpanel/venv/bin/python /opt/hostpanel/app/hostpanel-doctor --quiet \
   | tee "$EVIDENCE/doctor.txt"
+DOCTOR_STATUS=${PIPESTATUS[0]}
+set -e
+case "$DOCTOR_STATUS" in
+  0|1) ;;
+  *) exit "$DOCTOR_STATUS" ;;
+esac
 POSTREBOOT
 chmod 700 /root/hostpanel-qemu-post-reboot.sh
 
