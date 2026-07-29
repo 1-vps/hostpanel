@@ -209,6 +209,33 @@ userdb {
         "Dovecot passwd-file block syntax",
     )
 
+    text = _replace_once(
+        text,
+        '''chmod 755 /usr/lib/dovecot/sieve/hostpanel-rspamc-spam /usr/lib/dovecot/sieve/hostpanel-rspamc-ham
+chmod 644 /usr/lib/dovecot/sieve/report-spam.sieve /usr/lib/dovecot/sieve/report-ham.sieve
+/usr/bin/sievec /usr/lib/dovecot/sieve/report-spam.sieve
+/usr/bin/sievec /usr/lib/dovecot/sieve/report-ham.sieve
+cat >/etc/dovecot/conf.d/90-sieve-hostpanel.conf <<'EOF' ''',
+        '''chmod 755 /usr/lib/dovecot/sieve/hostpanel-rspamc-spam /usr/lib/dovecot/sieve/hostpanel-rspamc-ham
+chmod 644 /usr/lib/dovecot/sieve/report-spam.sieve /usr/lib/dovecot/sieve/report-ham.sieve
+cat >/etc/dovecot/conf.d/90-sieve-hostpanel.conf <<'EOF' ''',
+        "defer Sieve compilation until plugin configuration",
+    )
+    text = _replace_once(
+        text,
+        '''EOF
+doveconf -n >>"$LOG" 2>&1 || die "Dovecot IMAPSieve configuration is invalid"
+systemctl restart dovecot >>"$LOG" 2>&1 || true''',
+        '''EOF
+doveconf -n >>"$LOG" 2>&1 || die "Dovecot IMAPSieve configuration is invalid"
+/usr/bin/sievec /usr/lib/dovecot/sieve/report-spam.sieve >>"$LOG" 2>&1 \
+  || die "Could not compile the spam-learning Sieve rule"
+/usr/bin/sievec /usr/lib/dovecot/sieve/report-ham.sieve >>"$LOG" 2>&1 \
+  || die "Could not compile the ham-learning Sieve rule"
+systemctl restart dovecot >>"$LOG" 2>&1 || true''',
+        "compile Sieve after plugin configuration",
+    )
+
     runtime_patch = f'''sync_release_tree "$SOURCE_ROOT/app" "$PANEL_DIR/app"
 python3 - "$PANEL_DIR/app/dbcompat.py" <<'PYDBCOMPAT' >>"$LOG" 2>&1 \
   || die "Could not apply the reviewed PostgreSQL schema compatibility patch"
