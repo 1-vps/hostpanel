@@ -12,7 +12,7 @@ PATCHER = ROOT / "tools" / "patch_cli_runtime_env.py"
 MATRIX = ROOT / "test-matrix.sh"
 BASE = ROOT / "install.base.sh"
 EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
-EXPECTED_PATCHER_BLOB = "e64c329e4a4a1648d35ef29ed0f632077ed1f4dd"
+EXPECTED_PATCHER_BLOB = "78af3a7fd138959565996d54700a616d3f095127"
 
 
 def git_blob_sha(path: pathlib.Path) -> str:
