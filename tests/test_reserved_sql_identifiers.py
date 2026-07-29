@@ -1,4 +1,5 @@
 import pathlib
+import re
 import subprocess
 import sys
 import tarfile
@@ -29,26 +30,41 @@ def release_member(suffix: str) -> str:
         return handle.read().decode("utf-8")
 
 
+def match_count(pattern: str, text: str) -> int:
+    return len(re.findall(pattern, text, flags=re.MULTILINE))
+
+
 class ReservedSqlIdentifierTests(unittest.TestCase):
     def test_signed_release_contains_reviewed_reserved_cursor_shape(self):
         store = release_member("/app/store.py")
         platform = release_member("/app/platform_store.py")
-        self.assertEqual(store.count("    offset       INTEGER NOT NULL DEFAULT 0,"), 1)
-        self.assertEqual(platform.count("    offset      INTEGER NOT NULL DEFAULT 0,"), 1)
         self.assertEqual(
-            platform.count("SELECT inode,offset FROM platform_log_cursors WHERE source=?"),
+            match_count(r"^\s*offset\s+INTEGER\s+NOT\s+NULL\s+DEFAULT\s+0,\s*$", store),
             1,
         )
-        self.assertEqual(platform.count('cursor["offset"]'), 2)
         self.assertEqual(
-            platform.count(
-                "INSERT INTO platform_log_cursors(source,inode,offset,updated) VALUES(?,?,?,?) "
+            match_count(r"^\s*offset\s+INTEGER\s+NOT\s+NULL\s+DEFAULT\s+0,\s*$", platform),
+            1,
+        )
+        self.assertEqual(
+            match_count(
+                r"SELECT\s+inode\s*,\s*offset\s+FROM\s+platform_log_cursors\s+WHERE\s+source\s*=\s*\?",
+                platform,
+            ),
+            1,
+        )
+        self.assertEqual(match_count(r'cursor\[\s*["\']offset["\']\s*\]', platform), 2)
+        self.assertEqual(
+            match_count(
+                r"INSERT\s+INTO\s+platform_log_cursors\s*\(\s*source\s*,\s*inode\s*,\s*offset\s*,\s*updated\s*\)",
+                platform,
             ),
             1,
         )
         self.assertEqual(
-            platform.count(
-                "ON CONFLICT(source) DO UPDATE SET inode=excluded.inode,offset=excluded.offset,updated=excluded.updated"
+            match_count(
+                r"ON\s+CONFLICT\s*\(\s*source\s*\)\s+DO\s+UPDATE\s+SET\s+inode\s*=\s*excluded\.inode\s*,\s*offset\s*=\s*excluded\.offset\s*,\s*updated\s*=\s*excluded\.updated",
+                platform,
             ),
             1,
         )
