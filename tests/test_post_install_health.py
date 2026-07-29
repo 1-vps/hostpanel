@@ -12,7 +12,7 @@ PATCHER = ROOT / "tools" / "patch_cli_runtime_env.py"
 MATRIX = ROOT / "test-matrix.sh"
 BASE = ROOT / "install.base.sh"
 EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
-EXPECTED_PATCHER_BLOB = "7c55cea03145f6da2b1ef03c275766cc269eb8ee"
+EXPECTED_PATCHER_BLOB = "e64c329e4a4a1648d35ef29ed0f632077ed1f4dd"
 
 
 def git_blob_sha(path: pathlib.Path) -> str:
@@ -153,7 +153,9 @@ class PostInstallHealthTests(unittest.TestCase):
     def test_cli_environment_loader_is_strict_and_non_shell(self):
         self.assertIn("config.stat(follow_symlinks=False)", self.patcher)
         self.assertIn("metadata.st_uid != 0", self.patcher)
-        self.assertIn("metadata.st_mode & 0o022", self.patcher)
+        self.assertIn("mode = _runtime_stat.S_IMODE(metadata.st_mode)", self.patcher)
+        self.assertIn("mode not in (0o600, 0o640)", self.patcher)
+        self.assertNotIn("metadata.st_mode & 0o022", self.patcher)
         self.assertIn("or key in seen", self.patcher)
         self.assertIn("_runtime_os.environ.setdefault(key, value)", self.patcher)
         self.assertIn(
@@ -168,6 +170,7 @@ class PostInstallHealthTests(unittest.TestCase):
             self.assertEqual(text.count("def _load_runtime_environment()"), 1)
             self.assertEqual(text.count("_load_runtime_environment()"), 2)
             self.assertIn('required = ("HP_SECRET", "HP_DATABASE_URL_FILE", "HP_MASTER_KEY_FILE")', text)
+            self.assertIn("mode not in (0o600, 0o640)", text)
         self.assertLess(
             self.patched_backup.index("_load_runtime_environment()"),
             self.patched_backup.index("from modules import backups"),
