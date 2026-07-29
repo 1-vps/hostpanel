@@ -11,14 +11,24 @@ ARCHIVES = sorted(ROOT.glob("hostpanel-*-source.tar.gz"))
 if len(ARCHIVES) != 1:
     raise SystemExit(f"expected exactly one source tarball, found {len(ARCHIVES)}")
 
-needles = ("server_groups", "def init", "CREATE TABLE", "controlplane-migrate")
+needles = (
+    "server_groups",
+    "def init",
+    "def connect",
+    "HP_DATABASE_URL",
+    "DATABASE_URL",
+    "DATABASE_URL_FILE",
+    "HP_DB",
+    "executescript(SCHEMA)",
+    "controlplane-migrate",
+)
 interesting_names: set[str] = set()
 
 with tarfile.open(ARCHIVES[0], "r:gz") as archive:
     members = [m for m in archive.getmembers() if m.isfile()]
     for member in members:
         lowered = member.name.lower()
-        if not any(token in lowered for token in ("store.py", "migrat", "schema", "database")):
+        if not any(token in lowered for token in ("store.py", "migrat", "schema", "database", "config")):
             continue
         handle = archive.extractfile(member)
         if handle is None:
@@ -32,8 +42,8 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
         print(f"\n### {member.name}")
         emitted: set[int] = set()
         for hit in hits:
-            start = max(0, hit - 8)
-            end = min(len(lines), hit + 13)
+            start = max(0, hit - 12)
+            end = min(len(lines), hit + 18)
             for index in range(start, end):
                 if index in emitted:
                     continue
