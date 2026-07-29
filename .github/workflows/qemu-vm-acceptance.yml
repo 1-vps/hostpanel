@@ -31,6 +31,7 @@ on:
       - '*.sig'
       - tests/test_qemu_vm_acceptance.py
       - tests/test_post_install_health.py
+      - tests/test_first_reboot_hardening.py
       - tests/test_systemd_resolved_dns.py
 
 permissions:
