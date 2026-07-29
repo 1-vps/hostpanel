@@ -234,6 +234,45 @@ try:
 finally:
     temporary.unlink(missing_ok=True)
 PYQUOTEDSQL
+python3 - "$GENERATED_INSTALLER" <<'PYREADINESSHOST' \
+  || die "Could not apply the reviewed readiness Host header fix"
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(f"unsafe generated installer target: {path}")
+old = '''READINESS_RESPONSE="$(curl --silent --show-error --fail --max-time 5 \\
+    -H "x-hostpanel-readiness: $READINESS_TOKEN" \\
+    "http://127.0.0.1:$PANEL_BACKEND_PORT/api/internal/readiness" \\
+    2>>"$LOG" || true)"'''
+new = '''READINESS_RESPONSE="$(curl --silent --show-error --fail --max-time 5 \\
+    -H "Host: $PANEL_HOST" \\
+    -H "x-hostpanel-readiness: $READINESS_TOKEN" \\
+    "http://127.0.0.1:$PANEL_BACKEND_PORT/api/internal/readiness" \\
+    2>>"$LOG" || true)"'''
+text = path.read_text(encoding="utf-8")
+old_count = text.count(old)
+new_count = text.count(new)
+if new_count == 1:
+    updated = text
+elif old_count == 1 and new_count == 0:
+    updated = text.replace(old, new, 1)
+else:
+    raise SystemExit(
+        f"unexpected readiness Host header shape: old={old_count} new={new_count}"
+    )
+mode = stat.S_IMODE(path.stat().st_mode)
+temporary = path.with_name(f".{path.name}.readiness-host.{os.getpid()}")
+try:
+    temporary.write_text(updated, encoding="utf-8")
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+PYREADINESSHOST
 python3 - "$GENERATED_INSTALLER" <<'PYPROXYLOG' \
   || die "Could not apply the reviewed proxy traffic log pre-start fix"
 import os
