@@ -35,9 +35,9 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
     for member in members.values():
         if not member.isfile():
             continue
-        if pathlib.PurePosixPath(member.name).suffix.lower() not in {
-            ".py", ".sh", ".sql"
-        }:
+        suffix = pathlib.PurePosixPath(member.name).suffix.lower()
+        if suffix not in {".py", ".sh", ".sql"} \
+                and not member.name.endswith("/ops/hostpanel-antiddos"):
             continue
         handle = archive.extractfile(member)
         if handle is None:
