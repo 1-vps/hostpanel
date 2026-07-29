@@ -12,7 +12,7 @@ PATCHER = ROOT / "tools" / "patch_cli_runtime_env.py"
 MATRIX = ROOT / "test-matrix.sh"
 BASE = ROOT / "install.base.sh"
 EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
-EXPECTED_PATCHER_BLOB = "0bb8c538376ba81cb8ddc6dc6031139498a3ff2f"
+EXPECTED_PATCHER_BLOB = "7c55cea03145f6da2b1ef03c275766cc269eb8ee"
 
 
 def git_blob_sha(path: pathlib.Path) -> str:
@@ -189,6 +189,17 @@ class PostInstallHealthTests(unittest.TestCase):
             self.patched_mysql_admin.count('"--local-infile=0"'), 3
         )
         self.assertIn("local-infile=0", self.patched_mysql_admin)
+
+    def test_doctor_aligns_with_optional_openlitespeed_fallback(self):
+        self.assertNotIn(
+            'expected.update({"lsws": True, service("apache"): False})',
+            self.patched_doctor,
+        )
+        self.assertIn(
+            '"lsws": Path("/usr/local/lsws/bin/lswsctrl").is_file()',
+            self.patched_doctor,
+        )
+        self.assertIn('service("apache"): False', self.patched_doctor)
 
     def test_initial_backup_precedes_doctor_for_backup_role(self):
         backup = self.generated.index('say "Creating the initial verified backup"')
