@@ -139,6 +139,16 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertNotIn("cat /var/log/hostpanel-install.log", self.guest_installer)
         self.assertNotIn('cat "$PRIVATE_LOG"', self.guest_installer)
 
+    def test_hostpanel_service_failure_evidence_is_scoped_and_redacted(self):
+        self.assertIn("Registering the systemd service", self.guest_installer)
+        self.assertIn("scoped hostpanel service state", self.guest_installer)
+        self.assertIn("ExecMainCode,ExecMainStatus", self.guest_installer)
+        self.assertIn("journalctl -u hostpanel.service", self.guest_installer)
+        self.assertIn("scoped redacted hostpanel service errors", self.guest_installer)
+        self.assertIn("[REDACTED]@", self.guest_installer)
+        self.assertNotIn("systemctl cat hostpanel", self.guest_installer)
+        self.assertNotIn('cat "$PRIVATE_LOG"', self.guest_installer)
+
     def test_root_action_failure_evidence_is_scoped_and_non_secret(self):
         self.assertIn("Granting the panel controlled root actions", self.guest_installer)
         self.assertIn("scoped pre-rollback root-action errors", self.guest_installer)
