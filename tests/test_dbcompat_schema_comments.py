@@ -48,14 +48,10 @@ class RecordingConnection:
         self.created = []
 
     def execute(self, statement):
-        classified = re.sub(
-            r"^\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*",
-            "",
-            statement,
-            flags=re.S,
-        )
-        match = re.match(
-            r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([A-Za-z_][A-Za-z0-9_]*)",
+        classified = re.sub(r"--[^\n]*(?:\n|$)", "\n", statement)
+        classified = re.sub(r"/\*.*?\*/", " ", classified, flags=re.S)
+        match = re.search(
+            r"\bCREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([A-Za-z_][A-Za-z0-9_]*)",
             classified,
             re.I,
         )
