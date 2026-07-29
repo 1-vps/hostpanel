@@ -22,14 +22,10 @@ DBCOMPAT_CLASSIFIER_OLD = r'''        for statement in statements:
             (tables if match else others).append((match.group(1).lower(), statement) if match else statement)'''
 
 DBCOMPAT_CLASSIFIER_NEW = r'''        for statement in statements:
-            classified = re.sub(
-                r"^\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*\s*",
-                "",
-                statement,
-                flags=re.S,
-            )
-            match = re.match(
-                r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+            classified = re.sub(r"--[^\n]*(?:\n|$)", "\n", statement)
+            classified = re.sub(r"/\*.*?\*/", " ", classified, flags=re.S)
+            match = re.search(
+                r"\bCREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)",
                 classified,
                 re.I,
             )
