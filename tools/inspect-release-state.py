@@ -18,6 +18,10 @@ TOKENS = (
     "cursor['offset']",
     "excluded.offset",
     "system_user",
+    "HP_TRUSTED_HOSTS",
+    "TrustedHostMiddleware",
+    "/api/internal/readiness",
+    "x-hostpanel-readiness",
 )
 found = 0
 
@@ -45,18 +49,43 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
         for number, line in hits:
             print(f"{number}: {line!r}")
             found += 1
+        context_lines = set()
+        context_label = ""
         if member.name.endswith("/app/store.py"):
-            context_lines = set()
+            context_label = "system_user"
             for number, line in hits:
-                if "system_user" not in line:
-                    continue
-                context_lines.update(
-                    range(max(1, number - 14), min(len(lines), number + 14) + 1)
-                )
-            if context_lines:
-                print(f"### {member.name} system_user context")
-                for number in sorted(context_lines):
-                    print(f"{number}: {lines[number - 1]!r}")
+                if "system_user" in line:
+                    context_lines.update(
+                        range(max(1, number - 14), min(len(lines), number + 14) + 1)
+                    )
+        if any(
+            token in line
+            for _, line in hits
+            for token in (
+                "HP_TRUSTED_HOSTS",
+                "TrustedHostMiddleware",
+                "/api/internal/readiness",
+                "x-hostpanel-readiness",
+            )
+        ):
+            context_label = "readiness host validation"
+            for number, line in hits:
+                if any(
+                    token in line
+                    for token in (
+                        "HP_TRUSTED_HOSTS",
+                        "TrustedHostMiddleware",
+                        "/api/internal/readiness",
+                        "x-hostpanel-readiness",
+                    )
+                ):
+                    context_lines.update(
+                        range(max(1, number - 12), min(len(lines), number + 12) + 1)
+                    )
+        if context_lines:
+            print(f"### {member.name} {context_label} context")
+            for number in sorted(context_lines):
+                print(f"{number}: {lines[number - 1]!r}")
 
     manifests = [
         name for name in members
@@ -88,4 +117,4 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
         )
 
 if not found:
-    raise SystemExit("no reviewed cursor source literals found")
+    raise SystemExit("no reviewed release source literals found")
