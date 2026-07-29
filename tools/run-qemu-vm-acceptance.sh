@@ -4,7 +4,8 @@
 set -Eeuo pipefail
 
 REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-WORK_DIR="${RUNNER_TEMP:-/tmp}/hostpanel-qemu-acceptance"
+WORK_PARENT="${RUNNER_TEMP:-/tmp}"
+WORK_DIR=""
 ARTIFACT_ROOT="$REPO_ROOT/artifacts"
 ARTIFACT_DIR="$ARTIFACT_ROOT/qemu-vm-acceptance"
 IMAGE_URL="${HP_QEMU_IMAGE_URL:-https://cloud-images.ubuntu.com/releases/noble/release-20260725/ubuntu-24.04-server-cloudimg-amd64.img}"
@@ -24,13 +25,17 @@ QEMU_PID=""
 
 die(){ printf 'Error: %s\n' "$*" >&2; exit 1; }
 require(){ command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
+[[ -d "$WORK_PARENT" && ! -L "$WORK_PARENT" ]] \
+  || die "unsafe QEMU work parent: $WORK_PARENT"
+WORK_DIR="$(mktemp -d "$WORK_PARENT/hostpanel-qemu-acceptance.XXXXXX")" \
+  || die 'could not create a private QEMU work directory'
 for artifact_path in "$ARTIFACT_ROOT" "$ARTIFACT_DIR"; do
   if [[ -e "$artifact_path" || -L "$artifact_path" ]]; then
     [[ -d "$artifact_path" && ! -L "$artifact_path" ]] \
       || die "unsafe artifact directory: $artifact_path"
   fi
 done
-mkdir -p "$WORK_DIR" "$ARTIFACT_DIR"
+mkdir -p "$ARTIFACT_DIR"
 [[ -d "$ARTIFACT_ROOT" && ! -L "$ARTIFACT_ROOT" \
    && -d "$ARTIFACT_DIR" && ! -L "$ARTIFACT_DIR" ]] \
   || die 'artifact directories changed during setup'
@@ -136,6 +141,9 @@ collect_evidence(){
       sleep 1
     done
     qemu_pid_is_ours && kill -KILL "$QEMU_PID" 2>/dev/null || true
+  fi
+  if ! qemu_pid_is_ours && [[ -n "$WORK_DIR" && -d "$WORK_DIR" && ! -L "$WORK_DIR" ]]; then
+    rm -rf -- "$WORK_DIR"
   fi
 }
 trap collect_evidence EXIT
