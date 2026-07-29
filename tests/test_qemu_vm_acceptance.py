@@ -21,6 +21,9 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertNotIn("sshpass", self.workflow)
         self.assertIn("head.repo.full_name == github.repository", self.workflow)
         self.assertIn("persist-credentials: false", self.workflow)
+        self.assertIn('setfacl -m "u:$(id -u):rw" /dev/kvm', self.workflow)
+        self.assertNotIn("chmod a+rw /dev/kvm", self.workflow)
+        self.assertNotIn("chmod a+rw /dev/kvm", self.harness)
 
     def test_actions_are_commit_pinned_and_evidence_is_always_uploaded(self):
         self.assertIn(
@@ -43,7 +46,7 @@ class QemuVmAcceptanceTests(unittest.TestCase):
             'EXPECTED_VERSION="${HP_QEMU_EXPECTED_VERSION:-3.4.0-hardened-r6}"',
             self.harness,
         )
-        self.assertNotIn('$REPO_ROOT/VERSION', self.harness)
+        self.assertNotIn("$REPO_ROOT/VERSION", self.harness)
         self.assertIn("HP_QEMU_EXPECTED_VERSION must be a release version", self.harness)
 
     def test_harness_uses_pinned_verified_ubuntu_image(self):
@@ -69,9 +72,27 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertIn('test "$(cat /proc/1/comm)" = systemd', self.harness)
         self.assertIn("--prepare-reboot", self.guest_installer)
         self.assertIn("sudo systemctl reboot", self.harness)
-        self.assertIn("--post-reboot", self.harness)
+        self.assertIn("--post-reboot", self.guest_installer)
         self.assertIn("guest boot ID did not change", self.harness)
         self.assertIn("hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22", self.harness)
+        self.assertIn("set -Eeuo pipefail", self.guest_installer)
+        self.assertIn("hostpanel-qemu-post-reboot.sh", self.harness)
+        self.assertIn("hostpanel-qemu-post-reboot.sh", self.guest_installer)
+
+    def test_guest_inputs_are_escaped_and_checked_before_root_use(self):
+        self.assertIn("printf 'HP_PANEL_HOST=%q\\n'", self.harness)
+        self.assertIn('test ! -L "$path"', self.harness)
+        self.assertIn('test "$(stat -c %h "$path")" = 1', self.harness)
+        self.assertIn('[[ -f "$input" && ! -L "$input" ]]', self.guest_installer)
+        self.assertIn("0:600:1", self.guest_installer)
+        self.assertIn("/root/hostpanel-qemu.env", self.guest_installer)
+
+    def test_guest_evidence_archive_is_validated_before_extraction(self):
+        self.assertIn("unsafe guest evidence path", self.harness)
+        self.assertIn("member.issym() or member.islnk()", self.harness)
+        self.assertIn("max_total_size", self.harness)
+        self.assertIn('target.open("xb")', self.harness)
+        self.assertNotIn("tar -xzf", self.harness)
 
     def test_generated_credentials_and_install_output_remain_private(self):
         self.assertIn(
@@ -82,8 +103,8 @@ class QemuVmAcceptanceTests(unittest.TestCase):
             "hostpanel-qemu-private-install.log",
             self.guest_installer,
         )
-        self.assertNotIn("$PRIVATE_LOG\" > \"$EVIDENCE", self.guest_installer)
-        self.assertNotIn("cat \"$PRIVATE_LOG\"", self.guest_installer)
+        self.assertNotIn('$PRIVATE_LOG" > "$EVIDENCE', self.guest_installer)
+        self.assertNotIn('cat "$PRIVATE_LOG"', self.guest_installer)
 
     def test_failure_evidence_is_stage_based_and_redacted(self):
         self.assertIn("/etc/hostpanel/install-state", self.guest_installer)
