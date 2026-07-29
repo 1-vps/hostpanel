@@ -120,11 +120,14 @@ class QemuVmAcceptanceTests(unittest.TestCase):
             "Configuring OpenLiteSpeed as a private per-domain backend",
             self.guest_installer,
         )
-        self.assertIn("scoped OpenLiteSpeed configuration test", self.guest_installer)
+        self.assertIn("scoped pre-rollback OpenLiteSpeed errors", self.guest_installer)
+        self.assertIn("scoped post-rollback OpenLiteSpeed configuration test", self.guest_installer)
         self.assertIn("/usr/local/lsws/bin/openlitespeed -t", self.guest_installer)
         self.assertIn("scoped OpenLiteSpeed managed directives", self.guest_installer)
         self.assertIn("include|listener|address|secure|useIpInProxyHeader", self.guest_installer)
+        self.assertIn("grep -Eai '(openlitespeed|litespeed|lsws|httpd_config", self.guest_installer)
         self.assertNotIn("cat /var/log/hostpanel-install.log", self.guest_installer)
+        self.assertNotIn('cat "$PRIVATE_LOG"', self.guest_installer)
 
 
 if __name__ == "__main__":
