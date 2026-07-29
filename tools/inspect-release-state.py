@@ -27,6 +27,10 @@ TOKENS = (
     "anti-DDoS apply failed",
     "HP_PANEL_BACKEND_PORT",
     "12722",
+    "systemctl --failed",
+    "podman-restart",
+    "postsrsd",
+    "hostpanel-doctor",
 )
 found = 0
 
@@ -36,8 +40,12 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
         if not member.isfile():
             continue
         suffix = pathlib.PurePosixPath(member.name).suffix.lower()
+        extensionless_targets = (
+            "/ops/hostpanel-antiddos",
+            "/app/hostpanel-doctor",
+        )
         if suffix not in {".py", ".sh", ".sql"} \
-                and not member.name.endswith("/ops/hostpanel-antiddos"):
+                and not member.name.endswith(extensionless_targets):
             continue
         handle = archive.extractfile(member)
         if handle is None:
@@ -97,6 +105,9 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
         if member.name.endswith("/ops/hostpanel-antiddos"):
             context_label = "anti-DDoS helper"
             context_lines.update(range(1, len(lines) + 1))
+        elif member.name.endswith("/app/hostpanel-doctor"):
+            context_label = "post-install doctor"
+            context_lines.update(range(1, len(lines) + 1))
         elif any(
             token in line
             for _, line in hits
@@ -110,6 +121,17 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
                 if "hostpanel-antiddos" in line or "anti-DDoS apply failed" in line:
                     context_lines.update(
                         range(max(1, number - 30), min(len(lines), number + 45) + 1)
+                    )
+        if any(
+            token in line
+            for _, line in hits
+            for token in ("podman-restart", "postsrsd", "systemctl --failed")
+        ) and not context_lines:
+            context_label = "failed unit context"
+            for number, line in hits:
+                if any(token in line for token in ("podman-restart", "postsrsd", "systemctl --failed")):
+                    context_lines.update(
+                        range(max(1, number - 24), min(len(lines), number + 32) + 1)
                     )
         if context_lines:
             print(f"### {member.name} {context_label} context")
