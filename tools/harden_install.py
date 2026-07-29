@@ -253,9 +253,13 @@ cat >/etc/dovecot/conf.d/90-sieve-hostpanel.conf <<'EOF'
 doveconf -n >>"$LOG" 2>&1 || die "Dovecot IMAPSieve configuration is invalid"''',
         '''EOF
 doveconf -n >>"$LOG" 2>&1 || die "Dovecot IMAPSieve configuration is invalid"
-/usr/bin/sievec /usr/lib/dovecot/sieve/report-spam.sieve >>"$LOG" 2>&1 \
+SIEVEC_PLUGIN_ARGS=(
+  -o 'sieve_plugins=sieve_imapsieve sieve_extprograms'
+  -o 'sieve_global_extensions=+vnd.dovecot.pipe +vnd.dovecot.environment'
+)
+/usr/bin/sievec "${SIEVEC_PLUGIN_ARGS[@]}" /usr/lib/dovecot/sieve/report-spam.sieve >>"$LOG" 2>&1 \
   || die "Could not compile the spam-learning Sieve rule"
-/usr/bin/sievec /usr/lib/dovecot/sieve/report-ham.sieve >>"$LOG" 2>&1 \
+/usr/bin/sievec "${SIEVEC_PLUGIN_ARGS[@]}" /usr/lib/dovecot/sieve/report-ham.sieve >>"$LOG" 2>&1 \
   || die "Could not compile the ham-learning Sieve rule"''',
         "compile Sieve after plugin configuration",
     )
