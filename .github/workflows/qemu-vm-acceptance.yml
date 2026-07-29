@@ -16,6 +16,7 @@ on:
       - .github/workflows/qemu-vm-acceptance.yml
       - tools/run-qemu-vm-acceptance.sh
       - tools/qemu-guest-install.sh
+      - tools/inspect-release-state.py
       - tools/validate-production-vm.sh
       - tools/harden_install.py
       - tools/harden_install_runtime.py
@@ -37,6 +38,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release-state-inspection:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Inspect signed release state bootstrap
+        run: python3 tools/inspect-release-state.py
+
   qemu-vm:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-24.04
