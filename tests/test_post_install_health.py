@@ -12,7 +12,7 @@ PATCHER = ROOT / "tools" / "patch_cli_runtime_env.py"
 MATRIX = ROOT / "test-matrix.sh"
 BASE = ROOT / "install.base.sh"
 EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
-EXPECTED_PATCHER_BLOB = "3f60fe91ee4de8945bf79e3b753e6d8a2bb4b3af"
+EXPECTED_PATCHER_BLOB = "0bb8c538376ba81cb8ddc6dc6031139498a3ff2f"
 
 
 def git_blob_sha(path: pathlib.Path) -> str:
@@ -59,20 +59,36 @@ class PostInstallHealthTests(unittest.TestCase):
         runtime_root = pathlib.Path(cls.runtime_temp.name)
         cls.backup_path = runtime_root / "hostpanel-backup"
         cls.doctor_path = runtime_root / "hostpanel-doctor"
+        cls.mysql_admin_path = runtime_root / "hostpanel-mysql-admin"
         extract_signed_source("/app/hostpanel-backup", cls.backup_path)
         extract_signed_source("/app/hostpanel-doctor", cls.doctor_path)
+        extract_signed_source("/app/hostpanel-mysql-admin", cls.mysql_admin_path)
         for _ in range(2):
             subprocess.run(
-                ["python3", str(PATCHER), str(cls.backup_path), str(cls.doctor_path)],
+                [
+                    "python3",
+                    str(PATCHER),
+                    str(cls.backup_path),
+                    str(cls.doctor_path),
+                    str(cls.mysql_admin_path),
+                ],
                 cwd=ROOT,
                 check=True,
             )
         subprocess.run(
-            ["python3", "-m", "py_compile", str(cls.backup_path), str(cls.doctor_path)],
+            [
+                "python3",
+                "-m",
+                "py_compile",
+                str(cls.backup_path),
+                str(cls.doctor_path),
+                str(cls.mysql_admin_path),
+            ],
             check=True,
         )
         cls.patched_backup = cls.backup_path.read_text(encoding="utf-8")
         cls.patched_doctor = cls.doctor_path.read_text(encoding="utf-8")
+        cls.patched_mysql_admin = cls.mysql_admin_path.read_text(encoding="utf-8")
 
     @classmethod
     def tearDownClass(cls):
@@ -115,6 +131,8 @@ class PostInstallHealthTests(unittest.TestCase):
         self.assertLess(resolver, patcher)
         self.assertLess(patcher, compile_check)
         self.assertLess(compile_check, backup)
+        invocation = self.generated[patcher:compile_check]
+        self.assertIn('"$PANEL_DIR/app/hostpanel-mysql-admin"', invocation)
 
     def test_cli_patcher_fallback_is_unique_and_blob_verified(self):
         self.assertIn(
@@ -158,6 +176,19 @@ class PostInstallHealthTests(unittest.TestCase):
             self.patched_doctor.index("_load_runtime_environment()"),
             self.patched_doctor.index("import osrelease"),
         )
+
+    def test_mariadb_gateway_keeps_local_infile_disabled_portably(self):
+        self.assertNotIn(
+            'SET SESSION local_infile=0;', self.patched_mysql_admin
+        )
+        self.assertIn(
+            'prelude = "SET SESSION sql_mode=\'NO_BACKSLASH_ESCAPES\';\\n"',
+            self.patched_mysql_admin,
+        )
+        self.assertGreaterEqual(
+            self.patched_mysql_admin.count('"--local-infile=0"'), 3
+        )
+        self.assertIn("local-infile=0", self.patched_mysql_admin)
 
     def test_initial_backup_precedes_doctor_for_backup_role(self):
         backup = self.generated.index('say "Creating the initial verified backup"')
