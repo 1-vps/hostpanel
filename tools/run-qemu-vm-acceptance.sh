@@ -49,6 +49,57 @@ scp_opts=(
   -o ConnectTimeout=10
 )
 
+extract_guest_evidence(){
+  python3 - "$WORK_DIR/guest-evidence.tgz" "$ARTIFACT_DIR" <<'PY'
+import os
+import pathlib
+import shutil
+import sys
+import tarfile
+
+archive_path = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+max_members = 5000
+max_total_size = 100 * 1024 * 1024
+
+with tarfile.open(archive_path, "r:gz") as archive:
+    members = archive.getmembers()
+    if len(members) > max_members:
+        raise SystemExit("guest evidence archive contains too many members")
+
+    total_size = 0
+    checked = []
+    for member in members:
+        path = pathlib.PurePosixPath(member.name)
+        if path.is_absolute() or ".." in path.parts:
+            raise SystemExit(f"unsafe guest evidence path: {member.name}")
+        if not path.parts or path.parts[0] != "hostpanel-qemu-evidence":
+            raise SystemExit(f"unexpected guest evidence root: {member.name}")
+        if member.issym() or member.islnk() or member.isdev() or member.isfifo():
+            raise SystemExit(f"unsupported guest evidence member: {member.name}")
+        if not (member.isdir() or member.isfile()):
+            raise SystemExit(f"unsupported guest evidence type: {member.name}")
+        total_size += max(member.size, 0)
+        if total_size > max_total_size:
+            raise SystemExit("guest evidence archive exceeds the size limit")
+        checked.append((member, path))
+
+    for member, path in checked:
+        target = destination.joinpath(*path.parts)
+        if member.isdir():
+            target.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(target, 0o700)
+            continue
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        source = archive.extractfile(member)
+        if source is None:
+            raise SystemExit(f"could not read guest evidence member: {member.name}")
+        with source, target.open("xb") as output:
+            shutil.copyfileobj(source, output)
+        os.chmod(target, 0o600)
+PY
+}
+
 collect_evidence(){
   set +e
   if [[ -n "$QEMU_PID" ]] && kill -0 "$QEMU_PID" 2>/dev/null; then
@@ -56,7 +107,7 @@ collect_evidence(){
       'sudo tar -C /root -czf - hostpanel-qemu-evidence 2>/dev/null' \
       > "$WORK_DIR/guest-evidence.tgz" 2>/dev/null
     if [[ -s "$WORK_DIR/guest-evidence.tgz" ]]; then
-      tar -xzf "$WORK_DIR/guest-evidence.tgz" -C "$ARTIFACT_DIR" 2>/dev/null || true
+      extract_guest_evidence || printf '%s\n' 'Guest evidence archive failed safety validation.' >&2
     fi
     ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
       'sudo systemctl --failed --no-legend --plain; sudo journalctl -b -p warning..alert --no-pager -n 300' \
@@ -75,7 +126,7 @@ collect_evidence(){
 }
 trap collect_evidence EXIT
 
-for command in curl qemu-img qemu-system-x86_64 cloud-localds ssh scp ssh-keygen nc; do
+for command in curl qemu-img qemu-system-x86_64 cloud-localds ssh scp ssh-keygen nc python3 sha256sum; do
   require "$command"
 done
 [[ "$REVIEWED_COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]] \
@@ -130,11 +181,8 @@ EOF
 cloud-localds "$WORK_DIR/seed.img" "$WORK_DIR/user-data" "$WORK_DIR/meta-data"
 
 accel_args=(-accel tcg,thread=multi -cpu max)
-if [[ -e /dev/kvm ]]; then
-  sudo chmod a+rw /dev/kvm 2>/dev/null || true
-  if [[ -r /dev/kvm && -w /dev/kvm ]]; then
-    accel_args=(-enable-kvm -cpu host)
-  fi
+if [[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]]; then
+  accel_args=(-enable-kvm -cpu host)
 fi
 printf 'QEMU acceleration: %s\n' "${accel_args[*]}"
 qemu-system-x86_64 \
@@ -173,14 +221,14 @@ ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
   'test "$(cat /proc/1/comm)" = systemd; cat /etc/os-release; uname -a; df -hT; free -h' \
   | tee "$ARTIFACT_DIR/pre-install-inventory.txt"
 
-cat > "$WORK_DIR/guest.env" <<EOF
-HP_REVIEWED_COMMIT_SHA=${REVIEWED_COMMIT_SHA}
-HP_EXPECTED_VERSION=${EXPECTED_VERSION}
-HP_PANEL_HOST=${PANEL_HOST}
-HP_EXPECTED_PUBLIC_IP=${GUEST_IP}
-HP_PANEL_ADMIN_CIDR=${ADMIN_CIDR}
-HP_MTA=${MTA}
-EOF
+{
+  printf 'HP_REVIEWED_COMMIT_SHA=%q\n' "$REVIEWED_COMMIT_SHA"
+  printf 'HP_EXPECTED_VERSION=%q\n' "$EXPECTED_VERSION"
+  printf 'HP_PANEL_HOST=%q\n' "$PANEL_HOST"
+  printf 'HP_EXPECTED_PUBLIC_IP=%q\n' "$GUEST_IP"
+  printf 'HP_PANEL_ADMIN_CIDR=%q\n' "$ADMIN_CIDR"
+  printf 'HP_MTA=%q\n' "$MTA"
+} > "$WORK_DIR/guest.env"
 chmod 600 "$WORK_DIR/guest.env"
 scp "${scp_opts[@]}" \
   "$REPO_ROOT/bootstrap-install.sh" \
@@ -188,8 +236,19 @@ scp "${scp_opts[@]}" \
   "$REPO_ROOT/tools/qemu-guest-install.sh" \
   "$WORK_DIR/guest.env" \
   hostpanel@127.0.0.1:/tmp/
-ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
-  'sudo chown root:root /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh /tmp/guest.env && sudo chmod 700 /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh && sudo chmod 600 /tmp/guest.env && sudo /tmp/qemu-guest-install.sh'
+ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 '
+set -eu
+for path in /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh /tmp/guest.env; do
+  test -f "$path"
+  test ! -L "$path"
+  test "$(stat -c %u "$path")" = "$(id -u)"
+  test "$(stat -c %h "$path")" = 1
+done
+sudo chown root:root /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh /tmp/guest.env
+sudo chmod 700 /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh
+sudo chmod 600 /tmp/guest.env
+sudo /tmp/qemu-guest-install.sh
+'
 
 PRE_REBOOT_BOOT_ID="$(ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 'cat /proc/sys/kernel/random/boot_id')"
 ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 'sudo systemctl reboot' || true
@@ -207,10 +266,7 @@ POST_REBOOT_BOOT_ID="$(ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 'cat /proc/sys/k
 [[ -n "$PRE_REBOOT_BOOT_ID" && "$PRE_REBOOT_BOOT_ID" != "$POST_REBOOT_BOOT_ID" ]] \
   || die 'guest boot ID did not change'
 
-ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
-  "sudo env HP_EXPECTED_VERSION='$EXPECTED_VERSION' HP_PANEL_HOST='$PANEL_HOST' HP_EXPECTED_PUBLIC_IP='$GUEST_IP' bash /root/validate-production-vm.sh --post-reboot | sudo tee /root/hostpanel-qemu-evidence/post-reboot-validator.txt"
-ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
-  'sudo /opt/hostpanel/venv/bin/python /opt/hostpanel/app/hostpanel-doctor --quiet | sudo tee /root/hostpanel-qemu-evidence/doctor.txt'
+ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 'sudo /root/hostpanel-qemu-post-reboot.sh'
 
 nc -z -w 10 127.0.0.1 "$PANEL_FORWARD_PORT"
 if ! curl -kfsS --retry 6 --connect-timeout 5 \
