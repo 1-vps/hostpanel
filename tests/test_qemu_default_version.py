@@ -18,6 +18,12 @@ class QemuDefaultVersionTests(unittest.TestCase):
         self.assertIn("HP_QEMU_EXPECTED_VERSION: 3.4.0", workflow)
         self.assertNotIn("3.4.0-hardened-r6", harness)
 
+    def test_success_evidence_omits_generic_unredacted_journals(self):
+        harness = HARNESS.read_text(encoding="utf-8")
+        self.assertNotIn("guest-failure-diagnostics.txt", harness)
+        self.assertNotIn("journalctl -b -p warning..alert", harness)
+        self.assertIn("extract_guest_evidence", harness)
+
 
 if __name__ == "__main__":
     unittest.main()
