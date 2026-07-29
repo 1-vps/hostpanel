@@ -12,6 +12,7 @@ PATCHER = ROOT / "tools" / "patch_cli_runtime_env.py"
 MATRIX = ROOT / "test-matrix.sh"
 BASE = ROOT / "install.base.sh"
 EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
+EXPECTED_PATCHER_BLOB = "3f60fe91ee4de8945bf79e3b753e6d8a2bb4b3af"
 
 
 def git_blob_sha(path: pathlib.Path) -> str:
@@ -83,6 +84,11 @@ class PostInstallHealthTests(unittest.TestCase):
         self.assertFalse(IMPLEMENTATION.is_symlink())
         self.assertEqual(git_blob_sha(IMPLEMENTATION), EXPECTED_IMPL_BLOB)
         self.assertIn(f'EXPECTED_IMPL_BLOB = "{EXPECTED_IMPL_BLOB}"', self.wrapper)
+        self.assertEqual(git_blob_sha(PATCHER), EXPECTED_PATCHER_BLOB)
+        self.assertIn(
+            f'EXPECTED_CLI_PATCHER_BLOB = "{EXPECTED_PATCHER_BLOB}"',
+            self.wrapper,
+        )
 
     def test_os_matrix_copies_the_pinned_implementation(self):
         wrapper_copy = self.matrix.index(
@@ -98,17 +104,31 @@ class PostInstallHealthTests(unittest.TestCase):
         self.assertLess(implementation_copy, runtime_copy)
 
     def test_cli_environment_patcher_runs_before_backup(self):
-        patcher = self.generated.index(
-            'python3 "$SOURCE_ROOT/tools/patch_cli_runtime_env.py"'
+        resolver = self.generated.index(
+            'CLI_RUNTIME_PATCHER="$SOURCE_ROOT/tools/patch_cli_runtime_env.py"'
         )
+        patcher = self.generated.index('python3 "$CLI_RUNTIME_PATCHER"', resolver)
         compile_check = self.generated.index(
             "Patched CLI runtime environment loaders do not compile", patcher
         )
         backup = self.generated.index('say "Creating the initial verified backup"')
+        self.assertLess(resolver, patcher)
         self.assertLess(patcher, compile_check)
         self.assertLess(compile_check, backup)
+
+    def test_cli_patcher_fallback_is_unique_and_blob_verified(self):
         self.assertIn(
-            '[[ -f "$SOURCE_ROOT/tools/patch_cli_runtime_env.py" && ! -L "$SOURCE_ROOT/tools/patch_cli_runtime_env.py" ]]',
+            "/tmp/hostpanel-bootstrap.*/repository/tools/patch_cli_runtime_env.py",
+            self.generated,
+        )
+        self.assertIn('((${#CLI_RUNTIME_PATCHERS[@]} == 1))', self.generated)
+        self.assertIn('[[ -f "$CLI_RUNTIME_PATCHER" && ! -L "$CLI_RUNTIME_PATCHER" ]]', self.generated)
+        self.assertIn(
+            'git hash-object --no-filters "$CLI_RUNTIME_PATCHER"', self.generated
+        )
+        self.assertIn(EXPECTED_PATCHER_BLOB, self.generated)
+        self.assertIn(
+            "The CLI runtime environment patcher does not match the reviewed Git blob",
             self.generated,
         )
 
