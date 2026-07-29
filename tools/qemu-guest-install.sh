@@ -70,6 +70,23 @@ collect_failure_evidence(){
         /usr/local/lsws/conf/hostpanel/hostpanel.conf 2>/dev/null \
         | tail -n 120 || true
     fi
+    if [[ "$stage" == 'Granting the panel controlled root actions' ]]; then
+      printf '%s\n' '--- scoped pre-rollback root-action errors ---'
+      if [[ -r "$PRIVATE_LOG" ]]; then
+        grep -Eai '(visudo|sudoers|chown:|chmod:|find:|cannot access|no such file|privileged file listed|root actions|/venvs([ /]|$))' \
+          "$PRIVATE_LOG" \
+          | grep -Evai '(password|passwd|secret|token|credential|private[ _-]?key|api[ _-]?key|admin[ _-]?(user|login))' \
+          | tail -n 180 || true
+      else
+        printf '%s\n' 'private outer installer log unavailable'
+      fi
+      printf '%s\n' '--- scoped post-rollback sudoers validation ---'
+      if [[ -r /etc/sudoers.d/hostpanel ]]; then
+        visudo -cf /etc/sudoers.d/hostpanel 2>&1 || true
+      else
+        printf '%s\n' 'HostPanel sudoers file unavailable after rollback'
+      fi
+    fi
   } > "$EVIDENCE/install-failure-summary.txt"
   chmod 600 "$EVIDENCE/install-failure-summary.txt"
   printf 'Guest installation failed; exported stage and redacted error evidence only.\n' >&2
