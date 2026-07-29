@@ -17,6 +17,7 @@ TOKENS = (
     'cursor["offset"]',
     "cursor['offset']",
     "excluded.offset",
+    "system_user",
 )
 found = 0
 
