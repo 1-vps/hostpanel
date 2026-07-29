@@ -253,7 +253,7 @@ finally:
 PYDBCOMPAT
 python3 -m py_compile "$PANEL_DIR/app/dbcompat.py" >>"$LOG" 2>&1 \
   || die "Patched PostgreSQL compatibility module does not compile"
-python3 - "$PANEL_DIR/app/store.py" "$PANEL_DIR/app/platform_store.py" <<'PYRESERVEDSQL' >>"$LOG" 2>&1 \
+python3 - "$PANEL_DIR/app/store.py" "$PANEL_DIR/app/platform_store.py" "$PANEL_DIR/app/platform_worker.py" <<'PYRESERVEDSQL' >>"$LOG" 2>&1 \
   || die "Could not apply the reviewed reserved SQL identifier patch"
 import os
 import pathlib
@@ -276,6 +276,8 @@ patches = {{
             "    cursor_offset INTEGER NOT NULL DEFAULT 0,",
             1,
         ),
+    ),
+    pathlib.Path(sys.argv[3]): (
         (
             "platform cursor select",
             "SELECT inode,offset FROM platform_log_cursors WHERE source=?",
@@ -330,7 +332,7 @@ for path, replacements in patches.items():
     finally:
         temporary.unlink(missing_ok=True)
 PYRESERVEDSQL
-python3 -m py_compile "$PANEL_DIR/app/store.py" "$PANEL_DIR/app/platform_store.py" >>"$LOG" 2>&1 \
+python3 -m py_compile "$PANEL_DIR/app/store.py" "$PANEL_DIR/app/platform_store.py" "$PANEL_DIR/app/platform_worker.py" >>"$LOG" 2>&1 \
   || die "Patched SQL cursor modules do not compile"
 sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''
     text = _replace_once(
