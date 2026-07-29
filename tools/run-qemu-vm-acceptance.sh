@@ -9,7 +9,7 @@ ARTIFACT_DIR="$REPO_ROOT/artifacts/qemu-vm-acceptance"
 IMAGE_URL="${HP_QEMU_IMAGE_URL:-https://cloud-images.ubuntu.com/releases/noble/release-20260725/ubuntu-24.04-server-cloudimg-amd64.img}"
 IMAGE_SHA256="${HP_QEMU_IMAGE_SHA256:-d1940f7d69d343355e183dff1e08a59852d32e7309baa7a4bad8365b11b005ac}"
 REVIEWED_COMMIT_SHA="${HP_QEMU_REVIEWED_COMMIT_SHA:-}"
-EXPECTED_VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
+EXPECTED_VERSION="${HP_QEMU_EXPECTED_VERSION:-3.4.0-hardened-r6}"
 MTA="${HP_QEMU_MTA:-postfix}"
 SSH_PORT="${HP_QEMU_SSH_PORT:-22022}"
 PANEL_FORWARD_PORT="${HP_QEMU_PANEL_FORWARD_PORT:-32222}"
@@ -80,6 +80,8 @@ for command in curl qemu-img qemu-system-x86_64 cloud-localds ssh scp ssh-keygen
 done
 [[ "$REVIEWED_COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]] \
   || die 'HP_QEMU_REVIEWED_COMMIT_SHA must be a reviewed full 40-character commit SHA'
+[[ "$EXPECTED_VERSION" =~ ^[0-9]+(\.[0-9]+){2}([-+][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] \
+  || die 'HP_QEMU_EXPECTED_VERSION must be a release version'
 case "$MTA" in postfix|exim) ;; *) die "unsupported MTA: $MTA" ;; esac
 for port in "$SSH_PORT" "$PANEL_FORWARD_PORT"; do
   [[ "$port" =~ ^[0-9]+$ ]] && ((port >= 1024 && port <= 65535)) \
