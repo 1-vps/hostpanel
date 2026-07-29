@@ -28,6 +28,13 @@ exec > >(tee "$ARTIFACT_DIR/runner.log") 2>&1
 
 die(){ printf 'Error: %s\n' "$*" >&2; exit 1; }
 require(){ command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
+qemu_pid_is_ours(){
+  local cmdline
+  [[ "$QEMU_PID" =~ ^[0-9]+$ && -r "/proc/$QEMU_PID/cmdline" ]] || return 1
+  cmdline="$(tr '\0' '\n' <"/proc/$QEMU_PID/cmdline" 2>/dev/null)" || return 1
+  grep -Fq 'qemu-system-x86_64' <<<"$cmdline" \
+    && grep -Fq "$WORK_DIR/disk.qcow2" <<<"$cmdline"
+}
 ssh_opts=(
   -i "$WORK_DIR/id_ed25519"
   -p "$SSH_PORT"
@@ -102,7 +109,7 @@ PY
 
 collect_evidence(){
   set +e
-  if [[ -n "$QEMU_PID" ]] && kill -0 "$QEMU_PID" 2>/dev/null; then
+  if qemu_pid_is_ours; then
     ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
       'sudo tar -C /root -czf - hostpanel-qemu-evidence 2>/dev/null' \
       > "$WORK_DIR/guest-evidence.tgz" 2>/dev/null
@@ -115,13 +122,13 @@ collect_evidence(){
   fi
   [[ ! -f "$WORK_DIR/console.log" ]] || cp "$WORK_DIR/console.log" "$ARTIFACT_DIR/qemu-console.log"
   df -h > "$ARTIFACT_DIR/runner-disk.txt" 2>&1 || true
-  if [[ -n "$QEMU_PID" ]] && kill -0 "$QEMU_PID" 2>/dev/null; then
+  if qemu_pid_is_ours; then
     kill "$QEMU_PID" 2>/dev/null || true
     for _ in {1..20}; do
-      kill -0 "$QEMU_PID" 2>/dev/null || break
+      qemu_pid_is_ours || break
       sleep 1
     done
-    kill -KILL "$QEMU_PID" 2>/dev/null || true
+    qemu_pid_is_ours && kill -KILL "$QEMU_PID" 2>/dev/null || true
   fi
 }
 trap collect_evidence EXIT
@@ -160,6 +167,7 @@ local-hostname: hostpanel-qemu
 EOF
 cat > "$WORK_DIR/user-data" <<EOF
 #cloud-config
+manage_etc_hosts: true
 users:
   - default
   - name: hostpanel
@@ -201,7 +209,7 @@ qemu-system-x86_64 \
   -daemonize \
   -pidfile "$WORK_DIR/qemu.pid"
 QEMU_PID="$(cat "$WORK_DIR/qemu.pid")"
-kill -0 "$QEMU_PID"
+qemu_pid_is_ours || die 'QEMU pidfile does not identify the expected VM process'
 
 wait_for_ssh(){
   local phase="$1"
@@ -210,7 +218,7 @@ wait_for_ssh(){
       printf 'SSH is available (%s).\n' "$phase"
       return 0
     fi
-    kill -0 "$QEMU_PID" 2>/dev/null || die "QEMU exited while waiting for SSH ($phase)"
+    qemu_pid_is_ours || die "QEMU exited while waiting for SSH ($phase)"
     sleep 5
   done
   die "timed out waiting for SSH ($phase)"
