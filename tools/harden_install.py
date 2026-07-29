@@ -82,20 +82,38 @@ DBCOMPAT_CLASSIFIER_OLD = IMPLEMENTATION.DBCOMPAT_CLASSIFIER_OLD
 DBCOMPAT_CLASSIFIER_NEW = IMPLEMENTATION.DBCOMPAT_CLASSIFIER_NEW
 
 
+def replace_reviewed_shape(text: str, old: str, new: str, label: str) -> str:
+    old_count = text.count(old)
+    new_count = text.count(new)
+    if old_count == 1 and new_count == 0:
+        return text.replace(old, new, 1)
+    if old_count == 0 and new_count == 1:
+        return text
+    raise SystemExit(
+        f"unexpected {label} shape: old={old_count} new={new_count}"
+    )
+
+
 def apply_post_install_health_fix(path: pathlib.Path) -> None:
     if not path.is_file() or path.is_symlink():
         raise SystemExit(f"unsafe generated installer target: {path}")
 
-    old = r'''HP_DB="$PANEL_DIR/hostpanel.db" HP_BACKUP_DIR="$BACKUP_DIR" \
+    health_old = r'''HP_DB="$PANEL_DIR/hostpanel.db" HP_BACKUP_DIR="$BACKUP_DIR" \
   "$PANEL_DIR/venv/bin/python" "$PANEL_DIR/app/hostpanel-doctor" --quiet || die "Post-install health check failed"'''
-    new = r'''if has_role backup; then
+    health_new = r'''if has_role backup; then
   say "Creating the initial verified backup"
-  HP_DB="$PANEL_DIR/hostpanel.db" HP_BACKUP_DIR="$BACKUP_DIR" \
+  HP_DB="$PANEL_DIR/hostpanel.db" \
+  HP_DATABASE_URL_FILE="$PANEL_DIR/credentials/database-url" \
+  HP_MASTER_KEY_FILE="$PANEL_DIR/credentials/master.key" \
+  HP_VHOST_ROOT="$VHOST_ROOT" HP_BACKUP_DIR="$BACKUP_DIR" \
     "$PANEL_DIR/venv/bin/python" "$PANEL_DIR/app/hostpanel-backup" >>"$LOG" 2>&1 \
     || die "Initial verified backup failed"
 fi
 DOCTOR_STATUS=0
-HP_DB="$PANEL_DIR/hostpanel.db" HP_BACKUP_DIR="$BACKUP_DIR" \
+HP_DB="$PANEL_DIR/hostpanel.db" \
+HP_DATABASE_URL_FILE="$PANEL_DIR/credentials/database-url" \
+HP_MASTER_KEY_FILE="$PANEL_DIR/credentials/master.key" \
+HP_VHOST_ROOT="$VHOST_ROOT" HP_BACKUP_DIR="$BACKUP_DIR" \
   "$PANEL_DIR/venv/bin/python" "$PANEL_DIR/app/hostpanel-doctor" --quiet >>"$LOG" 2>&1 \
   || DOCTOR_STATUS=$?
 case "$DOCTOR_STATUS" in
@@ -104,17 +122,24 @@ case "$DOCTOR_STATUS" in
   *) die "Post-install health check failed" ;;
 esac'''
 
+    cron_old = r'''0 3 * * * root $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-backup >> /var/log/hostpanel-backup.log 2>&1
+30 3 * * * root $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-backup --prune 14 >> /var/log/hostpanel-backup.log 2>&1'''
+    cron_new = r'''0 3 * * * root HP_DB=$PANEL_DIR/hostpanel.db HP_DATABASE_URL_FILE=$PANEL_DIR/credentials/database-url HP_MASTER_KEY_FILE=$PANEL_DIR/credentials/master.key HP_VHOST_ROOT=$VHOST_ROOT HP_BACKUP_DIR=$BACKUP_DIR $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-backup >> /var/log/hostpanel-backup.log 2>&1
+30 3 * * * root HP_DB=$PANEL_DIR/hostpanel.db HP_DATABASE_URL_FILE=$PANEL_DIR/credentials/database-url HP_MASTER_KEY_FILE=$PANEL_DIR/credentials/master.key HP_VHOST_ROOT=$VHOST_ROOT HP_BACKUP_DIR=$BACKUP_DIR $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-backup --prune 14 >> /var/log/hostpanel-backup.log 2>&1'''
+
+    doctor_cron_old = r'''0 6 * * 1 root $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-doctor --quiet >> /var/log/hostpanel-doctor.log 2>&1'''
+    doctor_cron_new = r'''0 6 * * 1 root HP_DB=$PANEL_DIR/hostpanel.db HP_DATABASE_URL_FILE=$PANEL_DIR/credentials/database-url HP_MASTER_KEY_FILE=$PANEL_DIR/credentials/master.key HP_VHOST_ROOT=$VHOST_ROOT HP_BACKUP_DIR=$BACKUP_DIR $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-doctor --quiet >> /var/log/hostpanel-doctor.log 2>&1'''
+
     text = path.read_text(encoding="utf-8")
-    old_count = text.count(old)
-    new_count = text.count(new)
-    if old_count == 1 and new_count == 0:
-        updated = text.replace(old, new, 1)
-    elif old_count == 0 and new_count == 1:
-        updated = text
-    else:
-        raise SystemExit(
-            f"unexpected post-install health shape: old={old_count} new={new_count}"
-        )
+    updated = replace_reviewed_shape(
+        text, health_old, health_new, "post-install health"
+    )
+    updated = replace_reviewed_shape(
+        updated, cron_old, cron_new, "backup cron environment"
+    )
+    updated = replace_reviewed_shape(
+        updated, doctor_cron_old, doctor_cron_new, "doctor cron environment"
+    )
 
     mode = stat.S_IMODE(path.stat().st_mode)
     temporary = path.with_name(f".{path.name}.post-install-health.{os.getpid()}")
