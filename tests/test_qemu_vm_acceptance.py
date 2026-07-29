@@ -7,6 +7,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "qemu-vm-acceptance.yml"
 HARNESS = ROOT / "tools" / "run-qemu-vm-acceptance.sh"
 GUEST_INSTALLER = ROOT / "tools" / "qemu-guest-install.sh"
+VALIDATOR = ROOT / "tools" / "validate-production-vm.sh"
 
 
 def signed_source_version() -> str:
@@ -32,6 +33,7 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
         cls.harness = HARNESS.read_text(encoding="utf-8")
         cls.guest_installer = GUEST_INSTALLER.read_text(encoding="utf-8")
+        cls.validator = VALIDATOR.read_text(encoding="utf-8")
         cls.signed_version = signed_source_version()
 
     def test_workflow_is_secretless_and_least_privilege(self):
@@ -65,6 +67,10 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertIn(
             'EXPECTED_VERSION="${HP_QEMU_EXPECTED_VERSION:-',
             self.harness,
+        )
+        self.assertIn(
+            f'EXPECTED_VERSION="${{HP_EXPECTED_VERSION:-{self.signed_version}}}"',
+            self.validator,
         )
         self.assertNotIn("$REPO_ROOT/VERSION", self.harness)
         self.assertIn("HP_QEMU_EXPECTED_VERSION must be a release version", self.harness)
@@ -155,6 +161,20 @@ class QemuVmAcceptanceTests(unittest.TestCase):
             self.guest_installer,
         )
         self.assertIn("install-failure-summary.txt", self.guest_installer)
+
+    def test_validator_accepts_doctor_warnings_but_not_failures(self):
+        self.assertIn("1) warn 'hostpanel-doctor completed with warnings'", self.validator)
+        self.assertIn('*) fail "hostpanel-doctor failed with exit status $rc"', self.validator)
+        self.assertNotIn("run_required 'hostpanel-doctor passed'", self.validator)
+
+    def test_validator_checks_live_redis_acl_without_password_arguments(self):
+        self.assertIn("ACL GETUSER default", self.validator)
+        self.assertIn("ACL GETUSER hostpanel", self.validator)
+        self.assertIn('REDISCLI_AUTH="$password"', self.validator)
+        self.assertIn("grep -Fxq off", self.validator)
+        self.assertIn("grep -Fxq on", self.validator)
+        self.assertNotIn('redis-cli -a "$password"', self.validator)
+        self.assertNotIn("grep -RhsE", self.validator)
 
     def test_openlitespeed_failure_evidence_is_scoped_and_non_secret(self):
         self.assertIn(
