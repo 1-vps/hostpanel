@@ -30,7 +30,7 @@ def _module_replace_once(text: str, old: str, new: str, label: str) -> str:
     # Match the two stable boundary statements and require exactly one block.
     if label == "validate loaded PHP baseline":
         pattern = re.compile(
-            r'''printf '%s\n' "\$\{PHP_INSTALLED\[@\]\}" >/etc/hostpanel/php-versions\n'''
+            r'''printf '%s\\n' "\$\{PHP_INSTALLED\[@\]\}" >/etc/hostpanel/php-versions\n'''
             r'''\s*ok "PHP-FPM installed: \$\{PHP_INSTALLED\[\*\]\}"'''
         )
         updated, count = pattern.subn(lambda _: new, text, count=1)
