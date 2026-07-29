@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Runs inside the ephemeral QEMU guest. Detailed installer output and generated
+# credentials remain in a root-only log that is never exported as CI evidence.
+set -Eeuo pipefail
+umask 077
+
+source /tmp/guest.env
+EVIDENCE=/root/hostpanel-qemu-evidence
+PREFLIGHT_LOG="$EVIDENCE/preflight.log"
+PRIVATE_LOG=/root/hostpanel-qemu-private-install.log
+install -d -o root -g root -m 700 "$EVIDENCE"
+: > "$PRIVATE_LOG"
+chmod 600 "$PRIVATE_LOG"
+
+collect_failure_evidence(){
+  local status=$?
+  trap - ERR
+  {
+    printf 'exit_status=%s\n' "$status"
+    printf '%s\n' '--- install state ---'
+    if [[ -r /etc/hostpanel/install-state ]]; then
+      cat /etc/hostpanel/install-state
+    else
+      printf '%s\n' 'install-state unavailable'
+    fi
+    printf '%s\n' '--- failed units after rollback ---'
+    systemctl --failed --no-legend --plain 2>&1 || true
+    printf '%s\n' '--- redacted installer errors ---'
+    if [[ -r /var/log/hostpanel-install.log ]]; then
+      grep -Eai '(^==>|error|failed|failure|fatal|denied|cannot|could not|invalid|not found|timed out|refused|unit .*failed)' \
+        /var/log/hostpanel-install.log \
+        | grep -Evai '(password|passwd|secret|token|credential|private[ _-]?key|api[ _-]?key|admin[ _-]?(user|login))' \
+        | tail -n 240 || true
+    else
+      printf '%s\n' 'installer log unavailable'
+    fi
+  } > "$EVIDENCE/install-failure-summary.txt"
+  chmod 600 "$EVIDENCE/install-failure-summary.txt"
+  printf 'Guest installation failed; exported stage and redacted error evidence only.\n' >&2
+  exit "$status"
+}
+trap collect_failure_evidence ERR
+
+test "$(cat /proc/1/comm)" = systemd
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq >> "$PRIVATE_LOG" 2>&1
+apt-get install -y -qq ca-certificates curl git openssl python3 >> "$PRIVATE_LOG" 2>&1
+install -o root -g root -m 700 /tmp/bootstrap-install.sh /root/bootstrap-install.sh
+install -o root -g root -m 700 /tmp/validate-production-vm.sh /root/validate-production-vm.sh
+
+common_env=(
+  HP_REPO_REF="$HP_REVIEWED_COMMIT_SHA"
+  HP_PANEL_HOST="$HP_PANEL_HOST"
+  HP_PANEL_ADMIN_CIDR="$HP_PANEL_ADMIN_CIDR"
+  HP_MULTI_PHP_REPO=off
+  HP_RSPAMD_REPO=off
+)
+install_args=(--mta "$HP_MTA")
+echo 'Running installer preflight; its non-secret diagnostics are exported as evidence.'
+if ! env "${common_env[@]}" bash /root/bootstrap-install.sh --check "${install_args[@]}" > "$PREFLIGHT_LOG" 2>&1; then
+  echo 'Installer preflight failed:' >&2
+  tail -n 200 "$PREFLIGHT_LOG" >&2
+  exit 1
+fi
+
+echo 'Running full installation; generated credentials stay in the root-only guest log.'
+env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
+
+test "$(tr -d '[:space:]' < /opt/hostpanel/VERSION)" = "$HP_EXPECTED_VERSION"
+env \
+  HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
+  HP_PANEL_HOST="$HP_PANEL_HOST" \
+  HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
+  bash /root/validate-production-vm.sh --check \
+  | tee "$EVIDENCE/pre-reboot-validator.txt"
+env \
+  HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
+  HP_PANEL_HOST="$HP_PANEL_HOST" \
+  HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
+  bash /root/validate-production-vm.sh --prepare-reboot \
+  | tee "$EVIDENCE/prepare-reboot-validator.txt"
+cat /etc/os-release > "$EVIDENCE/os-release.txt"
+uname -a > "$EVIDENCE/uname.txt"
+cat /proc/sys/kernel/random/boot_id > "$EVIDENCE/pre-reboot-boot-id.txt"
+cat /opt/hostpanel/VERSION > "$EVIDENCE/version.txt"
+systemctl --failed --no-legend --plain > "$EVIDENCE/failed-units-pre-reboot.txt" || true
