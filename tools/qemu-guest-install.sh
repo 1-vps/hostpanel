@@ -24,8 +24,11 @@ install -d -o root -g root -m 700 "$EVIDENCE"
 chmod 600 "$PRIVATE_LOG"
 
 collect_failure_evidence(){
-  local status=$?
+  local status=$? stage=""
   trap - ERR
+  if [[ -r /etc/hostpanel/install-state ]]; then
+    stage="$(awk -F= '$1 == "stage" {sub(/^stage=/, ""); print; exit}' /etc/hostpanel/install-state)"
+  fi
   {
     printf 'exit_status=%s\n' "$status"
     printf '%s\n' '--- install state ---'
@@ -38,12 +41,25 @@ collect_failure_evidence(){
     systemctl --failed --no-legend --plain 2>&1 || true
     printf '%s\n' '--- redacted installer errors ---'
     if [[ -r /var/log/hostpanel-install.log ]]; then
-      grep -Eai '(^==>|error|failed|failure|fatal|denied|cannot|could not|invalid|not found|timed out|refused|unit .*failed)' \
+      grep -Eai '(^==>|error|failed|failure|fatal|denied|cannot|could not|invalid|not found|timed out|refused|rejected|syntax|openlitespeed|litespeed|lsws|unit .*failed)' \
         /var/log/hostpanel-install.log \
         | grep -Evai '(password|passwd|secret|token|credential|private[ _-]?key|api[ _-]?key|admin[ _-]?(user|login))' \
-        | tail -n 240 || true
+        | tail -n 280 || true
     else
       printf '%s\n' 'installer log unavailable'
+    fi
+    if [[ "$stage" == 'Configuring OpenLiteSpeed as a private per-domain backend' ]]; then
+      printf '%s\n' '--- scoped OpenLiteSpeed configuration test ---'
+      if [[ -x /usr/local/lsws/bin/openlitespeed ]]; then
+        /usr/local/lsws/bin/openlitespeed -t 2>&1 | tail -n 160 || true
+      else
+        printf '%s\n' 'OpenLiteSpeed binary unavailable after rollback'
+      fi
+      printf '%s\n' '--- scoped OpenLiteSpeed managed directives ---'
+      grep -EHn '^[[:space:]]*(include|listener|address|secure|useIpInProxyHeader)([[:space:]]|$)' \
+        /usr/local/lsws/conf/httpd_config.conf \
+        /usr/local/lsws/conf/hostpanel/hostpanel.conf 2>/dev/null \
+        | tail -n 120 || true
     fi
   } > "$EVIDENCE/install-failure-summary.txt"
   chmod 600 "$EVIDENCE/install-failure-summary.txt"
