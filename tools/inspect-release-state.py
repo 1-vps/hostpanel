@@ -36,6 +36,11 @@ TOKENS = (
     "BACKUP_DIR",
     "tar.gz",
 )
+GATEWAY_TARGETS = (
+    "/app/postgres_gateway.py",
+    "/app/mysql_gateway.py",
+    "/app/hostpanel-postgres-admin",
+)
 found = 0
 
 with tarfile.open(ARCHIVES[0], "r:gz") as archive:
@@ -48,6 +53,7 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
             "/ops/hostpanel-antiddos",
             "/app/hostpanel-doctor",
             "/app/hostpanel-backup",
+            "/app/hostpanel-postgres-admin",
         )
         if suffix not in {".py", ".sh", ".sql"} \
                 and not member.name.endswith(extensionless_targets):
@@ -56,10 +62,11 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
         if handle is None:
             continue
         lines = handle.read().decode("utf-8", errors="strict").splitlines()
+        force_gateway = member.name.endswith(GATEWAY_TARGETS)
         hits = [
             (number, line)
             for number, line in enumerate(lines, 1)
-            if any(token in line for token in TOKENS)
+            if force_gateway or any(token in line for token in TOKENS)
         ]
         if not hits:
             continue
@@ -119,6 +126,9 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
         elif member.name.endswith("/app/modules/backups.py"):
             context_label = "backup module"
             context_lines.update(range(1, len(lines) + 1))
+        elif member.name.endswith(GATEWAY_TARGETS):
+            context_label = "backup gateway transport"
+            context_lines.update(range(1, len(lines) + 1))
         elif any(
             token in line
             for _, line in hits
@@ -144,7 +154,7 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
                     context_lines.update(
                         range(max(1, number - 24), min(len(lines), number + 32) + 1)
                     )
-        if context_lines:
+        if context_lines and not force_gateway:
             print(f"### {member.name} {context_label} context")
             for number in sorted(context_lines):
                 print(f"{number}: {lines[number - 1]!r}")
