@@ -15,6 +15,7 @@ needles = (
     "server_groups",
     "def init",
     "def connect",
+    "def _split_sql_script",
     "def executescript",
     "executescript(",
     "HP_DATABASE_URL",
@@ -45,8 +46,8 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
         print(f"\n### {member.name}")
         emitted: set[int] = set()
         for hit in hits:
-            start = max(0, hit - 14)
-            end = min(len(lines), hit + 24)
+            start = max(0, hit - 18)
+            end = min(len(lines), hit + 32)
             for index in range(start, end):
                 if index in emitted:
                     continue
