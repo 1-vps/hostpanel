@@ -8,7 +8,7 @@ import stat
 import sys
 
 
-LOADER = '''_RUNTIME_ENV_KEY = _runtime_re.compile(r"HP_[A-Z0-9_]{1,128}")
+LOADER = r'''_RUNTIME_ENV_KEY = _runtime_re.compile(r"HP_[A-Z0-9_]{1,128}")
 
 
 def _load_runtime_environment() -> None:
