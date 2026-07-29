@@ -1,0 +1,92 @@
+name: QEMU VM acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      mta:
+        description: Mail transfer agent
+        required: true
+        default: postfix
+        type: choice
+        options:
+          - postfix
+          - exim
+  pull_request:
+    paths:
+      - .github/workflows/qemu-vm-acceptance.yml
+      - tools/run-qemu-vm-acceptance.sh
+      - tools/validate-production-vm.sh
+      - bootstrap-install.sh
+      - install.sh
+      - install.base.sh
+      - install-hardened.sh
+      - requirements.lock
+      - VERSION
+      - SHA256SUMS
+      - '*.sig'
+      - tests/test_qemu_vm_acceptance.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qemu-vm-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  qemu-vm:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      HP_QEMU_REVIEWED_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      HP_QEMU_MTA: ${{ inputs.mta || 'postfix' }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate QEMU acceptance harness
+        run: |
+          set -euo pipefail
+          bash -n tools/run-qemu-vm-acceptance.sh
+          python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
+
+      - name: Reclaim runner disk
+        run: |
+          set -euo pipefail
+          docker system prune --all --force || true
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/share/dotnet \
+            /opt/hostedtoolcache
+          df -h
+
+      - name: Install QEMU dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            qemu-system-x86 qemu-utils cloud-image-utils \
+            openssh-client curl netcat-openbsd
+          qemu-system-x86_64 --version
+          if [[ -e /dev/kvm ]]; then
+            sudo chmod a+rw /dev/kvm
+            test -r /dev/kvm
+            test -w /dev/kvm
+          fi
+
+      - name: Boot, install, reboot, and validate
+        run: ./tools/run-qemu-vm-acceptance.sh
+
+      - name: Upload non-sensitive VM evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qemu-vm-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/qemu-vm-acceptance
+          if-no-files-found: error
+          retention-days: 14
