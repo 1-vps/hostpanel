@@ -45,6 +45,18 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
         for number, line in hits:
             print(f"{number}: {line!r}")
             found += 1
+        if member.name.endswith("/app/store.py"):
+            context_lines = set()
+            for number, line in hits:
+                if "system_user" not in line:
+                    continue
+                context_lines.update(
+                    range(max(1, number - 14), min(len(lines), number + 14) + 1)
+                )
+            if context_lines:
+                print(f"### {member.name} system_user context")
+                for number in sorted(context_lines):
+                    print(f"{number}: {lines[number - 1]!r}")
 
     manifests = [
         name for name in members
