@@ -208,6 +208,30 @@ userdb {
 }''',
         "Dovecot passwd-file block syntax",
     )
+    text = _replace_once(
+        text,
+        '''protocol imap { mail_plugins = $mail_plugins imap_sieve }''',
+        '''protocol imap {
+  mail_plugins = $mail_plugins imap_sieve
+}''',
+        "Dovecot IMAP plugin block syntax",
+    )
+    text = _replace_once(
+        text,
+        '''protocol lda { mail_plugins = $mail_plugins sieve }''',
+        '''protocol lda {
+  mail_plugins = $mail_plugins sieve
+}''',
+        "Dovecot LDA plugin block syntax",
+    )
+    text = _replace_once(
+        text,
+        '''protocol lmtp { mail_plugins = $mail_plugins sieve }''',
+        '''protocol lmtp {
+  mail_plugins = $mail_plugins sieve
+}''',
+        "Dovecot LMTP plugin block syntax",
+    )
 
     text = _replace_once(
         text,
