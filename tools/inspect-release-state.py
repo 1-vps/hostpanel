@@ -31,6 +31,9 @@ TOKENS = (
     "podman-restart",
     "postsrsd",
     "hostpanel-doctor",
+    "hostpanel-backup",
+    "BACKUP_DIR",
+    "tar.gz",
 )
 found = 0
 
@@ -43,6 +46,7 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
         extensionless_targets = (
             "/ops/hostpanel-antiddos",
             "/app/hostpanel-doctor",
+            "/app/hostpanel-backup",
         )
         if suffix not in {".py", ".sh", ".sql"} \
                 and not member.name.endswith(extensionless_targets):
@@ -107,6 +111,9 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
             context_lines.update(range(1, len(lines) + 1))
         elif member.name.endswith("/app/hostpanel-doctor"):
             context_label = "post-install doctor"
+            context_lines.update(range(1, len(lines) + 1))
+        elif member.name.endswith("/app/hostpanel-backup"):
+            context_label = "backup command"
             context_lines.update(range(1, len(lines) + 1))
         elif any(
             token in line
