@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
-EXPECTED_CLI_PATCHER_BLOB = "7c55cea03145f6da2b1ef03c275766cc269eb8ee"
+EXPECTED_CLI_PATCHER_BLOB = "e64c329e4a4a1648d35ef29ed0f632077ed1f4dd"
 IMPLEMENTATION_NAME = "harden_install_impl.py"
 
 # Compatibility markers remain visible in this audited entrypoint because the
