@@ -51,6 +51,19 @@ def _module_replace_once(text: str, old: str, new: str, label: str) -> str:
 
 
 def _replace_once(text: str, old: str, new: str, label: str) -> str:
+    if label == "root action runtime directories":
+        pattern = re.compile(
+            r'''(/etc/hostpanel/mail-convenience/retention[^\n]*"\$PANEL_DIR/plugins")'''
+            r'''([ \t]*\\\n[ \t]*/var/lib/hostpanel/quarantine)'''
+        )
+        updated, count = pattern.subn(
+            lambda match: f'{match.group(1)} "$PANEL_DIR/venvs"{match.group(2)}',
+            text,
+            count=1,
+        )
+        if count != 1:
+            raise SystemExit(f"{label}: expected exactly one structural match, found {count}")
+        return updated
     expected = 2 if label == "Dovecot passwd-file block syntax" else 1
     count = text.count(old)
     if count != expected:
