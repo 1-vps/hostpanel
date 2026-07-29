@@ -15,8 +15,7 @@ BASE = ROOT / "install.base.sh"
 
 def launcher_patch(marker: str) -> str:
     text = LAUNCHER.read_text(encoding="utf-8")
-    prefix = f"<<'{marker}' \\
-"
+    prefix = f"<<'{marker}' " + chr(92) + "\n"
     self_contained = text.split(prefix, 1)[1]
     self_contained = self_contained.split("\n", 1)[1]
     return self_contained.split(f"\n{marker}\n", 1)[0]
