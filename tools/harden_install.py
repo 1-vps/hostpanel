@@ -130,12 +130,8 @@ esac'''
     doctor_cron_old = r'''0 6 * * 1 root $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-doctor --quiet >> /var/log/hostpanel-doctor.log 2>&1'''
     doctor_cron_new = r'''0 6 * * 1 root HP_DB=$PANEL_DIR/hostpanel.db HP_DATABASE_URL_FILE=$PANEL_DIR/credentials/database-url HP_MASTER_KEY_FILE=$PANEL_DIR/credentials/master.key HP_VHOST_ROOT=$VHOST_ROOT HP_BACKUP_DIR=$BACKUP_DIR $PANEL_DIR/venv/bin/python $PANEL_DIR/app/hostpanel-doctor --quiet >> /var/log/hostpanel-doctor.log 2>&1'''
 
-    runtime_old = r'''python3 -m py_compile "$PANEL_DIR/app/store.py" "$PANEL_DIR/app/platform_store.py" "$PANEL_DIR/app/platform_worker.py" >>"$LOG" 2>&1 \
-  || die "Patched SQL cursor modules do not compile"
-sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''
-    runtime_new = r'''python3 -m py_compile "$PANEL_DIR/app/store.py" "$PANEL_DIR/app/platform_store.py" "$PANEL_DIR/app/platform_worker.py" >>"$LOG" 2>&1 \
-  || die "Patched SQL cursor modules do not compile"
-[[ -f "$SOURCE_ROOT/tools/patch_cli_runtime_env.py" && ! -L "$SOURCE_ROOT/tools/patch_cli_runtime_env.py" ]] \
+    runtime_old = r'''sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''
+    runtime_new = r'''[[ -f "$SOURCE_ROOT/tools/patch_cli_runtime_env.py" && ! -L "$SOURCE_ROOT/tools/patch_cli_runtime_env.py" ]] \
   || die "The reviewed CLI runtime environment patcher is missing or unsafe"
 python3 "$SOURCE_ROOT/tools/patch_cli_runtime_env.py" \
   "$PANEL_DIR/app/hostpanel-backup" "$PANEL_DIR/app/hostpanel-doctor" >>"$LOG" 2>&1 \
