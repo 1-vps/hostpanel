@@ -24,6 +24,28 @@ class QemuDefaultVersionTests(unittest.TestCase):
         self.assertNotIn("journalctl -b -p warning..alert", harness)
         self.assertIn("extract_guest_evidence", harness)
 
+    def test_artifact_cleanup_rejects_symlinked_directories(self):
+        harness = HARNESS.read_text(encoding="utf-8")
+        self.assertIn('ARTIFACT_ROOT="$REPO_ROOT/artifacts"', harness)
+        self.assertIn('for artifact_path in "$ARTIFACT_ROOT" "$ARTIFACT_DIR"', harness)
+        self.assertIn('[[ -d "$artifact_path" && ! -L "$artifact_path" ]]', harness)
+        self.assertIn("artifact directories changed during setup", harness)
+        self.assertIn(
+            'find "$ARTIFACT_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +',
+            harness,
+        )
+        self.assertNotIn('rm -rf "$ARTIFACT_DIR"/*', harness)
+
+    def test_all_forwarded_host_ports_are_unique_and_available(self):
+        harness = HARNESS.read_text(encoding="utf-8")
+        self.assertIn("HOST_FORWARD_PORTS=(", harness)
+        for port in ("30025", "30143", "30993", "30080", "30443"):
+            self.assertIn(port, harness)
+        self.assertIn('python3 - "${HOST_FORWARD_PORTS[@]}"', harness)
+        self.assertIn('sock.bind(("127.0.0.1", port))', harness)
+        self.assertIn("duplicate QEMU host-forward port", harness)
+        self.assertIn("must be unique and free on 127.0.0.1", harness)
+
 
 if __name__ == "__main__":
     unittest.main()
