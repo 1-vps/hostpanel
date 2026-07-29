@@ -35,19 +35,42 @@ def match_count(pattern: str, text: str) -> int:
 
 
 class ReservedSqlIdentifierTests(unittest.TestCase):
-    def test_signed_release_contains_reserved_cursor_columns(self):
+    def test_signed_release_contains_reviewed_cursor_shapes(self):
         store = release_member("/app/store.py")
-        platform = release_member("/app/platform_store.py")
+        platform_store = release_member("/app/platform_store.py")
+        platform_worker = release_member("/app/platform_worker.py")
         self.assertEqual(
             match_count(r"^\s*offset\s+INTEGER\s+NOT\s+NULL\s+DEFAULT\s+0,\s*$", store),
             1,
         )
         self.assertEqual(
-            match_count(r"^\s*offset\s+INTEGER\s+NOT\s+NULL\s+DEFAULT\s+0,\s*$", platform),
+            match_count(
+                r"^\s*offset\s+INTEGER\s+NOT\s+NULL\s+DEFAULT\s+0,\s*$",
+                platform_store,
+            ),
             1,
         )
         self.assertIn("traffic_cursors", store)
-        self.assertIn("platform_log_cursors", platform)
+        self.assertIn("platform_log_cursors", platform_store)
+        self.assertEqual(
+            platform_worker.count(
+                "SELECT inode,offset FROM platform_log_cursors WHERE source=?"
+            ),
+            1,
+        )
+        self.assertEqual(platform_worker.count('cursor["offset"]'), 2)
+        self.assertEqual(
+            platform_worker.count(
+                "INSERT INTO platform_log_cursors(source,inode,offset,updated) VALUES(?,?,?,?) "
+            ),
+            1,
+        )
+        self.assertEqual(
+            platform_worker.count(
+                "ON CONFLICT(source) DO UPDATE SET inode=excluded.inode,offset=excluded.offset,updated=excluded.updated"
+            ),
+            1,
+        )
 
     def test_generated_installer_contains_fail_closed_runtime_patch(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -65,6 +88,7 @@ class ReservedSqlIdentifierTests(unittest.TestCase):
         self.assertIn("unexpected {label} shape in {path.name}", text)
         self.assertIn("traffic cursor schema", text)
         self.assertIn("platform log cursor schema", text)
+        self.assertIn("platform_worker.py", text)
         self.assertIn("cursor_offset INTEGER NOT NULL DEFAULT 0", text)
         self.assertIn("SELECT inode,cursor_offset FROM platform_log_cursors", text)
         self.assertIn('cursor["cursor_offset"]', text)
@@ -75,7 +99,7 @@ class ReservedSqlIdentifierTests(unittest.TestCase):
         self.assertIn("cursor_offset=excluded.cursor_offset", text)
         self.assertIn("os.replace(temporary, path)", text)
         self.assertIn(
-            'python3 -m py_compile "$PANEL_DIR/app/store.py" "$PANEL_DIR/app/platform_store.py"',
+            'python3 -m py_compile "$PANEL_DIR/app/store.py" "$PANEL_DIR/app/platform_store.py" "$PANEL_DIR/app/platform_worker.py"',
             text,
         )
 
