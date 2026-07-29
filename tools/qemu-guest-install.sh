@@ -129,15 +129,22 @@ cat > /root/hostpanel-qemu-post-reboot.sh <<'POSTREBOOT'
 set -Eeuo pipefail
 source /root/hostpanel-qemu.env
 EVIDENCE=/root/hostpanel-qemu-evidence
-for attempt in $(seq 1 30); do
-  systemctl is-active --quiet hostpanel.service && break
+STABLE_CHECKS=0
+for attempt in $(seq 1 45); do
+  if systemctl is-active --quiet hostpanel.service \
+     && ss -lntH 2>/dev/null | awk '$4 ~ /:12722$/ {found=1} END {exit !found}'; then
+    STABLE_CHECKS=$((STABLE_CHECKS + 1))
+    ((STABLE_CHECKS >= 5)) && break
+  else
+    STABLE_CHECKS=0
+  fi
   sleep 2
 done
-if ! systemctl is-active --quiet hostpanel.service; then
+if ((STABLE_CHECKS < 5)); then
   {
     printf '%s\n' '--- scoped hostpanel service state after reboot ---'
     systemctl show hostpanel.service \
-      --property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,FragmentPath \
+      --property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,FragmentPath,NRestarts \
       --no-pager 2>&1 || true
     printf '%s\n' '--- scoped redacted hostpanel service journal after reboot ---'
     journalctl -u hostpanel.service --no-pager -n 240 2>&1 \
