@@ -78,8 +78,7 @@ jobs:
           sudo rm -rf \
             /usr/local/lib/android \
             /opt/ghc \
-            /usr/share/dotnet \
-            /opt/hostedtoolcache
+            /usr/share/dotnet
           df -h
 
       - name: Install QEMU dependencies
