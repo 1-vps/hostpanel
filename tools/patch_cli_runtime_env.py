@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install a strict, non-shell config.env loader in HostPanel maintenance CLIs."""
+"""Install strict runtime loaders and reviewed CLI compatibility corrections."""
 from __future__ import annotations
 
 import os
@@ -67,6 +67,9 @@ _load_runtime_environment()
 
 import osrelease'''
 
+MYSQL_ADMIN_OLD = '''    prelude = "SET SESSION local_infile=0;\\nSET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\\n"'''
+MYSQL_ADMIN_NEW = '''    prelude = "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\\n"'''
+
 
 def patch(target: pathlib.Path, old: str, new: str, label: str) -> None:
     if not target.is_file() or target.is_symlink():
@@ -95,12 +98,18 @@ def patch(target: pathlib.Path, old: str, new: str, label: str) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 4:
         raise SystemExit(
-            "usage: patch_cli_runtime_env.py HOSTPANEL_BACKUP HOSTPANEL_DOCTOR"
+            "usage: patch_cli_runtime_env.py HOSTPANEL_BACKUP HOSTPANEL_DOCTOR HOSTPANEL_MYSQL_ADMIN"
         )
     patch(pathlib.Path(sys.argv[1]), BACKUP_OLD, BACKUP_NEW, "backup CLI")
     patch(pathlib.Path(sys.argv[2]), DOCTOR_OLD, DOCTOR_NEW, "doctor CLI")
+    patch(
+        pathlib.Path(sys.argv[3]),
+        MYSQL_ADMIN_OLD,
+        MYSQL_ADMIN_NEW,
+        "MariaDB root gateway",
+    )
 
 
 if __name__ == "__main__":
