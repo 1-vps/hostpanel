@@ -21,7 +21,8 @@ TOKENS = (
 found = 0
 
 with tarfile.open(ARCHIVES[0], "r:gz") as archive:
-    for member in archive.getmembers():
+    members = {member.name: member for member in archive.getmembers()}
+    for member in members.values():
         if not member.isfile():
             continue
         if pathlib.PurePosixPath(member.name).suffix.lower() not in {
@@ -43,6 +44,29 @@ with tarfile.open(ARCHIVES[0], "r:gz") as archive:
         for number, line in hits:
             print(f"{number}: {line!r}")
             found += 1
+
+    manifests = [
+        name for name in members
+        if name.endswith("/app/privileged-files.txt")
+    ]
+    if len(manifests) != 1:
+        raise SystemExit(
+            f"expected exactly one privileged-files manifest, found {len(manifests)}"
+        )
+    manifest_name = manifests[0]
+    manifest_handle = archive.extractfile(members[manifest_name])
+    if manifest_handle is None:
+        raise SystemExit("could not read privileged-files manifest")
+    manifest_entries = [
+        line.strip()
+        for line in manifest_handle.read().decode("utf-8", errors="strict").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    app_prefix = manifest_name.removesuffix("privileged-files.txt")
+    print(f"### {manifest_name}")
+    for entry in manifest_entries:
+        target = f"{app_prefix}{entry}"
+        print(f"{entry!r}: {'present' if target in members else 'MISSING'}")
 
 if not found:
     raise SystemExit("no reviewed cursor source literals found")
