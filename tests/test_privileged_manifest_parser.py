@@ -109,7 +109,8 @@ class PrivilegedManifestParserTests(unittest.TestCase):
             subprocess.run(["bash", "-n", str(generated)], check=True)
 
     def test_verifier_patch_is_fail_closed_and_atomic(self):
-        self.assertEqual(self.launcher.count("PYPRIVVERIFY"), 2)
+        self.assertEqual(self.launcher.count("<<'PYPRIVVERIFY'"), 1)
+        self.assertEqual(self.launcher.count("\nPYPRIVVERIFY\n"), 1)
         self.assertIn("unexpected privileged verifier injection shape", self.launcher)
         self.assertIn(".privileged-verifier-injection.", self.launcher)
         self.assertIn("os.replace(temporary, path)", self.launcher)
