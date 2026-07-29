@@ -150,23 +150,40 @@ import sys
 path = pathlib.Path(sys.argv[1])
 if not path.is_file() or path.is_symlink():
     raise SystemExit(f"unsafe generated installer target: {path}")
-old = '''ExecStart=$PANEL_DIR/venv/bin/uvicorn main:app --host 127.0.0.1 --port $PANEL_BACKEND_PORT \\
-  --proxy-headers --forwarded-allow-ips=127.0.0.1 \\
-  --limit-concurrency 192 --backlog 256 --timeout-keep-alive 5'''
-new = '''ExecStart=$PANEL_DIR/venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port $PANEL_BACKEND_PORT \\
-  --proxy-headers --forwarded-allow-ips=127.0.0.1 \\
-  --limit-concurrency 192 --backlog 256 --timeout-keep-alive 5'''
-text = path.read_text(encoding="utf-8")
-old_count = text.count(old)
-new_count = text.count(new)
-if new_count == 1:
-    updated = text
-elif old_count == 1 and new_count == 0:
-    updated = text.replace(old, new, 1)
-else:
+
+def replace_reviewed_shape(text, old, new, label):
+    old_count = text.count(old)
+    new_count = text.count(new)
+    if new_count == 1 and old_count == 0:
+        return text
+    if old_count == 1 and new_count == 0:
+        return text.replace(old, new, 1)
     raise SystemExit(
-        f"unexpected Uvicorn execution shape: old={old_count} new={new_count}"
+        f"unexpected {label} shape: old={old_count} new={new_count}"
     )
+
+service_old = '''ExecStart=$PANEL_DIR/venv/bin/uvicorn main:app --host 127.0.0.1 --port $PANEL_BACKEND_PORT \\
+  --proxy-headers --forwarded-allow-ips=127.0.0.1 \\
+  --limit-concurrency 192 --backlog 256 --timeout-keep-alive 5'''
+service_new = '''ExecStart=$PANEL_DIR/venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port $PANEL_BACKEND_PORT \\
+  --proxy-headers --forwarded-allow-ips=127.0.0.1 \\
+  --limit-concurrency 192 --backlog 256 --timeout-keep-alive 5'''
+runtime_old = '''ln -sfn "venvs/$RUNTIME_VERSION" "$PANEL_DIR/venv"
+ok "fresh version-locked runtime activated in venvs/$RUNTIME_VERSION"'''
+runtime_new = '''ln -sfn "venvs/$RUNTIME_VERSION" "$PANEL_DIR/venv"
+cat >"$RUNTIME_DIR/bin/uvicorn" <<EOFUVICORNWRAPPER
+#!/bin/sh
+exec "$PANEL_DIR/venv/bin/python" -m uvicorn "\$@"
+EOFUVICORNWRAPPER
+chmod 755 "$RUNTIME_DIR/bin/uvicorn"
+ok "fresh version-locked runtime activated in venvs/$RUNTIME_VERSION"'''
+text = path.read_text(encoding="utf-8")
+updated = replace_reviewed_shape(
+    text, service_old, service_new, "Uvicorn service execution"
+)
+updated = replace_reviewed_shape(
+    updated, runtime_old, runtime_new, "relocatable Uvicorn wrapper"
+)
 mode = stat.S_IMODE(path.stat().st_mode)
 temporary = path.with_name(f".{path.name}.uvicorn-exec.{os.getpid()}")
 try:
