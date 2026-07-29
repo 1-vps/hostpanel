@@ -13,7 +13,8 @@ BASE = ROOT / "install.base.sh"
 
 def launcher_patch(marker: str) -> str:
     text = LAUNCHER.read_text(encoding="utf-8")
-    prefix = f"<<'{marker}' \\\n"
+    prefix = f"<<'{marker}' \\
+"
     self_contained = text.split(prefix, 1)[1]
     self_contained = self_contained.split("\n", 1)[1]
     return self_contained.split(f"\n{marker}\n", 1)[0]
@@ -57,12 +58,16 @@ class ReadinessHostHeaderTests(unittest.TestCase):
             self.assertLess(host, token)
             self.assertLess(token, endpoint)
             self.assertEqual(transformed.count('-H "Host: $PANEL_HOST"'), 1)
+            self.assertIn("--fail-with-body", transformed)
+            self.assertIn("Readiness response: %.500s", transformed)
             subprocess.run(["bash", "-n", str(generated)], check=True)
 
     def test_launcher_patch_is_fail_closed_and_atomic(self):
         text = LAUNCHER.read_text(encoding="utf-8")
         self.assertEqual(text.count("PYREADINESSHOST"), 2)
-        self.assertIn("unexpected readiness Host header shape", text)
+        self.assertIn("readiness probe Host header", text)
+        self.assertIn("readiness failure diagnostics", text)
+        self.assertIn("unexpected {label} shape", text)
         self.assertIn(".readiness-host.", text)
         self.assertIn("os.replace(temporary, path)", text)
 
