@@ -2,11 +2,11 @@
 """Run the pinned hardener and apply reviewed post-generation corrections."""
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import os
 import pathlib
 import stat
+import subprocess
 import sys
 
 EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
@@ -32,9 +32,17 @@ REVIEWED_IMPLEMENTATION_MARKERS = (
 
 
 def git_blob_sha(path: pathlib.Path) -> str:
-    data = path.read_bytes()
-    payload = f"blob {len(data)}\0".encode("ascii") + data
-    return hashlib.sha1(payload, usedforsecurity=False).hexdigest()
+    try:
+        result = subprocess.run(
+            ["git", "hash-object", "--no-filters", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def valid_implementation(path: pathlib.Path) -> bool:
