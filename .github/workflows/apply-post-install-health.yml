@@ -1,5 +1,6 @@
 name: Apply post-install health correction
 
+# This second commit triggers the workflow after GitHub has registered it.
 on:
   push:
     branches:
