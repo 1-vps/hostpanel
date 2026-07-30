@@ -29,7 +29,7 @@ class QemuTokenScopeTests(unittest.TestCase):
 
     def test_runner_drops_plain_and_encoded_token_before_qemu_starts(self):
         unset = self.harness.index("unset HP_QEMU_REPO_TOKEN REPO_TOKEN REPO_AUTH_HEADER")
-        qemu_start = self.harness.index("qemu-system-x86_64")
+        qemu_start = self.harness.index("\nqemu-system-x86_64 \\\n")
         self.assertLess(unset, qemu_start)
         self.assertIn('chmod 600 "$WORK_DIR/guest.env"', self.harness)
         self.assertNotIn('$ARTIFACT_DIR/guest.env', self.harness)
