@@ -2,6 +2,7 @@
 """Apply the core localization overlay plus reviewed final-language corrections."""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import pathlib
@@ -16,6 +17,20 @@ FINAL_OVERRIDE_FILES = (
     "catalog-final-overrides.zh-01.json",
     "catalog-final-overrides.zh-02.json",
 )
+EXPECTED_FINAL_COUNTS = {"ja": 37, "pt": 31, "zh": 60}
+EXPECTED_FINAL_CANONICAL_SHA256 = (
+    "bb44356c5ece1b3b767ffe0cd45cdf657c8ce357ed6ad9ef60785b307ac35250"
+)
+
+
+def canonical_sha256(payload: dict[str, dict[str, str]]) -> str:
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def load_core():
@@ -44,7 +59,7 @@ def install_final_override_loader(core) -> None:
                 details.append(f"unexpected final overrides: {unexpected}")
             raise SystemExit("final override layout mismatch: " + "; ".join(details))
 
-        seen: dict[str, set[str]] = {}
+        final_payload: dict[str, dict[str, str]] = {}
         for path in expected:
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
@@ -58,11 +73,25 @@ def install_final_override_loader(core) -> None:
                     for key, value in entries.items()
                 ):
                     raise SystemExit(f"{path.name}: invalid final overrides for {locale}")
-                duplicate = sorted(seen.setdefault(locale, set()) & set(entries))
+                target = final_payload.setdefault(locale, {})
+                duplicate = sorted(set(target) & set(entries))
                 if duplicate:
                     raise SystemExit(f"{path.name}: duplicate final override keys: {duplicate[:8]}")
-                seen[locale].update(entries)
-                overrides.setdefault(locale, {}).update(entries)
+                target.update(entries)
+
+        counts = {locale: len(entries) for locale, entries in final_payload.items()}
+        if counts != EXPECTED_FINAL_COUNTS:
+            raise SystemExit(
+                f"final override count mismatch: expected {EXPECTED_FINAL_COUNTS}, got {counts}"
+            )
+        digest = canonical_sha256(final_payload)
+        if digest != EXPECTED_FINAL_CANONICAL_SHA256:
+            raise SystemExit(
+                "final override digest mismatch: "
+                f"expected {EXPECTED_FINAL_CANONICAL_SHA256}, got {digest}"
+            )
+        for locale, entries in final_payload.items():
+            overrides.setdefault(locale, {}).update(entries)
 
     core.load_override_bundle = load_override_bundle
 
