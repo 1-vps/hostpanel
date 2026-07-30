@@ -134,6 +134,15 @@ class InstallerHardeningTests(unittest.TestCase):
         self.assertIn('random_bytes', self.installer)
         self.assertIn('failed bcrypt, cURL HTTPS, sodium, or CSPRNG runtime validation', self.installer)
 
+    def test_operator_baseline_tools_are_installed_and_validated(self):
+        self.assertIn('hostname btop nano plocate)', self.installer)
+        self.assertIn("if pkg_available mlocate; then printf 'mlocate'; else printf 'plocate'; fi", self.installer)
+        self.assertIn('pkg_map needrestart smartmontools prometheus-node-exporter podman-compose btop', self.installer)
+        for utility in ('locate', 'updatedb', 'nano'):
+            self.assertIn(f'command -v "$utility"', self.installer)
+        self.assertIn('command -v btop', self.installer)
+        self.assertIn('role packages installed and operator utilities validated', self.installer)
+
     def test_bootstrap_has_independent_trust_root(self):
         self.assertIn('TRUSTED_RELEASE_PUBLIC_KEY', self.bootstrap)
         self.assertIn('verify_commit_file', self.bootstrap)

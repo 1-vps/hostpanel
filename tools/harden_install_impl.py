@@ -194,7 +194,7 @@ say "Installing packages for roles: $ROLE_CSV"''',
     text = _replace_once(
         text,
         '''COMMON_PACKAGES=(openssl rsync acl gnupg sqlite3 needrestart inotify-tools smartmontools prometheus-node-exporter iproute2 git ca-certificates python3 python3-venv python3-pip curl ufw fail2ban unzip sudo nginx)''',
-        '''COMMON_PACKAGES=(openssl rsync acl gnupg sqlite3 needrestart inotify-tools smartmontools prometheus-node-exporter iproute2 git ca-certificates python3 python3-venv python3-pip curl ufw fail2ban unzip sudo nginx openssh-server cron tar gzip util-linux hostname)''',
+        '''COMMON_PACKAGES=(openssl rsync acl gnupg sqlite3 needrestart inotify-tools smartmontools prometheus-node-exporter iproute2 git ca-certificates python3 python3-venv python3-pip curl ufw fail2ban unzip sudo nginx openssh-server cron tar gzip util-linux hostname btop nano plocate)''',
         "fresh-host command prerequisites",
     )
     text = _replace_once(
@@ -203,8 +203,31 @@ say "Installing packages for roles: $ROLE_CSV"''',
     inotify-tools)          printf 'inotify-tools' ;;''',
         '''    needrestart)            printf 'dnf-utils' ;;
     cron)                   printf 'cronie' ;;
+    plocate)
+      if pkg_available mlocate; then printf 'mlocate'; else printf 'plocate'; fi ;;
     inotify-tools)          printf 'inotify-tools' ;;''',
-        "RHEL cron package mapping",
+        "RHEL operator tool package mapping",
+    )
+
+    text = _replace_once(
+        text,
+        '''readarray -t OPTIONAL_PACKAGES < <(pkg_map needrestart smartmontools prometheus-node-exporter podman-compose)''',
+        '''readarray -t OPTIONAL_PACKAGES < <(pkg_map needrestart smartmontools prometheus-node-exporter podman-compose btop)''',
+        "optional btop availability",
+    )
+    text = _replace_once(
+        text,
+        '''ok "role packages installed"''',
+        '''for utility in locate updatedb nano; do
+      command -v "$utility" >/dev/null 2>&1 \
+        || die "Required operator utility is unavailable after package installation: $utility"
+    done
+    if pkg_available "$(pkg_name btop)"; then
+      command -v btop >/dev/null 2>&1 \
+        || die "btop package is available but the btop command is missing after installation"
+    fi
+    ok "role packages installed and operator utilities validated"''',
+        "operator utility validation",
     )
 
     text = _replace_once(
