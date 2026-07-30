@@ -6,6 +6,7 @@ on:
     paths:
       - bootstrap-install.sh
       - localization-overlay/**
+      - tests/test_high_risk_locale_overrides.py
       - LOCALIZATION-OVERLAY.md
       - .github/workflows/localization-overlay.yml
   workflow_dispatch:
@@ -26,6 +27,11 @@ jobs:
         run: |
           set -euo pipefail
           grep ' hostpanel-v3.4.0-hardened-r5-source.tar.gz$' SHA256SUMS | sha256sum -c -
+      - name: Verify reviewed high-risk locale overrides
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tests/test_high_risk_locale_overrides.py
+          python3 -m unittest discover -s tests -p 'test_high_risk_locale_overrides.py' -v
       - name: Extract signed source
         shell: bash
         run: |
