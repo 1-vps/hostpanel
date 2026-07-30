@@ -70,6 +70,154 @@ JA_BAD_PHRASE_RE = re.compile(
     r"(?:批判的発見|禁制藩|親藩|転校|転職|節約する|求人|刑務所|清掃年齢|"
     r"藩名|発砲する|余計なこと|config は$)"
 )
+SV_REQUIRED_TRANSLATION_KEYS = frozenset(
+    """
+ui.64.hexadecimal.characters
+ui.alias.domain
+ui.api.tokens.2
+ui.app.password
+ui.app.servers
+ui.archive.days
+ui.automatic.reply
+ui.autossl.centre
+ui.available.runtimes
+ui.backup.archive
+ui.backup.archive.2
+ui.bandwidth.gb
+ui.billing.connector
+ui.blocked.addresses
+ui.build.sbom
+ui.caa.issuer
+ui.cache.table
+ui.cache.table.2
+ui.certificate.pem
+ui.chain.optional
+ui.choose.file
+ui.cleanup.age
+ui.client.id
+ui.client.secret
+ui.connect.to
+ui.contact.email
+ui.controls.the
+ui.copied.from
+ui.cpanel.suite
+ui.customer.username
+ui.customer.username.2
+ui.deploy.script
+ui.developer.platform
+ui.directadmin.capability
+ui.directadmin.tools
+ui.discover.installations
+ui.disk.mb
+ui.disk.used
+ui.dns.cluster
+ui.dns.provider
+ui.dynamic.dns
+ui.encrypted.secrets
+ui.encryption.key
+ui.entry.file
+ui.export.sql
+ui.external.subject
+ui.fence.endpoint
+ui.fence.provider
+ui.fleet.max.cpu
+ui.fleet.max.disk
+ui.flush.queue
+ui.generate.csr
+ui.health.path
+ui.historical.monitoring
+ui.hostpanel.account
+ui.hotlink.protection
+ui.hourly.limit
+ui.https.endpoint
+ui.https.endpoint.2
+ui.https.record
+ui.https.url
+ui.import.key
+ui.import.selected
+ui.infected.files
+ui.inspect.first
+ui.intermediate.certificates
+ui.io.weight
+ui.javascript.sdk
+ui.journal.address
+ui.last.refreshed
+ui.last.used
+ui.link.identity
+ui.list.address
+ui.live.site
+ui.live.updates
+ui.mailbox.mb
+ui.min.10.characters
+ui.min.10.characters.2
+ui.min.10.characters.3
+ui.min.12.characters
+ui.min.12.characters.2
+ui.my.security.2
+ui.node.id
+ui.node.placement
+ui.node.python
+ui.notification.kind
+ui.operations.queue
+ui.options.json
+ui.outbound.pool
+ui.panel.toolbar
+ui.parent.domain
+ui.parked.domain
+ui.parked.domain.2
+ui.php.pools
+ui.php.settings.table
+ui.php.settings.table.2
+ui.php.versions.table
+ui.php.versions.table.2
+ui.postgresql.table
+ui.postgresql.table.2
+ui.primary.navigation
+ui.private.key
+ui.production.readiness
+ui.production.readiness.2
+ui.python.sdk
+ui.query.table
+ui.query.table.2
+ui.queue.restore
+ui.quota.enforcement
+ui.quota.mb
+ui.rclone.destination
+ui.reason.recorded
+ui.received.from
+ui.redirects.to
+ui.registrar.integrations
+ui.reliability.ecosystem.2
+ui.reseller.acl
+ui.resource.kind
+ui.rootless.containers
+ui.rule.id
+ui.scan.all
+ui.scan.malware
+ui.scan.now
+ui.send.to
+ui.seo.scan
+ui.shared.secret
+ui.shared.secret.2
+ui.site.tools.2
+ui.ssh.user
+ui.ssh.user.2
+ui.stack.profiles
+ui.staging.site
+ui.staging.table
+ui.staging.table.2
+ui.system.user
+ui.test.restore
+ui.test.update
+ui.turn.off
+ui.turn.on
+ui.unified.subaccounts
+ui.url.path
+ui.warn.at
+ui.wordpress.smart.updates
+""".split()
+)
+
 SOURCE_LITERAL_ALLOW = {
     ".htaccess", "CLI", "CRON", "DNSSEC", "FTP", "HTTPS URL", "ID", "IP",
     "NS1", "NS2", "OK", "OPcache", "OpenAPI", "SIEVE", "Shell", "URI",
@@ -133,6 +281,8 @@ def main() -> int:
                     failures.append(f"{locale}:{key}: foreign-language contamination")
             if locale == "ja" and JA_BAD_PHRASE_RE.search(translated):
                 failures.append(f"{locale}:{key}: known machine-translation mistranslation")
+            if locale == "sv" and key in SV_REQUIRED_TRANSLATION_KEYS and source == translated:
+                failures.append(f"{locale}:{key}: untranslated reviewed Swedish UI label")
             source_identical = locale != "en" and source == translated and not SOURCE_ALLOW_RE.search(source)
             if source_identical and source not in SOURCE_LITERAL_ALLOW and not PLACEHOLDER_ONLY_RE.fullmatch(source):
                 if locale in {"ja", "zh"} and WORD_RE.search(source):
