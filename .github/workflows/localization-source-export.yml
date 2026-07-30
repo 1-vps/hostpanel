@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/localization-source-export.yml
+      - tools/generate_added_locales.py
       - hostpanel-v3.4.0-hardened-r5-source.tar.gz
       - SHA256SUMS
 
@@ -12,8 +13,9 @@ permissions:
   contents: read
 
 jobs:
-  export-source:
+  generate-locales:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: Verify signed source checksum entry
@@ -27,11 +29,45 @@ jobs:
           set -euo pipefail
           mkdir -p localization-source
           tar -xzf hostpanel-v3.4.0-hardened-r5-source.tar.gz -C localization-source
-      - name: Upload private source artifact
+      - name: Install reproducible translation runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install 'transformers==4.44.2' 'sentencepiece==0.2.0' 'sacremoses==0.1.1'
+      - name: Generate Japanese Portuguese and Chinese catalogs
+        shell: bash
+        env:
+          TOKENIZERS_PARALLELISM: 'false'
+        run: |
+          set -euo pipefail
+          SOURCE_ROOT="$(find localization-source -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
+          test -n "$SOURCE_ROOT"
+          python tools/generate_added_locales.py "$SOURCE_ROOT" generated-locales --batch-size 8
+      - name: Verify generated JSON and key parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_ROOT="$(find localization-source -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
+          python - "$SOURCE_ROOT" <<'PY'
+          import json, pathlib, sys
+          source = pathlib.Path(sys.argv[1]) / 'app/static/i18n.en.json'
+          english = json.loads(source.read_text(encoding='utf-8'))
+          for locale in ('ja', 'pt', 'zh'):
+              path = pathlib.Path('generated-locales') / f'i18n.{locale}.json'
+              catalog = json.loads(path.read_text(encoding='utf-8'))
+              if list(catalog) != list(english):
+                  raise SystemExit(f'{locale}: key order or parity mismatch')
+              if any(not isinstance(value, str) or not value for value in catalog.values()):
+                  raise SystemExit(f'{locale}: blank or non-string value')
+              print(locale, len(catalog))
+          PY
+      - name: Upload private localization artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hostpanel-localization-source
-          path: localization-source/
+          name: hostpanel-generated-locales
+          path: generated-locales/
           include-hidden-files: true
           compression-level: 0
           retention-days: 1
