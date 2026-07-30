@@ -15,7 +15,7 @@ All regional tags are normalized to the supported base locale. The Portuguese ca
 All ten existing catalogs retain their complete key sets. The overlay:
 
 - removes parenthetical singular/plural workarounds from authentication and firewall countdown text
-- repairs genuine source-identical Swedish interface labels
+- translates 143 previously source-identical Swedish interface labels and prevents their regression
 - uses `nyckel` consistently for Swedish passkey wording in the login flow
 - preserves URLs, commands, paths, certificates, identifiers, placeholders, product names, and protocol names
 
@@ -28,10 +28,12 @@ The original source archive and its signature are not modified. `bootstrap-insta
 The localization workflow checks:
 
 - 13 catalogs with exact 2,215-key parity and order
+- ten production locales and three release-candidate locales
 - non-empty UTF-8 values
 - placeholder multiplicity
 - protected technical tokens
 - unsafe markup and mojibake
+- reviewed Swedish interface labels remain translated
 - selector, registry, login, Python, JavaScript, and Bash syntax consistency
 
 The three new catalogs were produced with language-specific machine assistance, protected-token reconstruction, and editorial overrides. Specialized legal, billing, tax, contractual, and jurisdiction-specific compliance language still requires native-speaking subject-matter review before contractual use.
