@@ -31,6 +31,7 @@ on:
       - SHA256SUMS
       - '*.sig'
       - tests/test_high_risk_locale_overrides.py
+      - tests/test_localization_bootstrap_wiring.py
       - tests/test_qemu_vm_acceptance.py
       - tests/test_qemu_token_scope.py
       - tests/test_qemu_default_version.py
@@ -78,6 +79,7 @@ jobs:
           bash -n tools/run-qemu-vm-acceptance.sh
           bash -n tools/qemu-guest-install.sh
           python3 -m unittest discover -s tests -p 'test_high_risk_locale_overrides.py' -v
+          python3 -m unittest discover -s tests -p 'test_localization_bootstrap_wiring.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_token_scope.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_default_version.py' -v
