@@ -8,6 +8,7 @@ import base64
 import binascii
 import csv
 import gzip
+import hashlib
 import json
 import pathlib
 import pprint
@@ -31,6 +32,8 @@ LANGUAGES = [
     ("zh", "简体中文"),
 ]
 RELEASE_CANDIDATES = {"ja", "pt", "zh"}
+OVERRIDE_ENCODED_LENGTH = 63168
+OVERRIDE_ENCODED_SHA256 = "e22307d7ab0d10d97d954ceb8f673eed3c45d57d70a6e16ef61bbc8ec1851336"
 OVERRIDE_CHUNK_FILES = (
     "catalog-overrides.json.gz.b64.chunk01",
     "catalog-overrides.json.gz.b64.chunk02",
@@ -107,8 +110,16 @@ def load_override_bundle(overlay: pathlib.Path, overrides: dict[str, dict[str, s
         raise SystemExit("compressed override bundle layout mismatch: " + "; ".join(details))
 
     encoded = b"".join(path.read_bytes().strip() for path in expected)
-    if not encoded:
-        raise SystemExit("compressed override bundle is empty")
+    if len(encoded) != OVERRIDE_ENCODED_LENGTH:
+        raise SystemExit(
+            f"compressed override bundle length mismatch: {len(encoded)} != {OVERRIDE_ENCODED_LENGTH}"
+        )
+    encoded_sha256 = hashlib.sha256(encoded).hexdigest()
+    if encoded_sha256 != OVERRIDE_ENCODED_SHA256:
+        raise SystemExit(
+            "compressed override bundle checksum mismatch: "
+            f"{encoded_sha256} != {OVERRIDE_ENCODED_SHA256}"
+        )
     try:
         packed = base64.b64decode(encoded, validate=True)
         payload = json.loads(gzip.decompress(packed).decode("utf-8"))
