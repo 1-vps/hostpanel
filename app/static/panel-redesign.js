@@ -130,14 +130,20 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
 
   function bindLanguage(){
     const picker=byId('languageSelect');
+    let activeLanguage=currentLanguage();
     if(picker){
-      picker.value=currentLanguage();
+      picker.value=activeLanguage;
       picker.addEventListener('change',()=>queueMicrotask(applyLocalizedCopy));
     }
-    new MutationObserver(()=>queueMicrotask(()=>{
-      if(picker)picker.value=currentLanguage();
-      applyLocalizedCopy();
-    })).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
+    new MutationObserver(()=>{
+      const nextLanguage=currentLanguage();
+      if(nextLanguage===activeLanguage)return;
+      activeLanguage=nextLanguage;
+      queueMicrotask(()=>{
+        if(picker)picker.value=activeLanguage;
+        applyLocalizedCopy();
+      });
+    }).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
   }
 
   function boot(){
