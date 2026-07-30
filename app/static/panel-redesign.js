@@ -94,7 +94,8 @@
       }
       control.addEventListener('click',event=>{
         event.preventDefault();
-        location.hash = `#/panel/${page}`;
+        navLink.click();
+        if(location.hash!==`#/panel/${page}`)location.hash = `#/panel/${page}`;
       });
     });
   }
