@@ -1,3 +1,6 @@
+if(typeof window.storageGet!=='function')window.storageGet=()=>null;
+if(typeof window.storageSet!=='function')window.storageSet=()=>{};
+
 (function(){
   'use strict';
 
