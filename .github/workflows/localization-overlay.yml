@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   validate:
@@ -54,6 +55,23 @@ jobs:
           path: localization-ci.log
           retention-days: 1
           if-no-files-found: error
+      - name: Comment sanitized failure diagnostics
+        if: steps.localization_validation.outcome == 'failure' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let text = 'localization-ci.log was not created';
+            if (fs.existsSync('localization-ci.log')) {
+              const lines = fs.readFileSync('localization-ci.log', 'utf8').split(/\r?\n/);
+              text = lines.slice(-80).join('\n').slice(-12000);
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `<!-- localization-ci-diagnostic -->\n### Localization CI diagnostic\n\n\`\`\`text\n${text}\n\`\`\``
+            });
       - name: Verify thirteen selectors and catalogs
         if: steps.localization_validation.outcome == 'success'
         shell: bash
