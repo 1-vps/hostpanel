@@ -18,25 +18,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify signed source checksum
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep ' hostpanel-v3.4.0-hardened-r5-source.tar.gz$' SHA256SUMS | sha256sum -c -
-      - name: Extract signed source
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p localization-source
-          tar -xzf hostpanel-v3.4.0-hardened-r5-source.tar.gz -C localization-source
-      - name: Apply and audit reviewed localization overlay
-        id: localization_audit
+      - name: Validate signed source and localization overlay
+        id: localization_validation
         continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
           {
             set -euxo pipefail
+            grep ' hostpanel-v3.4.0-hardened-r5-source.tar.gz$' SHA256SUMS | sha256sum -c -
+            mkdir -p localization-source
+            tar -xzf hostpanel-v3.4.0-hardened-r5-source.tar.gz -C localization-source
             SOURCE_ROOT="$(find localization-source -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
             test -n "$SOURCE_ROOT"
             python3 localization-overlay/apply_localization_overlay.py \
@@ -55,7 +47,7 @@ jobs:
             bash -n bootstrap-install.sh
           } 2>&1 | tee localization-ci.log
       - name: Upload failure diagnostics
-        if: steps.localization_audit.outcome == 'failure'
+        if: steps.localization_validation.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: localization-ci-diagnostics
@@ -63,7 +55,7 @@ jobs:
           retention-days: 1
           if-no-files-found: error
       - name: Verify thirteen selectors and catalogs
-        if: steps.localization_audit.outcome == 'success'
+        if: steps.localization_validation.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -93,5 +85,5 @@ jobs:
           print(f"{len(locales)} locales × {len(english)} keys verified")
           PY
       - name: Fail after diagnostic upload
-        if: steps.localization_audit.outcome == 'failure'
+        if: steps.localization_validation.outcome == 'failure'
         run: exit 1
