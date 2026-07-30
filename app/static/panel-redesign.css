@@ -66,6 +66,8 @@ body.hp-redesign.dark{
   --ink:#07101e;
   --focus:#60a5fa;
 }
+body.hp-redesign.dark .pill{color:#22c55e}
+body.hp-redesign.dark .hp-dashboard-kicker{color:#60a5fa}
 
 body.hp-redesign .sidebar{
   width:248px;
