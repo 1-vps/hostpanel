@@ -273,11 +273,14 @@ LOCALIZATION_FILES=(
   localization-overlay/LOCALIZATION-REVIEW-v3.4.0-overlay.md
   localization-overlay/login-messages.json
   localization-overlay/catalog-overrides.json
-  localization-overlay/catalog-overrides.json.gz.b64.part01
-  localization-overlay/catalog-overrides.json.gz.b64.part02
-  localization-overlay/catalog-overrides.json.gz.b64.part03
-  localization-overlay/catalog-overrides.json.gz.b64.part04
-  localization-overlay/catalog-overrides.json.gz.b64.part05
+  localization-overlay/catalog-overrides.json.gz.b64.chunk01
+  localization-overlay/catalog-overrides.json.gz.b64.chunk02
+  localization-overlay/catalog-overrides.json.gz.b64.chunk03
+  localization-overlay/catalog-overrides.json.gz.b64.chunk04
+  localization-overlay/catalog-overrides.json.gz.b64.chunk05
+  localization-overlay/catalog-overrides.json.gz.b64.chunk06
+  localization-overlay/catalog-overrides.json.gz.b64.chunk07
+  localization-overlay/catalog-overrides.json.gz.b64.chunk08
   localization-overlay/existing-catalog-corrections.json
   localization-overlay/catalogs/i18n.ja.json
   localization-overlay/catalogs/i18n.pt.json
