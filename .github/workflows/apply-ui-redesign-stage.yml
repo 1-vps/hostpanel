@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - tools/.ui-redesign-stage.b64
+      - tools/.ui-redesign-stage.tail
       - .github/workflows/apply-ui-redesign-stage.yml
 
 permissions:
@@ -23,7 +24,15 @@ jobs:
       - name: Verify and apply reviewed UI bundle
         run: |
           set -euo pipefail
-          base64 -d tools/.ui-redesign-stage.b64 > "$RUNNER_TEMP/ui-stage.tar.gz"
+          python3 - <<'PY'
+          import pathlib, string
+          data = pathlib.Path('tools/.ui-redesign-stage.b64').read_bytes()
+          allowed = set((string.ascii_letters + string.digits + '+/=\r\n').encode())
+          invalid = [(index, value) for index, value in enumerate(data) if value not in allowed]
+          print(f'stage_length={len(data)} modulo={len(data) % 4} invalid={invalid[:8]}')
+          print(f'stage_tail={data[-96:]!r}')
+          PY
+          cat tools/.ui-redesign-stage.b64 tools/.ui-redesign-stage.tail 2>/dev/null | tr -d '\r\n ' | base64 -d > "$RUNNER_TEMP/ui-stage.tar.gz"
           echo '350ba7d96c38563c28ec425bf6f90a65a6461c64a346188f985124083fdbe52b  '"$RUNNER_TEMP/ui-stage.tar.gz" | sha256sum -c -
           python3 - "$RUNNER_TEMP/ui-stage.tar.gz" <<'PY'
           import pathlib, sys, tarfile
