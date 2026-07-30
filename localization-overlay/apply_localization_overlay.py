@@ -286,9 +286,25 @@ def main() -> int:
         flags=re.S,
     )
 
-    production_set = "{" + ", ".join(json.dumps(code) for code in expected_codes) + "}"
+    production_codes = [code for code in expected_codes if code not in RELEASE_CANDIDATES]
+    production_set = "{" + ", ".join(json.dumps(code) for code in production_codes) + "}"
+    release_candidate_set = "{" + ", ".join(json.dumps(code) for code in sorted(RELEASE_CANDIDATES)) + "}"
     audit = source / "tools/audit_locales.py"
-    replace_regex(audit, r"PRODUCTION_LOCALES = \{[^\n]+\}", f"PRODUCTION_LOCALES = {production_set}")
+    replace_regex(
+        audit,
+        r"PRODUCTION_LOCALES = \{[^\n]+\}",
+        f"PRODUCTION_LOCALES = {production_set}\nRELEASE_CANDIDATE_LOCALES = {release_candidate_set}",
+    )
+    replace_once(
+        audit,
+        "        if locale in PRODUCTION_LOCALES:\n",
+        "        if locale in PRODUCTION_LOCALES | RELEASE_CANDIDATE_LOCALES:\n",
+    )
+    replace_once(
+        audit,
+        '        status = "production" if locale in PRODUCTION_LOCALES else "preview"\n',
+        '        status = "production" if locale in PRODUCTION_LOCALES else "release-candidate" if locale in RELEASE_CANDIDATE_LOCALES else "preview"\n',
+    )
 
     test_ui = source / "tests/test_ui_experience.py"
     labels = ",".join(repr(label) for _code, label in LANGUAGES)
