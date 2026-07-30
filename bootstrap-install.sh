@@ -265,6 +265,28 @@ install -d -m 0755 "$SOURCE_ROOT/tools"
 install -m 0755 "$CHECKOUT/tools/harden_install.py" "$SOURCE_ROOT/tools/harden_install.py"
 install -m 0755 "$CHECKOUT/tools/harden_install_runtime.py" "$SOURCE_ROOT/tools/harden_install_runtime.py"
 
+LOCALIZATION_ROOT="$CHECKOUT/localization-overlay"
+LOCALIZATION_FILES=(
+  localization-overlay/apply_localization_overlay.py
+  localization-overlay/review_locales.py
+  localization-overlay/LOCALIZATION.md
+  localization-overlay/LOCALIZATION-REVIEW-v3.4.0-overlay.md
+  localization-overlay/login-messages.json
+  localization-overlay/catalog-overrides.json
+  localization-overlay/existing-catalog-corrections.json
+  localization-overlay/catalogs/i18n.ja.json
+  localization-overlay/catalogs/i18n.pt.json
+  localization-overlay/catalogs/i18n.zh.json
+)
+for overlay in "${LOCALIZATION_FILES[@]}"; do verify_commit_file "$overlay"; done
+python3 "$LOCALIZATION_ROOT/apply_localization_overlay.py" \
+  "$SOURCE_ROOT" "$LOCALIZATION_ROOT" \
+  || die "Could not apply the reviewed localization overlay"
+python3 "$SOURCE_ROOT/tools/audit_locales.py" \
+  || die "Localization structural audit failed after applying the overlay"
+python3 "$SOURCE_ROOT/tools/review_locales.py" \
+  || die "Localization editorial audit failed after applying the overlay"
+
 # Validate the exact generated root installer before any server mutation.
 GENERATED_CHECK="$WORK_DIR/install.generated.sh"
 python3 "$SOURCE_ROOT/tools/harden_install.py" \
