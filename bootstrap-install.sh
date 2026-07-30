@@ -291,6 +291,8 @@ LOCALIZATION_FILES=(
   localization-overlay/catalog-overrides.json.gz.b64.chunk08c
   localization-overlay/catalog-overrides.json.gz.b64.chunk08d
   localization-overlay/existing-catalog-corrections.json
+  localization-overlay/existing-catalog-corrections.sv-ui-1.json
+  localization-overlay/existing-catalog-corrections.sv-ui-2.json
   localization-overlay/catalogs/i18n.ja.json
   localization-overlay/catalogs/i18n.pt.json
   localization-overlay/catalogs/i18n.zh.json
