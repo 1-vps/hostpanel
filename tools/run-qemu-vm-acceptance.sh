@@ -13,6 +13,7 @@ IMAGE_SHA256="${HP_QEMU_IMAGE_SHA256:-d1940f7d69d343355e183dff1e08a59852d32e7309
 REVIEWED_COMMIT_SHA="${HP_QEMU_REVIEWED_COMMIT_SHA:-}"
 EXPECTED_VERSION="${HP_QEMU_EXPECTED_VERSION:-3.4.0}"
 MTA="${HP_QEMU_MTA:-postfix}"
+REPO_TOKEN="${HP_QEMU_REPO_TOKEN:-}"
 SSH_PORT="${HP_QEMU_SSH_PORT:-22022}"
 PANEL_FORWARD_PORT="${HP_QEMU_PANEL_FORWARD_PORT:-32222}"
 VM_MEMORY_MB="${HP_QEMU_MEMORY_MB:-8192}"
@@ -148,13 +149,17 @@ collect_evidence(){
 }
 trap collect_evidence EXIT
 
-for command in curl qemu-img qemu-system-x86_64 cloud-localds ssh scp ssh-keygen nc python3 sha256sum; do
+for command in base64 curl qemu-img qemu-system-x86_64 cloud-localds ssh scp ssh-keygen nc python3 sha256sum tr; do
   require "$command"
 done
 [[ "$REVIEWED_COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]] \
   || die 'HP_QEMU_REVIEWED_COMMIT_SHA must be a reviewed full 40-character commit SHA'
 [[ "$EXPECTED_VERSION" =~ ^[0-9]+(\.[0-9]+){2}([-+][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] \
   || die 'HP_QEMU_EXPECTED_VERSION must be a release version'
+[[ -n "$REPO_TOKEN" ]] \
+  || die 'HP_QEMU_REPO_TOKEN is required to fetch the reviewed private commit'
+[[ "$REPO_TOKEN" != *$'\n'* && "$REPO_TOKEN" != *$'\r'* ]] \
+  || die 'HP_QEMU_REPO_TOKEN contains an invalid line break'
 case "$MTA" in postfix|exim) ;; *) die "unsupported MTA: $MTA" ;; esac
 HOST_FORWARD_PORTS=(
   "$SSH_PORT" "$PANEL_FORWARD_PORT" 30025 30143 30993 30080 30443
@@ -188,6 +193,22 @@ for source_file in \
   "$REPO_ROOT/tools/qemu-guest-install.sh"; do
   [[ -f "$source_file" && ! -L "$source_file" ]] || die "unsafe or missing source file: $source_file"
 done
+
+REPO_AUTH_HEADER="$(printf 'x-access-token:%s' "$REPO_TOKEN" | base64 | tr -d '\r\n')"
+{
+  printf 'HP_REVIEWED_COMMIT_SHA=%q\n' "$REVIEWED_COMMIT_SHA"
+  printf 'HP_EXPECTED_VERSION=%q\n' "$EXPECTED_VERSION"
+  printf 'HP_PANEL_HOST=%q\n' "$PANEL_HOST"
+  printf 'HP_EXPECTED_PUBLIC_IP=%q\n' "$GUEST_IP"
+  printf 'HP_PANEL_ADMIN_CIDR=%q\n' "$ADMIN_CIDR"
+  printf 'HP_MTA=%q\n' "$MTA"
+  printf 'export GIT_CONFIG_COUNT=1\n'
+  printf 'export GIT_CONFIG_KEY_0=%q\n' 'http.https://github.com/.extraheader'
+  printf 'export GIT_CONFIG_VALUE_0=%q\n' "AUTHORIZATION: basic $REPO_AUTH_HEADER"
+  printf 'export GIT_TERMINAL_PROMPT=0\n'
+} > "$WORK_DIR/guest.env"
+chmod 600 "$WORK_DIR/guest.env"
+unset HP_QEMU_REPO_TOKEN REPO_TOKEN REPO_AUTH_HEADER
 
 printf '%s  %s\n' "$IMAGE_SHA256" "$WORK_DIR/base.img" > "$WORK_DIR/image.sha256"
 curl -fL --retry 5 --retry-all-errors --connect-timeout 20 \
@@ -266,15 +287,6 @@ ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
   'test "$(cat /proc/1/comm)" = systemd; cat /etc/os-release; uname -a; df -hT; free -h' \
   | tee "$ARTIFACT_DIR/pre-install-inventory.txt"
 
-{
-  printf 'HP_REVIEWED_COMMIT_SHA=%q\n' "$REVIEWED_COMMIT_SHA"
-  printf 'HP_EXPECTED_VERSION=%q\n' "$EXPECTED_VERSION"
-  printf 'HP_PANEL_HOST=%q\n' "$PANEL_HOST"
-  printf 'HP_EXPECTED_PUBLIC_IP=%q\n' "$GUEST_IP"
-  printf 'HP_PANEL_ADMIN_CIDR=%q\n' "$ADMIN_CIDR"
-  printf 'HP_MTA=%q\n' "$MTA"
-} > "$WORK_DIR/guest.env"
-chmod 600 "$WORK_DIR/guest.env"
 scp "${scp_opts[@]}" \
   "$REPO_ROOT/bootstrap-install.sh" \
   "$REPO_ROOT/tools/validate-production-vm.sh" \
