@@ -1,0 +1,80 @@
+name: Localization overlay
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - bootstrap-install.sh
+      - localization-overlay/**
+      - LOCALIZATION-OVERLAY.md
+      - .github/workflows/localization-overlay.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify signed source checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep ' hostpanel-v3.4.0-hardened-r5-source.tar.gz$' SHA256SUMS | sha256sum -c -
+      - name: Extract signed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p localization-source
+          tar -xzf hostpanel-v3.4.0-hardened-r5-source.tar.gz -C localization-source
+      - name: Apply and audit reviewed localization overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_ROOT="$(find localization-source -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
+          test -n "$SOURCE_ROOT"
+          python3 localization-overlay/apply_localization_overlay.py \
+            "$SOURCE_ROOT" localization-overlay
+          python3 "$SOURCE_ROOT/tools/audit_locales.py"
+          python3 "$SOURCE_ROOT/tools/review_locales.py"
+          python3 -m py_compile \
+            "$SOURCE_ROOT/app/main.py" \
+            "$SOURCE_ROOT/tools/audit_locales.py" \
+            "$SOURCE_ROOT/tools/review_locales.py"
+          python3 -m pip install --disable-pip-version-check \
+            'beautifulsoup4==4.13.4' 'jinja2==3.1.6'
+          TERM=xterm python3 "$SOURCE_ROOT/tests/test_ui_ux_remediation.py"
+          node --check "$SOURCE_ROOT/app/static/login.js"
+          node --check "$SOURCE_ROOT/app/static/panel-i18n.js"
+          bash -n bootstrap-install.sh
+      - name: Verify thirteen selectors and catalogs
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_ROOT="$(find localization-source -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
+          python3 - "$SOURCE_ROOT" <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          locales = ("da", "de", "en", "es", "fi", "fr", "ja", "nb", "nl", "pl", "pt", "sv", "zh")
+          english = json.loads((root / "app/static/i18n.en.json").read_text(encoding="utf-8"))
+          for locale in locales:
+              catalog = json.loads((root / f"app/static/i18n.{locale}.json").read_text(encoding="utf-8"))
+              if list(catalog) != list(english):
+                  raise SystemExit(f"{locale}: catalog key/order mismatch")
+          login = (root / "app/templates/login.html").read_text(encoding="utf-8")
+          panel = (root / "app/templates/panel.html").read_text(encoding="utf-8")
+          for locale in locales:
+              if f'value="{locale}"' not in login or f'value="{locale}"' not in panel:
+                  raise SystemExit(f"{locale}: missing selector option")
+          messages_source = (root / "app/static/login.js").read_text(encoding="utf-8")
+          match = re.search(r"const LOGIN_MESSAGES=(\{.*?\});\nfunction formatLoginMessage", messages_source, re.S)
+          if not match or tuple(json.loads(match.group(1))) != locales:
+              raise SystemExit("login message registry mismatch")
+          print(f"{len(locales)} locales × {len(english)} keys verified")
+          PY
