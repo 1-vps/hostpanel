@@ -19,7 +19,7 @@
   const localizedLiveValues=new Set(Object.values(REDESIGN_TRANSLATIONS).map(messages=>messages.live));
   const currentLanguage=()=>{
     const picker=byId('languageSelect');
-    const candidate=String(picker?.value||document.documentElement.lang||'en').toLowerCase().split('-')[0];
+    const candidate=String(document.documentElement.lang||picker?.value||'en').toLowerCase().split('-')[0];
     return Object.hasOwn(REDESIGN_TRANSLATIONS,candidate)?candidate:'en';
   };
   const copy=(key,vars={})=>{
