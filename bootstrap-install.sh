@@ -268,11 +268,16 @@ install -m 0755 "$CHECKOUT/tools/harden_install_runtime.py" "$SOURCE_ROOT/tools/
 LOCALIZATION_ROOT="$CHECKOUT/localization-overlay"
 LOCALIZATION_FILES=(
   localization-overlay/apply_localization_overlay.py
+  localization-overlay/apply_localization_overlay_reviewed.py
   localization-overlay/review_locales.py
   localization-overlay/LOCALIZATION.md
   localization-overlay/LOCALIZATION-REVIEW-v3.4.0-overlay.md
   localization-overlay/login-messages.json
   localization-overlay/catalog-overrides.json
+  localization-overlay/catalog-final-overrides.ja-01.json
+  localization-overlay/catalog-final-overrides.pt-01.json
+  localization-overlay/catalog-final-overrides.zh-01.json
+  localization-overlay/catalog-final-overrides.zh-02.json
   localization-overlay/catalog-overrides.json.gz.b64.chunk01
   localization-overlay/catalog-overrides.json.gz.b64.chunk02
   localization-overlay/catalog-overrides.json.gz.b64.chunk03
@@ -298,7 +303,7 @@ LOCALIZATION_FILES=(
   localization-overlay/catalogs/i18n.zh.json
 )
 for overlay in "${LOCALIZATION_FILES[@]}"; do verify_commit_file "$overlay"; done
-python3 "$LOCALIZATION_ROOT/apply_localization_overlay.py" \
+python3 "$LOCALIZATION_ROOT/apply_localization_overlay_reviewed.py" \
   "$SOURCE_ROOT" "$LOCALIZATION_ROOT" \
   || die "Could not apply the reviewed localization overlay"
 python3 "$SOURCE_ROOT/tools/audit_locales.py" \
