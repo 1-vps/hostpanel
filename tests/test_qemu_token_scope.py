@@ -36,11 +36,28 @@ class QemuTokenScopeTests(unittest.TestCase):
 
     def test_guest_removes_transient_authentication_state(self):
         self.assertIn("rm -f /tmp/guest.env", self.guest_installer)
+        self.assertIn("clear_repo_auth(){", self.guest_installer)
+        self.assertIn("trap clear_repo_auth EXIT", self.guest_installer)
         self.assertIn("sed -i '/^export GIT_/d' /root/hostpanel-qemu.env", self.guest_installer)
         self.assertIn(
             "unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT",
             self.guest_installer,
         )
+
+    def test_guest_sanitizes_auth_on_preflight_and_install_failure(self):
+        self.assertIn("PREFLIGHT_STATUS=$?", self.guest_installer)
+        self.assertIn('collect_failure_evidence "$PREFLIGHT_STATUS"', self.guest_installer)
+        self.assertIn("INSTALL_STATUS=$?", self.guest_installer)
+        self.assertIn('collect_failure_evidence "$INSTALL_STATUS"', self.guest_installer)
+        install_status = self.guest_installer.index("INSTALL_STATUS=$?")
+        clear_auth = self.guest_installer.index("clear_repo_auth", install_status)
+        disable_exit_trap = self.guest_installer.index("trap - EXIT", clear_auth)
+        install_failure = self.guest_installer.index(
+            'collect_failure_evidence "$INSTALL_STATUS"', disable_exit_trap
+        )
+        self.assertLess(install_status, clear_auth)
+        self.assertLess(clear_auth, disable_exit_trap)
+        self.assertLess(disable_exit_trap, install_failure)
 
 
 if __name__ == "__main__":
