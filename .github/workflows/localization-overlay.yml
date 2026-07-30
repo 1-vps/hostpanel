@@ -12,68 +12,44 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate signed source and localization overlay
-        id: localization_validation
-        continue-on-error: true
+      - name: Verify signed source checksum
         shell: bash
         run: |
-          set -o pipefail
-          {
-            set -euxo pipefail
-            grep ' hostpanel-v3.4.0-hardened-r5-source.tar.gz$' SHA256SUMS | sha256sum -c -
-            mkdir -p localization-source
-            tar -xzf hostpanel-v3.4.0-hardened-r5-source.tar.gz -C localization-source
-            SOURCE_ROOT="$(find localization-source -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
-            test -n "$SOURCE_ROOT"
-            python3 localization-overlay/apply_localization_overlay.py \
-              "$SOURCE_ROOT" localization-overlay
-            python3 "$SOURCE_ROOT/tools/audit_locales.py"
-            python3 "$SOURCE_ROOT/tools/review_locales.py"
-            python3 -m py_compile \
-              "$SOURCE_ROOT/app/main.py" \
-              "$SOURCE_ROOT/tools/audit_locales.py" \
-              "$SOURCE_ROOT/tools/review_locales.py"
-            python3 -m pip install --disable-pip-version-check \
-              'beautifulsoup4==4.13.4' 'jinja2==3.1.6'
-            TERM=xterm python3 "$SOURCE_ROOT/tests/test_ui_ux_remediation.py"
-            node --check "$SOURCE_ROOT/app/static/login.js"
-            node --check "$SOURCE_ROOT/app/static/panel-i18n.js"
-            bash -n bootstrap-install.sh
-          } 2>&1 | tee localization-ci.log
-      - name: Upload failure diagnostics
-        if: steps.localization_validation.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: localization-ci-diagnostics
-          path: localization-ci.log
-          retention-days: 1
-          if-no-files-found: error
-      - name: Comment sanitized failure diagnostics
-        if: steps.localization_validation.outcome == 'failure' && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            let text = 'localization-ci.log was not created';
-            if (fs.existsSync('localization-ci.log')) {
-              const lines = fs.readFileSync('localization-ci.log', 'utf8').split(/\r?\n/);
-              text = lines.slice(-80).join('\n').slice(-12000);
-            }
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `<!-- localization-ci-diagnostic -->\n### Localization CI diagnostic\n\n\`\`\`text\n${text}\n\`\`\``
-            });
+          set -euo pipefail
+          grep ' hostpanel-v3.4.0-hardened-r5-source.tar.gz$' SHA256SUMS | sha256sum -c -
+      - name: Extract signed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p localization-source
+          tar -xzf hostpanel-v3.4.0-hardened-r5-source.tar.gz -C localization-source
+      - name: Apply and audit reviewed localization overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_ROOT="$(find localization-source -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
+          test -n "$SOURCE_ROOT"
+          python3 localization-overlay/apply_localization_overlay.py \
+            "$SOURCE_ROOT" localization-overlay
+          python3 "$SOURCE_ROOT/tools/audit_locales.py"
+          python3 "$SOURCE_ROOT/tools/review_locales.py"
+          python3 -m py_compile \
+            "$SOURCE_ROOT/app/main.py" \
+            "$SOURCE_ROOT/tools/audit_locales.py" \
+            "$SOURCE_ROOT/tools/review_locales.py"
+          python3 -m pip install --disable-pip-version-check \
+            'beautifulsoup4==4.13.4' 'jinja2==3.1.6'
+          TERM=xterm python3 "$SOURCE_ROOT/tests/test_ui_ux_remediation.py"
+          node --check "$SOURCE_ROOT/app/static/login.js"
+          node --check "$SOURCE_ROOT/app/static/panel-i18n.js"
+          bash -n bootstrap-install.sh
       - name: Verify thirteen selectors and catalogs
-        if: steps.localization_validation.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -102,6 +78,3 @@ jobs:
               raise SystemExit("login message registry mismatch")
           print(f"{len(locales)} locales × {len(english)} keys verified")
           PY
-      - name: Fail after diagnostic upload
-        if: steps.localization_validation.outcome == 'failure'
-        run: exit 1
