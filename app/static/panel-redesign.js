@@ -87,12 +87,16 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     renderMailState();
   }
 
-  function syncRouteLabel(){
+  function routeLabel(){
     const match=location.hash.match(/^#\/panel\/([^/?#]+)/);
     const active=document.querySelector('#nav a.active[data-page]');
     const page=match?.[1]||active?.getAttribute('data-page')||'dashboard';
     const navLink=document.querySelector(`#nav a[data-page="${CSS.escape(page)}"]`);
-    const label=navLink?.textContent?.trim();
+    return navLink?.textContent?.trim()||'';
+  }
+
+  function syncRouteLabel(){
+    const label=routeLabel();
     const crumb=byId('crumb');
     if(!label||!crumb)return;
     if(crumb.textContent.trim()!==label)crumb.textContent=label;
@@ -120,6 +124,13 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
         scheduleRouteLabel();
       });
     });
+    const crumb=byId('crumb');
+    if(crumb){
+      new MutationObserver(()=>{
+        const label=routeLabel();
+        if(label&&crumb.textContent.trim()!==label)scheduleRouteLabel();
+      }).observe(crumb,{childList:true,characterData:true,subtree:true});
+    }
     window.addEventListener('hashchange',scheduleRouteLabel);
     scheduleRouteLabel();
   }
