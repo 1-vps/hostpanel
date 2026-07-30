@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import ast
 import base64
-import gzip
+import binascii
 import csv
+import gzip
 import json
 import pathlib
 import pprint
@@ -29,6 +30,9 @@ LANGUAGES = [
     ("sv", "Svenska"),
     ("zh", "简体中文"),
 ]
+RELEASE_CANDIDATES = {"ja", "pt", "zh"}
+OVERRIDE_CHUNK_COUNT = 8
+OVERRIDE_CHUNK_PREFIX = "catalog-overrides.json.gz.b64.chunk"
 COPY_FIELDS = (
     "title", "subtitle", "username", "password", "code", "code_placeholder",
     "verify", "signin", "passkey", "skip", "language", "continue_with",
@@ -71,12 +75,56 @@ def replace_python_assignment(path: pathlib.Path, name: str, value: object) -> N
     path.write_text("".join(lines), encoding="utf-8")
 
 
+def load_override_bundle(overlay: pathlib.Path, overrides: dict[str, dict[str, str]]) -> None:
+    expected = [
+        overlay / f"{OVERRIDE_CHUNK_PREFIX}{index:02d}"
+        for index in range(1, OVERRIDE_CHUNK_COUNT + 1)
+    ]
+    missing = [path.name for path in expected if not path.is_file() or path.is_symlink()]
+    discovered = sorted(overlay.glob("catalog-overrides.json.gz.b64.*"))
+    expected_set = set(expected)
+    unexpected = [path.name for path in discovered if path not in expected_set]
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append(f"missing chunks: {missing}")
+        if unexpected:
+            details.append(f"unexpected bundle files: {unexpected}")
+        raise SystemExit("compressed override bundle layout mismatch: " + "; ".join(details))
+
+    encoded = b"".join(path.read_bytes().strip() for path in expected)
+    if not encoded:
+        raise SystemExit("compressed override bundle is empty")
+    try:
+        packed = base64.b64decode(encoded, validate=True)
+        payload = json.loads(gzip.decompress(packed).decode("utf-8"))
+    except (binascii.Error, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"compressed override bundle is invalid: {exc}") from exc
+
+    if not isinstance(payload, dict) or set(payload) != RELEASE_CANDIDATES:
+        raise SystemExit(
+            "compressed override bundle must contain exactly Japanese, Portuguese, and Chinese"
+        )
+    for locale, entries in payload.items():
+        if not isinstance(entries, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str) or not value.strip()
+            for key, value in entries.items()
+        ):
+            raise SystemExit(f"compressed override bundle: invalid entries for {locale}")
+        target = overrides.setdefault(locale, {})
+        duplicate = sorted(set(target) & set(entries))
+        if duplicate:
+            raise SystemExit(f"compressed override bundle: duplicate override keys: {duplicate[:8]}")
+        target.update(entries)
+
+
 def write_language_status(path: pathlib.Path, key_count: int) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(("language", "status", "keys", "coverage", "fallback"))
         for code, _label in LANGUAGES:
-            writer.writerow((code, "production", key_count, "100.0%", 0))
+            status = "release-candidate" if code in RELEASE_CANDIDATES else "production"
+            writer.writerow((code, status, key_count, "100.0%", 0))
 
 
 def main() -> int:
@@ -96,23 +144,15 @@ def main() -> int:
 
     catalog_dir = overlay / "catalogs"
     overrides = json.loads((overlay / "catalog-overrides.json").read_text(encoding="utf-8"))
-    compressed_parts = sorted(overlay.glob("catalog-overrides.json.gz.b64.part*"))
-    if compressed_parts:
-        encoded = b"".join(part.read_bytes().strip() for part in compressed_parts)
-        packed = base64.b64decode(encoded, validate=True)
-        payload = json.loads(gzip.decompress(packed).decode("utf-8"))
-        for locale, entries in payload.items():
-            target = overrides.setdefault(locale, {})
-            duplicate = sorted(set(target) & set(entries))
-            if duplicate:
-                raise SystemExit(f"compressed override bundle: duplicate override keys: {duplicate[:8]}")
-            target.update(entries)
+    if not isinstance(overrides, dict):
+        raise SystemExit("catalog-overrides.json must contain an object")
+    load_override_bundle(overlay, overrides)
     corrections = json.loads((overlay / "existing-catalog-corrections.json").read_text(encoding="utf-8"))
     english_path = source / "app/static/i18n.en.json"
     english = json.loads(english_path.read_text(encoding="utf-8"))
     english_keys = list(english)
 
-    existing_codes = [code for code, _label in LANGUAGES if code not in {"ja", "pt", "zh"}]
+    existing_codes = [code for code, _label in LANGUAGES if code not in RELEASE_CANDIDATES]
     for code in existing_codes:
         destination = source / "app/static" / f"i18n.{code}.json"
         catalog = json.loads(destination.read_text(encoding="utf-8"))
@@ -244,7 +284,9 @@ def main() -> int:
     replace_once(
         readme,
         "- Ten complete production locales: Danish, German, English, Spanish, Finnish,\n  French, Norwegian Bokmål, Dutch, Polish, and Swedish.",
-        "- Thirteen complete production locales: Danish, German, English, Spanish, Finnish,\n  French, Japanese, Norwegian Bokmål, Dutch, Polish, Portuguese, Swedish, and Simplified Chinese.",
+        "- Ten production locales: Danish, German, English, Spanish, Finnish, French,\n"
+        "  Norwegian Bokmål, Dutch, Polish, and Swedish.\n"
+        "- Three release-candidate locales: Japanese, Portuguese, and Simplified Chinese.",
     )
     replace_once(
         readme,
@@ -257,9 +299,9 @@ def main() -> int:
     replace_once(
         capability_status,
         'localization-expansion,P2,localization,complete-current-catalogs,"10 production languages; 2,208 keys; locale and runtime gates",additional languages still need full translation and release review',
-        f'localization-expansion,P2,localization,complete-current-catalogs,"13 production languages; {len(english):,} keys; locale and runtime gates",native-speaker review remains required for specialized legal billing and compliance wording',
+        f'localization-expansion,P2,localization,complete-current-catalogs,"10 production languages and 3 release-candidate languages; {len(english):,} keys; locale and runtime gates",native-speaker review remains required for specialized legal billing and compliance wording',
     )
-    print(f"Applied {len(expected_codes)} production locales with {len(english)} keys each")
+    print(f"Applied {len(expected_codes)} supported locales with {len(english)} keys each")
     return 0
 
 
