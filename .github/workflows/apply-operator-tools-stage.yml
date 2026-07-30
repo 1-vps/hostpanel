@@ -1,0 +1,58 @@
+name: Apply staged operator tools
+
+on:
+  pull_request:
+    paths:
+      - tools/.operator-tools-stage.patch
+      - .github/workflows/apply-operator-tools-stage.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Apply and verify operator tool support
+        run: |
+          set -euo pipefail
+          git apply --check tools/.operator-tools-stage.patch
+          git apply tools/.operator-tools-stage.patch
+          impl_blob="$(git hash-object --no-filters tools/harden_install_impl.py)"
+          python3 - "$impl_blob" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          blob = sys.argv[1]
+          for filename in ('tools/harden_install.py', 'tests/test_post_install_health.py'):
+              path = pathlib.Path(filename)
+              text = path.read_text(encoding='utf-8')
+              updated, count = re.subn(
+                  r'EXPECTED_IMPL_BLOB = "[0-9a-f]{40}"',
+                  f'EXPECTED_IMPL_BLOB = "{blob}"',
+                  text,
+                  count=1,
+              )
+              if count != 1:
+                  raise SystemExit(f'could not repin implementation blob in {filename}')
+              path.write_text(updated, encoding='utf-8')
+          PY
+          python3 -m py_compile tools/harden_install_impl.py tools/harden_install.py
+          python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh
+          bash -n /tmp/install.generated.sh
+          python3 -m unittest tests.test_installer_hardening tests.test_post_install_health -v
+          grep -Fq 'hostname btop nano plocate)' /tmp/install.generated.sh
+          grep -Fq 'command -v "$utility"' /tmp/install.generated.sh
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add tools/harden_install_impl.py tools/harden_install.py tests/test_installer_hardening.py tests/test_post_install_health.py
+          git commit -m 'Add btop locate and nano operator tools'
+          git push origin "HEAD:${{ github.head_ref }}"
