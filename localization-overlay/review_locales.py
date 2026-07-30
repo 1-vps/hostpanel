@@ -57,6 +57,25 @@ SOURCE_ALLOW_RE = re.compile(
     re.I,
 )
 WORD_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿĀ-ž]+")
+CJK_REPEAT_RE = re.compile(r"([\u3400-\u9fff])\1{2,}")
+PT_FOREIGN_CHAR_RE = re.compile(r"[èòìùëïÿ]")
+PT_FOREIGN_WORD_RE = re.compile(
+    r"(?i)(?<![\w])(?:aggiunto|aggiunta|aggiunte|cargando|creata|creato|"
+    r"configurazione|données|eliminato|eliminata|fichier|fichiers|logiciel|"
+    r"mensajear|mensaje|mensajes|nessun|ninguna|ninguno|nodo|nodos|non|"
+    r"profilo|regola|regules|revoluta|seleccione|serveur|sessione|súbdo|"
+    r"tabla|trabailleurs|utente|utenti)(?![\w])"
+)
+JA_BAD_PHRASE_RE = re.compile(
+    r"(?:批判的発見|禁制藩|親藩|転校|転職|節約する|求人|刑務所|清掃年齢|"
+    r"藩名|発砲する|余計なこと|config は$)"
+)
+SOURCE_LITERAL_ALLOW = {
+    ".htaccess", "CLI", "CRON", "DNSSEC", "FTP", "HTTPS URL", "ID", "IP",
+    "NS1", "NS2", "OK", "OPcache", "OpenAPI", "SIEVE", "Shell", "URI",
+    "YYYY-MM", "customer1", "dns2", "html", "imagick", "myapp", "siteuser", "www",
+}
+PLACEHOLDER_ONLY_RE = re.compile(r"^(?:[{}A-Za-z0-9_.:-]+|[\s→()/])+\Z")
 
 
 def load(path: pathlib.Path) -> dict[str, str]:
@@ -105,8 +124,21 @@ def main() -> int:
                 failures.append(f"{locale}:{key}: parenthetical plural workaround")
             if key in PLURAL_SENSITIVE_KEYS and GENERIC_PLURAL_HACK_RE.search(translated):
                 failures.append(f"{locale}:{key}: slash/parenthetical plural workaround")
-            if locale != "en" and source == translated and len(WORD_RE.findall(source)) >= 3 and not SOURCE_ALLOW_RE.search(source):
-                identical_natural.append(key)
+            if CJK_REPEAT_RE.search(translated):
+                failures.append(f"{locale}:{key}: repeated CJK corruption")
+            if locale == "pt":
+                if PT_FOREIGN_CHAR_RE.search(translated):
+                    failures.append(f"{locale}:{key}: non-Portuguese accented character")
+                if PT_FOREIGN_WORD_RE.search(translated):
+                    failures.append(f"{locale}:{key}: foreign-language contamination")
+            if locale == "ja" and JA_BAD_PHRASE_RE.search(translated):
+                failures.append(f"{locale}:{key}: known machine-translation mistranslation")
+            source_identical = locale != "en" and source == translated and not SOURCE_ALLOW_RE.search(source)
+            if source_identical and source not in SOURCE_LITERAL_ALLOW and not PLACEHOLDER_ONLY_RE.fullmatch(source):
+                if locale in {"ja", "zh"} and WORD_RE.search(source):
+                    failures.append(f"{locale}:{key}: untranslated natural-language label")
+                elif len(WORD_RE.findall(source)) >= 3:
+                    identical_natural.append(key)
         if identical_natural:
             warnings.append(f"{locale}: {len(identical_natural)} source-identical natural strings: {identical_natural[:12]}")
         print(f"{locale}: {len(catalog)}/{len(english)} keys; source-identical review {len(identical_natural)}")
@@ -130,6 +162,12 @@ def main() -> int:
                     failures.append(f"login.js:{locale}:{key}: placeholder mismatch")
                 if PLURAL_HACK_RE.search(translated):
                     failures.append(f"login.js:{locale}:{key}: parenthetical plural workaround")
+                if CJK_REPEAT_RE.search(translated):
+                    failures.append(f"login.js:{locale}:{key}: repeated CJK corruption")
+                if locale == "pt" and (PT_FOREIGN_CHAR_RE.search(translated) or PT_FOREIGN_WORD_RE.search(translated)):
+                    failures.append(f"login.js:{locale}:{key}: foreign-language contamination")
+                if locale == "ja" and JA_BAD_PHRASE_RE.search(translated):
+                    failures.append(f"login.js:{locale}:{key}: known machine-translation mistranslation")
 
     expected_codes = list(LOCALES)
     for path, select_id in ((TEMPLATES / "panel.html", "languageSelect"), (TEMPLATES / "login.html", "loginLanguage")):
