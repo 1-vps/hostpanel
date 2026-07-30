@@ -1,0 +1,219 @@
+name: Control panel UI audit
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ui-audit.yml
+      - app/static/panel-redesign.css
+      - app/static/panel-redesign.js
+      - tools/patch_panel_ui.py
+      - bootstrap-install.sh
+      - tests/test_panel_redesign.py
+      - tests/test_php_runtime_support.py
+      - tests/php-runtime-compat.php
+      - tests/browser/panel-redesign.spec.js
+      - hostpanel-*-source.tar.gz
+      - hostpanel-*-source.tar.gz.sig
+      - requirements.lock
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ui-audit.yml
+      - app/static/panel-redesign.css
+      - app/static/panel-redesign.js
+      - tools/patch_panel_ui.py
+      - bootstrap-install.sh
+      - tests/test_panel_redesign.py
+      - tests/test_php_runtime_support.py
+      - tests/php-runtime-compat.php
+      - tests/browser/panel-redesign.spec.js
+      - hostpanel-*-source.tar.gz
+      - hostpanel-*-source.tar.gz.sig
+      - requirements.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: control-panel-ui-audit-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  static-and-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Build reviewed UI source tree
+        id: source
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import inspect
+          import pathlib
+          import tarfile
+
+          root = pathlib.Path.cwd()
+          archives = sorted(root.glob('hostpanel-*-source.tar.gz'))
+          if len(archives) != 1:
+              raise SystemExit(f'expected exactly one signed source archive, found {len(archives)}')
+          destination = pathlib.Path('/tmp/hostpanel-ui-source')
+          destination.mkdir(mode=0o700)
+          with tarfile.open(archives[0], 'r:gz') as handle:
+              members = handle.getmembers()
+              if not members or len(members) > 20000:
+                  raise SystemExit('source archive member count is unsafe')
+              total = 0
+              for member in members:
+                  path = pathlib.PurePosixPath(member.name)
+                  if path.is_absolute() or '..' in path.parts or member.issym() or member.islnk():
+                      raise SystemExit(f'unsafe source archive member: {member.name}')
+                  if not (member.isdir() or member.isfile()):
+                      raise SystemExit(f'unsupported source archive member: {member.name}')
+                  total += max(member.size, 0)
+                  if total > 200 * 1024 * 1024:
+                      raise SystemExit('source archive expands beyond the safety limit')
+              options = {}
+              if 'filter' in inspect.signature(handle.extractall).parameters:
+                  options['filter'] = 'fully_trusted'
+              handle.extractall(destination, members=members, **options)
+          roots = [path for path in destination.iterdir() if path.is_dir()]
+          if len(roots) != 1:
+              raise SystemExit('source archive must contain one top-level directory')
+          pathlib.Path('/tmp/hostpanel-ui-root').write_text(str(roots[0]), encoding='utf-8')
+          PY
+          UI_ROOT="$(cat /tmp/hostpanel-ui-root)"
+          install -m 0644 app/static/panel-redesign.css "$UI_ROOT/app/static/panel-redesign.css"
+          install -m 0644 app/static/panel-redesign.js "$UI_ROOT/app/static/panel-redesign.js"
+          python3 tools/patch_panel_ui.py "$UI_ROOT/app/templates/panel.html"
+          install -m 0644 tests/browser/panel-redesign.spec.js "$UI_ROOT/tests/browser/panel-redesign.spec.js"
+          printf 'root=%s\n' "$UI_ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Install locked Python audit environment
+        env:
+          UI_ROOT: ${{ steps.source.outputs.root }}
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/hostpanel-ui-venv
+          /tmp/hostpanel-ui-venv/bin/python -m pip install --disable-pip-version-check --upgrade pip
+          /tmp/hostpanel-ui-venv/bin/python -m pip install --disable-pip-version-check \
+            --require-hashes -r "$UI_ROOT/requirements.lock"
+          /tmp/hostpanel-ui-venv/bin/python -m pip install --disable-pip-version-check \
+            -r "$UI_ROOT/requirements-dev.txt" beautifulsoup4==4.12.3
+
+      - name: Run static, localization and API UI regressions
+        env:
+          UI_ROOT: ${{ steps.source.outputs.root }}
+        run: |
+          set -euo pipefail
+          export PATH="/tmp/hostpanel-ui-venv/bin:$PATH"
+          cd "$UI_ROOT"
+          python3 tests/test_ui_experience.py
+          python3 tests/test_ui_ux_remediation.py
+          python3 tests/audit_coverage.py
+          python3 tests/test_panel.py
+
+      - name: Validate Python bcrypt and PHP cURL/bcrypt runtimes
+        env:
+          UI_ROOT: ${{ steps.source.outputs.root }}
+        run: |
+          set -euo pipefail
+          export PATH="/tmp/hostpanel-ui-venv/bin:$PATH"
+          python3 -m unittest discover -s tests -p 'test_php_runtime_support.py' -v
+          /tmp/hostpanel-ui-venv/bin/python -m pip check
+          /tmp/hostpanel-ui-venv/bin/python - <<'PY'
+          import bcrypt
+
+          password = b'HostPanel Python bcrypt compatibility'
+          hashed = bcrypt.hashpw(password, bcrypt.gensalt(rounds=12))
+          if not bcrypt.checkpw(password, hashed) or bcrypt.checkpw(password + b'x', hashed):
+              raise SystemExit('Python bcrypt verification failed')
+          try:
+              bcrypt.hashpw(b'a' * 73, bcrypt.gensalt(rounds=4))
+          except ValueError:
+              pass
+          else:
+              raise SystemExit('Python bcrypt did not reject input above 72 bytes')
+          PY
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends php-cli php-curl openssl
+          php -l tests/php-runtime-compat.php
+          tmpdir="$(mktemp -d)"
+          server_pid=""
+          cleanup_php_probe(){
+            [[ -z "$server_pid" ]] || kill "$server_pid" 2>/dev/null || true
+            rm -rf -- "$tmpdir"
+          }
+          trap cleanup_php_probe EXIT
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout "$tmpdir/key.pem" -out "$tmpdir/cert.pem" \
+            -subj '/CN=localhost' \
+            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' >/dev/null 2>&1
+          TMPDIR="$tmpdir" python3 - <<'PY' &
+          import http.server
+          import os
+          import ssl
+
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  if self.path != '/health':
+                      self.send_error(404)
+                      return
+                  payload = b'hostpanel-php-curl-ok\n'
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                  self.send_header('Content-Length', str(len(payload)))
+                  self.end_headers()
+                  self.wfile.write(payload)
+
+              def log_message(self, _format, *_args):
+                  return
+
+          root = os.environ['TMPDIR']
+          server = http.server.ThreadingHTTPServer(('127.0.0.1', 18443), Handler)
+          context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          context.load_cert_chain(f'{root}/cert.pem', f'{root}/key.pem')
+          server.socket = context.wrap_socket(server.socket, server_side=True)
+          server.serve_forever()
+          PY
+          server_pid=$!
+          for _ in $(seq 1 30); do
+            curl --fail --silent --show-error --cacert "$tmpdir/cert.pem" \
+              https://localhost:18443/health >/dev/null 2>&1 && break
+            sleep 0.2
+          done
+          php tests/php-runtime-compat.php \
+            https://localhost:18443/health "$tmpdir/cert.pem"
+
+      - name: Install browser audit dependencies
+        env:
+          UI_ROOT: ${{ steps.source.outputs.root }}
+        run: |
+          set -euo pipefail
+          cd "$UI_ROOT"
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+
+      - name: Run Chromium interaction and Axe audit
+        env:
+          UI_ROOT: ${{ steps.source.outputs.root }}
+        run: |
+          set -euo pipefail
+          export PATH="/tmp/hostpanel-ui-venv/bin:$PATH"
+          cd "$UI_ROOT"
+          npm run test:browser:chromium
+
+      - name: Upload browser viewport evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: control-panel-ui-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.source.outputs.root }}/playwright-report
+            ${{ steps.source.outputs.root }}/test-results
+          if-no-files-found: ignore
+          retention-days: 7
