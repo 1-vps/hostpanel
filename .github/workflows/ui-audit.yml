@@ -97,12 +97,29 @@ jobs:
 
           path = pathlib.Path(sys.argv[1])
           text = path.read_text(encoding='utf-8')
-          old = "getByRole('button', { name: 'Sign in' })"
-          new = "getByRole('button', { name: 'Sign in', exact: true })"
-          count = text.count(old)
-          if count < 1:
-              raise SystemExit(f'expected at least one legacy login selector, found {count}')
-          path.write_text(text.replace(old, new), encoding='utf-8')
+          replacements = (
+              (
+                  "getByRole('button', { name: 'Sign in' })",
+                  "getByRole('button', { name: 'Sign in', exact: true })",
+                  'legacy English login selector',
+              ),
+              (
+                  "getByRole('button', { name: 'Logga in' })",
+                  "getByRole('button', { name: 'Logga in', exact: true })",
+                  'legacy Swedish login selector',
+              ),
+              (
+                  r"await expect(page).toHaveURL(/#\/panel\/dashboard$/);",
+                  "await expect(page.locator('[data-view=\"dashboard\"]')).toBeVisible();",
+                  'legacy dashboard URL assertion',
+              ),
+          )
+          for old, new, label in replacements:
+              count = text.count(old)
+              if count < 1:
+                  raise SystemExit(f'expected at least one {label}, found {count}')
+              text = text.replace(old, new)
+          path.write_text(text, encoding='utf-8')
           PY
           printf 'root=%s\n' "$UI_ROOT" >> "$GITHUB_OUTPUT"
 
