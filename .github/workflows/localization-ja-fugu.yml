@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/localization-ja-fugu.yml
       - tools/generate_japanese_fugu.py
+      - tools/postprocess_japanese_labels.py
       - hostpanel-v3.4.0-hardened-r5-source.tar.gz
       - SHA256SUMS
 
@@ -15,7 +16,7 @@ permissions:
 jobs:
   generate-ja:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - name: Verify and extract signed source
@@ -31,7 +32,7 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
-          python -m pip install 'transformers==4.44.2' 'sentencepiece==0.2.0' 'sacremoses==0.1.1'
+          python -m pip install 'transformers==4.44.2' 'sentencepiece==0.2.0' 'sacremoses==0.1.1' 'deep-translator==1.11.4'
       - name: Generate Japanese catalog
         shell: bash
         env:
@@ -41,6 +42,9 @@ jobs:
           SOURCE_ROOT="$(find localization-source -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
           test -n "$SOURCE_ROOT"
           python tools/generate_japanese_fugu.py "$SOURCE_ROOT" generated --batch-size 64
+          python tools/postprocess_japanese_labels.py \
+            "$SOURCE_ROOT/app/static/i18n.en.json" generated/i18n.ja.json \
+            --report generated/report.ja-labels.json
       - name: Verify key parity
         shell: bash
         run: |
@@ -59,7 +63,7 @@ jobs:
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: hostpanel-locale-ja-fugu
+          name: hostpanel-locale-ja-reviewed
           path: generated/
           retention-days: 1
           compression-level: 0
