@@ -62,6 +62,7 @@ jobs:
       HP_QEMU_REVIEWED_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       HP_QEMU_EXPECTED_VERSION: 3.4.0
       HP_QEMU_MTA: ${{ inputs.mta || 'postfix' }}
+      HP_QEMU_REPO_TOKEN: ${{ github.token }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
