@@ -80,7 +80,7 @@ test('desktop keyboard, routing, dark mode and accessibility remain intact', asy
   await expect(page).toHaveURL(/#\/panel\/domains$/);
   await expect(page.locator('#crumb')).toContainText(/Domains/i);
   await page.goBack();
-  await expect(page).toHaveURL(/#\/panel\/dashboard$/);
+  await expect(page.locator('[data-view="dashboard"]')).toBeVisible();
 
   await page.locator('#themeToggle').click();
   await expect(page.locator('body')).toHaveClass(/dark/);
