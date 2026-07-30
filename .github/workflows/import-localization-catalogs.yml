@@ -1,0 +1,117 @@
+name: Import reviewed localization catalogs
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/import-localization-catalogs.yml
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  import:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Download reviewed catalog artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p localization-overlay/catalogs artifact-downloads
+          download_artifact() {
+            local id="$1" name="$2"
+            curl --fail --location --silent --show-error \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" \
+              -o "artifact-downloads/${name}.zip"
+            mkdir -p "artifact-downloads/${name}"
+            unzip -q "artifact-downloads/${name}.zip" -d "artifact-downloads/${name}"
+          }
+          download_artifact 8768316670 ja
+          download_artifact 8767699435 pt
+          download_artifact 8767744422 zh
+          install -m 0644 artifact-downloads/ja/i18n.ja.json localization-overlay/catalogs/i18n.ja.json
+          install -m 0644 artifact-downloads/pt/i18n.pt.json localization-overlay/catalogs/i18n.pt.json
+          install -m 0644 artifact-downloads/zh/i18n.zh.json localization-overlay/catalogs/i18n.zh.json
+      - name: Connect overlay to verified bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("bootstrap-install.sh")
+          text = path.read_text(encoding="utf-8")
+          marker = '''install -m 0755 "$CHECKOUT/tools/harden_install_runtime.py" "$SOURCE_ROOT/tools/harden_install_runtime.py"
+
+          # Validate the exact generated root installer before any server mutation.
+          '''
+          replacement = '''install -m 0755 "$CHECKOUT/tools/harden_install_runtime.py" "$SOURCE_ROOT/tools/harden_install_runtime.py"
+
+          LOCALIZATION_ROOT="$CHECKOUT/localization-overlay"
+          LOCALIZATION_FILES=(
+            localization-overlay/apply_localization_overlay.py
+            localization-overlay/review_locales.py
+            localization-overlay/LOCALIZATION.md
+            localization-overlay/LOCALIZATION-REVIEW-v3.4.0-overlay.md
+            localization-overlay/login-messages.json
+            localization-overlay/catalog-overrides.json
+            localization-overlay/existing-catalog-corrections.json
+            localization-overlay/catalogs/i18n.ja.json
+            localization-overlay/catalogs/i18n.pt.json
+            localization-overlay/catalogs/i18n.zh.json
+          )
+          for overlay in "${LOCALIZATION_FILES[@]}"; do verify_commit_file "$overlay"; done
+          python3 "$LOCALIZATION_ROOT/apply_localization_overlay.py" \\
+            "$SOURCE_ROOT" "$LOCALIZATION_ROOT" \\
+            || die "Could not apply the reviewed localization overlay"
+          python3 "$SOURCE_ROOT/tools/audit_locales.py" \\
+            || die "Localization structural audit failed after applying the overlay"
+          python3 "$SOURCE_ROOT/tools/review_locales.py" \\
+            || die "Localization editorial audit failed after applying the overlay"
+
+          # Validate the exact generated root installer before any server mutation.
+          '''
+          if text.count(marker) != 1:
+              raise SystemExit(f"bootstrap insertion point count: {text.count(marker)}")
+          path.write_text(text.replace(marker, replacement), encoding="utf-8")
+          PY
+          bash -n bootstrap-install.sh
+      - name: Validate complete thirteen-language overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep ' hostpanel-v3.4.0-hardened-r5-source.tar.gz$' SHA256SUMS | sha256sum -c -
+          mkdir -p source-check
+          tar -xzf hostpanel-v3.4.0-hardened-r5-source.tar.gz -C source-check
+          SOURCE_ROOT="$(find source-check -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
+          test -n "$SOURCE_ROOT"
+          python3 localization-overlay/apply_localization_overlay.py "$SOURCE_ROOT" localization-overlay
+          python3 "$SOURCE_ROOT/tools/audit_locales.py"
+          python3 "$SOURCE_ROOT/tools/review_locales.py"
+          python3 -m pip install --disable-pip-version-check \
+            'beautifulsoup4==4.13.4' 'jinja2==3.1.6'
+          TERM=xterm python3 "$SOURCE_ROOT/tests/test_ui_ux_remediation.py"
+          node --check "$SOURCE_ROOT/app/static/login.js"
+          node --check "$SOURCE_ROOT/app/static/panel-i18n.js"
+      - name: Commit final localization overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf artifact-downloads source-check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bootstrap-install.sh localization-overlay
+          git rm .github/workflows/import-localization-catalogs.yml
+          git commit -m "Add Japanese Portuguese and Chinese localization"
+          git push origin HEAD:agent/localization-ja-pt-zh
