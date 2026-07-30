@@ -8,7 +8,7 @@ This commit-addressed overlay extends the signed `3.4.0-hardened-r5` source rele
 - Portuguese (`pt`)
 - Simplified Chinese (`zh`)
 
-All regional tags are normalized to the supported base locale. The Portuguese catalog uses region-neutral wording, and the Chinese catalog is explicitly Simplified Chinese.
+All regional tags are normalized to the supported base locale. The `pt` catalog now uses consistent Brazilian Portuguese administrative terminology; generic and regional Portuguese browser tags currently resolve to that single catalog. The Chinese catalog is explicitly Simplified Chinese.
 
 ## Existing catalog review
 
@@ -21,13 +21,13 @@ All ten existing catalogs retain their complete key sets. The overlay:
 
 ## High-risk new-language review
 
-A focused editorial pass corrected 40 high-risk strings before native sign-off:
+A focused editorial and contamination pass corrected 55 strings before native sign-off:
 
 - 19 Japanese strings
-- 6 Portuguese strings
+- 21 Brazilian Portuguese strings
 - 15 Simplified Chinese strings
 
-The reviewed scope covers destructive confirmations, identity and authentication, encrypted credentials, subscriptions and billing, compliance evidence, backup and restore, disaster recovery, firewall rollback, OpenLiteSpeed migration, and migration confirmation tokens. A dedicated regression test locks the exact reviewed values and verifies placeholder parity against the English catalog in the signed source archive.
+The reviewed scope covers destructive confirmations, identity and authentication, encrypted credentials, subscriptions and billing, compliance evidence, backup and restore, disaster recovery, firewall rollback, OpenLiteSpeed migration, migration confirmation tokens, and Portuguese language contamination. A dedicated regression test locks the exact reviewed values, verifies placeholder parity against the English catalog in the signed source archive, reconstructs the final Portuguese catalog, and rejects known Spanish, Italian, French, and European Portuguese residue.
 
 ## Trust model
 
@@ -44,7 +44,8 @@ The localization workflow checks:
 - protected technical tokens
 - unsafe markup and mojibake
 - reviewed Swedish interface labels remain translated
-- exact counts, values, and placeholders for the 40 high-risk new-language overrides
+- exact counts, values, and placeholders for the 55 high-risk and contamination overrides
+- the reconstructed Portuguese catalog contains no known cross-language residue
 - selector, registry, login, Python, JavaScript, and Bash syntax consistency
 
 The three new catalogs were produced with language-specific machine assistance, protected-token reconstruction, and editorial overrides. Specialized legal, billing, tax, contractual, and jurisdiction-specific compliance language still requires native-speaking subject-matter review before contractual use.
