@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate one draft HostPanel locale with a local M2M100 model."""
+"""Generate one draft HostPanel locale with a language-specific OPUS model."""
 from __future__ import annotations
 
 import argparse
@@ -11,10 +11,13 @@ import sys
 from typing import Iterable
 
 import torch
-from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-MODEL_ID = "facebook/m2m100_418M"
-TARGETS = {"ja": "ja", "pt": "pt", "zh": "zh"}
+MODELS = {
+    "ja": ("Helsinki-NLP/opus-mt-en-jap", ""),
+    "pt": ("Helsinki-NLP/opus-mt-en-ROMANCE", ">>pt_PT<< "),
+    "zh": ("Helsinki-NLP/opus-mt-en-zh", ""),
+}
 PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 URL_RE = re.compile(r"https?://[^\s<>]+")
@@ -94,7 +97,10 @@ def protect(text: str) -> tuple[str, list[str]]:
 def restore(text: str, tokens: list[str]) -> str:
     result = text
     for index, original in enumerate(tokens):
-        pattern = re.compile(r"Z\s*X\s*Q\s*T\s*K\s*" + str(index) + r"\s*Q\s*X\s*Z", re.I)
+        pattern = re.compile(
+            r"Z\s*X\s*Q\s*T\s*K\s*" + str(index) + r"\s*Q\s*X\s*Z",
+            re.IGNORECASE,
+        )
         result, count = pattern.subn(lambda _match, value=original: value, result)
         if count == 0:
             raise ValueError(f"protected token {index} was lost")
@@ -103,15 +109,15 @@ def restore(text: str, tokens: list[str]) -> str:
 
 def batches(items: list[tuple[str, str, list[str]]], size: int) -> Iterable[list[tuple[str, str, list[str]]]]:
     for start in range(0, len(items), size):
-        yield items[start:start + size]
+        yield items[start : start + size]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("source_root", type=pathlib.Path)
     parser.add_argument("output_dir", type=pathlib.Path)
-    parser.add_argument("--target", choices=tuple(TARGETS), required=True)
-    parser.add_argument("--batch-size", type=int, default=24)
+    parser.add_argument("--target", choices=tuple(MODELS), required=True)
+    parser.add_argument("--batch-size", type=int, default=64)
     args = parser.parse_args()
 
     english = json.loads((args.source_root / "app/static/i18n.en.json").read_text(encoding="utf-8"))
@@ -130,22 +136,27 @@ def main() -> int:
             protected, tokens = protect(value)
             pending.append((value, protected, tokens))
 
-    tokenizer = M2M100Tokenizer.from_pretrained(MODEL_ID)
-    model = M2M100ForConditionalGeneration.from_pretrained(MODEL_ID)
+    model_id, target_prefix = MODELS[args.target]
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_id)
     model.eval()
-    tokenizer.src_lang = "en"
-    forced_bos = tokenizer.get_lang_id(TARGETS[args.target])
     failures: list[dict[str, str]] = []
     complete = 0
     for batch in batches(pending, args.batch_size):
+        inputs = [target_prefix + item[1] for item in batch]
         encoded = tokenizer(
-            [item[1] for item in batch], return_tensors="pt", padding=True,
-            truncation=True, max_length=512,
+            inputs,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=512,
         )
         with torch.inference_mode():
             output = model.generate(
-                **encoded, forced_bos_token_id=forced_bos,
-                num_beams=1, do_sample=False, max_new_tokens=512,
+                **encoded,
+                num_beams=1,
+                do_sample=False,
+                max_new_tokens=512,
             )
         decoded = tokenizer.batch_decode(output, skip_special_tokens=True)
         for (source, _protected, tokens), candidate in zip(batch, decoded):
@@ -165,7 +176,7 @@ def main() -> int:
     destination = args.output_dir / f"i18n.{args.target}.json"
     destination.write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     report = {
-        "model": MODEL_ID,
+        "model": model_id,
         "locale": args.target,
         "keys": len(catalog),
         "unique_source_values": len(by_value),
@@ -176,7 +187,8 @@ def main() -> int:
         ],
     }
     (args.output_dir / f"report.{args.target}.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
