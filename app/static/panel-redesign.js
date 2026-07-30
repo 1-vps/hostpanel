@@ -99,7 +99,7 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     const label=navLink?.textContent?.trim();
     const crumb=byId('crumb');
     if(!label||!crumb)return;
-    const key=navLink.getAttribute('data-i18n');
+    const key=navLink.querySelector('[data-i18n]')?.getAttribute('data-i18n')||navLink.getAttribute('data-i18n');
     if(key&&crumb.getAttribute('data-i18n')!==key)crumb.setAttribute('data-i18n',key);
     if(crumb.textContent.trim()!==label)crumb.textContent=label;
     const title=`HostPanel — ${label}`;
