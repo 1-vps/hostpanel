@@ -6,8 +6,9 @@ async function signIn(page) {
   await page.locator('#login-username').fill('admin');
   await page.locator('#login-password').fill('browser-password-1234');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page).toHaveURL(/#\/panel\/dashboard$/);
+  await expect(page.locator('[data-view="dashboard"]')).toBeVisible();
   await expect(page.locator('body')).toHaveClass(/hp-redesign/);
+  await expect(page.locator('#dashboardRetry')).toHaveAttribute('aria-label', 'Refresh dashboard data');
 }
 
 async function expectNoViewportOverflow(page) {
