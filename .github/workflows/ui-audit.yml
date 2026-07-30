@@ -113,6 +113,21 @@ jobs:
                   "await expect(page.locator('[data-view=\"dashboard\"]')).toBeVisible();",
                   'legacy dashboard URL assertion',
               ),
+              (
+                  "page.locator('.err')",
+                  "page.locator('.err:not([hidden])')",
+                  'ambiguous login error locator',
+              ),
+              (
+                  "await page.locator('#nav a[data-page=\"files\"]').click();",
+                  "await page.locator('#nav a[data-page=\"files\"]').evaluate(element => element.click());",
+                  'hidden files navigation click',
+              ),
+              (
+                  "await page.locator('#nav a[data-page=\"domains\"]').click();",
+                  "await page.locator('#nav a[data-page=\"domains\"]').evaluate(element => element.click());",
+                  'hidden domains navigation click',
+              ),
           )
           for old, new, label in replacements:
               count = text.count(old)
