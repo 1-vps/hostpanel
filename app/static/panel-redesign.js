@@ -126,8 +126,14 @@
 
   function bindLanguage(){
     const picker=byId('languageSelect');
-    if(picker)picker.addEventListener('change',()=>queueMicrotask(applyLocalizedCopy));
-    new MutationObserver(()=>queueMicrotask(applyLocalizedCopy)).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
+    if(picker){
+      picker.value=currentLanguage();
+      picker.addEventListener('change',()=>queueMicrotask(applyLocalizedCopy));
+    }
+    new MutationObserver(()=>queueMicrotask(()=>{
+      if(picker)picker.value=currentLanguage();
+      applyLocalizedCopy();
+    })).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
   }
 
   function boot(){
