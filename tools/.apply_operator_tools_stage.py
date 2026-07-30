@@ -37,7 +37,7 @@ text = replace_once(
 
 extra_transforms = textwrap.indent(
     textwrap.dedent(
-        '''\
+        """\
 text = _replace_once(
     text,
     '''readarray -t OPTIONAL_PACKAGES < <(pkg_map needrestart smartmontools prometheus-node-exporter podman-compose)''',
@@ -59,7 +59,7 @@ ok "role packages installed and operator utilities validated"''',
     "operator utility validation",
 )
 
-'''
+"""
     ),
     "    ",
 )
@@ -77,7 +77,7 @@ tests = pathlib.Path("tests/test_installer_hardening.py")
 text = tests.read_text(encoding="utf-8")
 method = textwrap.indent(
     textwrap.dedent(
-        '''\
+        """\
 def test_operator_baseline_tools_are_installed_and_validated(self):
     self.assertIn('hostname btop nano plocate)', self.installer)
     self.assertIn("if pkg_available mlocate; then printf 'mlocate'; else printf 'plocate'; fi", self.installer)
@@ -87,7 +87,7 @@ def test_operator_baseline_tools_are_installed_and_validated(self):
     self.assertIn('command -v btop', self.installer)
     self.assertIn('role packages installed and operator utilities validated', self.installer)
 
-'''
+"""
     ),
     "    ",
 )
