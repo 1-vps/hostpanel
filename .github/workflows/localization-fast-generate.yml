@@ -19,7 +19,7 @@ jobs:
       matrix:
         locale: [ja, pt, zh]
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Verify and extract signed source
@@ -45,7 +45,7 @@ jobs:
           SOURCE_ROOT="$(find localization-source -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
           test -n "$SOURCE_ROOT"
           python tools/generate_one_locale.py "$SOURCE_ROOT" generated \
-            --target '${{ matrix.locale }}' --batch-size 24
+            --target '${{ matrix.locale }}' --batch-size 64
       - name: Verify generated catalog
         shell: bash
         run: |
