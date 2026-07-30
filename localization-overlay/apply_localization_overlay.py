@@ -31,8 +31,25 @@ LANGUAGES = [
     ("zh", "简体中文"),
 ]
 RELEASE_CANDIDATES = {"ja", "pt", "zh"}
-OVERRIDE_CHUNK_COUNT = 8
-OVERRIDE_CHUNK_PREFIX = "catalog-overrides.json.gz.b64.chunk"
+OVERRIDE_CHUNK_FILES = (
+    "catalog-overrides.json.gz.b64.chunk01",
+    "catalog-overrides.json.gz.b64.chunk02",
+    "catalog-overrides.json.gz.b64.chunk03",
+    "catalog-overrides.json.gz.b64.chunk04a",
+    "catalog-overrides.json.gz.b64.chunk04b",
+    "catalog-overrides.json.gz.b64.chunk04c",
+    "catalog-overrides.json.gz.b64.chunk04d",
+    "catalog-overrides.json.gz.b64.chunk05",
+    "catalog-overrides.json.gz.b64.chunk06",
+    "catalog-overrides.json.gz.b64.chunk07a",
+    "catalog-overrides.json.gz.b64.chunk07b",
+    "catalog-overrides.json.gz.b64.chunk07c",
+    "catalog-overrides.json.gz.b64.chunk07d",
+    "catalog-overrides.json.gz.b64.chunk08a",
+    "catalog-overrides.json.gz.b64.chunk08b",
+    "catalog-overrides.json.gz.b64.chunk08c",
+    "catalog-overrides.json.gz.b64.chunk08d",
+)
 COPY_FIELDS = (
     "title", "subtitle", "username", "password", "code", "code_placeholder",
     "verify", "signin", "passkey", "skip", "language", "continue_with",
@@ -76,10 +93,7 @@ def replace_python_assignment(path: pathlib.Path, name: str, value: object) -> N
 
 
 def load_override_bundle(overlay: pathlib.Path, overrides: dict[str, dict[str, str]]) -> None:
-    expected = [
-        overlay / f"{OVERRIDE_CHUNK_PREFIX}{index:02d}"
-        for index in range(1, OVERRIDE_CHUNK_COUNT + 1)
-    ]
+    expected = [overlay / name for name in OVERRIDE_CHUNK_FILES]
     missing = [path.name for path in expected if not path.is_file() or path.is_symlink()]
     discovered = sorted(overlay.glob("catalog-overrides.json.gz.b64.*"))
     expected_set = set(expected)
