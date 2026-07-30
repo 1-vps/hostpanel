@@ -1,0 +1,37 @@
+name: Localization source export
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/localization-source-export.yml
+      - hostpanel-v3.4.0-hardened-r5-source.tar.gz
+      - SHA256SUMS
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify signed source checksum entry
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep ' hostpanel-v3.4.0-hardened-r5-source.tar.gz$' SHA256SUMS | sha256sum -c -
+      - name: Extract source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p localization-source
+          tar -xzf hostpanel-v3.4.0-hardened-r5-source.tar.gz -C localization-source
+      - name: Upload private source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hostpanel-localization-source
+          path: localization-source/
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 1
