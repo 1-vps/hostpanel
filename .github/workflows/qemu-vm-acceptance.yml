@@ -22,6 +22,9 @@ on:
       - tools/harden_install_impl.py
       - tools/harden_install_runtime.py
       - tools/patch_cli_runtime_env.py
+      - tools/patch_panel_ui.py
+      - app/static/panel-redesign.css
+      - app/static/panel-redesign.js
       - bootstrap-install.sh
       - install.sh
       - install.base.sh
@@ -35,6 +38,9 @@ on:
       - tests/test_first_reboot_hardening.py
       - tests/test_qemu_reboot_wait.py
       - tests/test_systemd_resolved_dns.py
+      - tests/test_panel_redesign.py
+      - tests/test_php_runtime_support.py
+      - tests/php-runtime-compat.php
 
 permissions:
   contents: read
@@ -77,6 +83,8 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_default_version.py' -v
           python3 -m unittest discover -s tests -p 'test_systemd_resolved_dns.py' -v
+          python3 -m unittest discover -s tests -p 'test_panel_redesign.py' -v
+          python3 -m unittest discover -s tests -p 'test_php_runtime_support.py' -v
 
       - name: Reclaim runner disk
         run: |
