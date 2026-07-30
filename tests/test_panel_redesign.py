@@ -48,6 +48,20 @@ def read_signed_members() -> tuple[str, dict[str, dict[str, str]]]:
     return template, catalogs
 
 
+def read_redesign_catalogs(source: str) -> dict[str, dict[str, str]]:
+    match = re.search(
+        r"const REDESIGN_TRANSLATIONS=Object\.freeze\((\{.*?\})\);",
+        source,
+        re.DOTALL,
+    )
+    if match is None:
+        raise RuntimeError("redesign translation catalog was not found")
+    catalogs = json.loads(match.group(1))
+    if not isinstance(catalogs, dict):
+        raise RuntimeError("redesign translation catalog has an invalid shape")
+    return catalogs
+
+
 class PanelRedesignTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -105,6 +119,28 @@ class PanelRedesignTests(unittest.TestCase):
         self.assertGreaterEqual(len(self.catalogs), 10)
         for language, catalog in self.catalogs.items():
             self.assertEqual(keys - set(catalog), set(), language)
+
+    def test_redesign_translations_match_languages_keys_and_placeholders(self):
+        catalogs = read_redesign_catalogs(self.js)
+        self.assertEqual(set(catalogs), set(self.catalogs))
+        expected_keys = set(catalogs["en"])
+        placeholder = re.compile(r"\{([A-Za-z][A-Za-z0-9_]*)\}")
+        for language, messages in catalogs.items():
+            self.assertEqual(set(messages), expected_keys, language)
+            for key, message in messages.items():
+                self.assertIsInstance(message, str, f"{language}:{key}")
+                self.assertTrue(message.strip(), f"{language}:{key}")
+                self.assertEqual(
+                    set(placeholder.findall(message)),
+                    set(placeholder.findall(catalogs["en"][key])),
+                    f"{language}:{key}",
+                )
+
+        self.assertEqual(catalogs["fi"]["live"], "Reaaliajassa")
+        self.assertIn("file d’attente", catalogs["fr"]["queueRequiresAttention"])
+        self.assertIn("verzendwachtrij", catalogs["nl"]["deliveryQueueHealthy"])
+        self.assertTrue(catalogs["pl"]["runningCount"].startswith("Aktywne:"))
+        self.assertIn("E-postkön", catalogs["sv"]["deliveryQueueHealthy"])
 
     def test_dashboard_is_accessible_and_role_aware(self):
         panel = self.patched_template()
