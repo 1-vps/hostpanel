@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
+import gzip
 import csv
 import json
 import pathlib
@@ -94,6 +96,17 @@ def main() -> int:
 
     catalog_dir = overlay / "catalogs"
     overrides = json.loads((overlay / "catalog-overrides.json").read_text(encoding="utf-8"))
+    compressed_parts = sorted(overlay.glob("catalog-overrides.json.gz.b64.part*"))
+    if compressed_parts:
+        encoded = b"".join(part.read_bytes().strip() for part in compressed_parts)
+        packed = base64.b64decode(encoded, validate=True)
+        payload = json.loads(gzip.decompress(packed).decode("utf-8"))
+        for locale, entries in payload.items():
+            target = overrides.setdefault(locale, {})
+            duplicate = sorted(set(target) & set(entries))
+            if duplicate:
+                raise SystemExit(f"compressed override bundle: duplicate override keys: {duplicate[:8]}")
+            target.update(entries)
     corrections = json.loads((overlay / "existing-catalog-corrections.json").read_text(encoding="utf-8"))
     english_path = source / "app/static/i18n.en.json"
     english = json.loads(english_path.read_text(encoding="utf-8"))
