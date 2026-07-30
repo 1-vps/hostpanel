@@ -47,6 +47,18 @@ def _insert_once(text: str, anchor: str, insertion: str, label: str) -> str:
     return text.replace(anchor, f"{anchor}\n{insertion}", 1)
 
 
+def _place_before_once(text: str, anchor: str, insertion: str, label: str) -> str:
+    if text.count(insertion) > 1:
+        raise SystemExit(f"unexpected {label} count: {text.count(insertion)}")
+    if insertion in text:
+        text = text.replace(f"{insertion}\n", "", 1)
+        if insertion in text:
+            text = text.replace(insertion, "", 1)
+    if text.count(anchor) != 1:
+        raise SystemExit(f"unexpected {label} anchor count: {text.count(anchor)}")
+    return text.replace(anchor, f"{insertion}\n{anchor}", 1)
+
+
 def patch(text: str) -> str:
     text = _insert_once(
         text,
@@ -54,9 +66,9 @@ def patch(text: str) -> str:
         STYLE_TAG,
         "redesign stylesheet",
     )
-    text = _insert_once(
+    text = _place_before_once(
         text,
-        '<script defer="" src="/static/panel-events.js"></script>',
+        '<script defer="" src="/static/panel-i18n.js"></script>',
         SCRIPT_TAG,
         "redesign script",
     )
