@@ -276,11 +276,20 @@ LOCALIZATION_FILES=(
   localization-overlay/catalog-overrides.json.gz.b64.chunk01
   localization-overlay/catalog-overrides.json.gz.b64.chunk02
   localization-overlay/catalog-overrides.json.gz.b64.chunk03
-  localization-overlay/catalog-overrides.json.gz.b64.chunk04
+  localization-overlay/catalog-overrides.json.gz.b64.chunk04a
+  localization-overlay/catalog-overrides.json.gz.b64.chunk04b
+  localization-overlay/catalog-overrides.json.gz.b64.chunk04c
+  localization-overlay/catalog-overrides.json.gz.b64.chunk04d
   localization-overlay/catalog-overrides.json.gz.b64.chunk05
   localization-overlay/catalog-overrides.json.gz.b64.chunk06
-  localization-overlay/catalog-overrides.json.gz.b64.chunk07
-  localization-overlay/catalog-overrides.json.gz.b64.chunk08
+  localization-overlay/catalog-overrides.json.gz.b64.chunk07a
+  localization-overlay/catalog-overrides.json.gz.b64.chunk07b
+  localization-overlay/catalog-overrides.json.gz.b64.chunk07c
+  localization-overlay/catalog-overrides.json.gz.b64.chunk07d
+  localization-overlay/catalog-overrides.json.gz.b64.chunk08a
+  localization-overlay/catalog-overrides.json.gz.b64.chunk08b
+  localization-overlay/catalog-overrides.json.gz.b64.chunk08c
+  localization-overlay/catalog-overrides.json.gz.b64.chunk08d
   localization-overlay/existing-catalog-corrections.json
   localization-overlay/catalogs/i18n.ja.json
   localization-overlay/catalogs/i18n.pt.json
