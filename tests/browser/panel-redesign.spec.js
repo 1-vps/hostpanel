@@ -5,7 +5,7 @@ async function signIn(page) {
   await page.goto('/login');
   await page.locator('#login-username').fill('admin');
   await page.locator('#login-password').fill('browser-password-1234');
-  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/#\/panel\/dashboard$/);
   await expect(page.locator('body')).toHaveClass(/hp-redesign/);
 }
