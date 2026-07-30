@@ -2,20 +2,21 @@
   'use strict';
 
   const REDESIGN_TRANSLATIONS=Object.freeze({
-    "da":{"refreshDashboardData":"Opdater dashboarddata","waitingForServices":"Venter på tjenester","runningCount":"{running} kører","runningOf":"{running} af {total} kører","waitingForQueueStatus":"Venter på køstatus","queueRequiresAttention":"Køen kræver opmærksomhed","deliveryQueueHealthy":"Leveringskøen fungerer normalt","open":"Åbn","dashboardOverview":"Dashboardoversigt","live":"Live"},
-    "de":{"refreshDashboardData":"Dashboard-Daten aktualisieren","waitingForServices":"Warten auf Dienste","runningCount":"{running} aktiv","runningOf":"{running} von {total} aktiv","waitingForQueueStatus":"Warten auf Warteschlangenstatus","queueRequiresAttention":"Die Warteschlange erfordert Aufmerksamkeit","deliveryQueueHealthy":"Die Zustellwarteschlange ist in Ordnung","open":"Öffnen","dashboardOverview":"Dashboard-Übersicht","live":"Live"},
-    "en":{"refreshDashboardData":"Refresh dashboard data","waitingForServices":"Waiting for services","runningCount":"{running} running","runningOf":"{running} of {total} running","waitingForQueueStatus":"Waiting for queue status","queueRequiresAttention":"Queue requires attention","deliveryQueueHealthy":"Delivery queue healthy","open":"Open","dashboardOverview":"Dashboard overview","live":"Live"},
-    "es":{"refreshDashboardData":"Actualizar los datos del panel","waitingForServices":"Esperando a los servicios","runningCount":"{running} en ejecución","runningOf":"{running} de {total} en ejecución","waitingForQueueStatus":"Esperando el estado de la cola","queueRequiresAttention":"La cola requiere atención","deliveryQueueHealthy":"La cola de entrega funciona correctamente","open":"Abrir","dashboardOverview":"Resumen del panel","live":"En vivo"},
-    "fi":{"refreshDashboardData":"Päivitä hallintapaneelin tiedot","waitingForServices":"Odotetaan palveluita","runningCount":"{running} käynnissä","runningOf":"{running}/{total} käynnissä","waitingForQueueStatus":"Odotetaan jonon tilaa","queueRequiresAttention":"Jono vaatii huomiota","deliveryQueueHealthy":"Toimitusjono toimii normaalisti","open":"Avaa","dashboardOverview":"Hallintapaneelin yleiskatsaus","live":"Reaaliaikainen"},
-    "fr":{"refreshDashboardData":"Actualiser les données du tableau de bord","waitingForServices":"En attente des services","runningCount":"{running} en cours d’exécution","runningOf":"{running} sur {total} en cours d’exécution","waitingForQueueStatus":"En attente de l’état de la file","queueRequiresAttention":"La file nécessite votre attention","deliveryQueueHealthy":"La file de livraison fonctionne normalement","open":"Ouvrir","dashboardOverview":"Vue d’ensemble du tableau de bord","live":"En direct"},
+    "da":{"refreshDashboardData":"Opdater dataene i kontrolpanelet","waitingForServices":"Venter på tjenester","runningCount":"{running} kører","runningOf":"{running} af {total} kører","waitingForQueueStatus":"Venter på køstatus","queueRequiresAttention":"Køen kræver opmærksomhed","deliveryQueueHealthy":"Leveringskøen fungerer normalt","open":"Åbn","dashboardOverview":"Oversigt over kontrolpanelet","live":"Live"},
+    "de":{"refreshDashboardData":"Dashboarddaten aktualisieren","waitingForServices":"Warten auf Dienste","runningCount":"{running} aktiv","runningOf":"{running} von {total} aktiv","waitingForQueueStatus":"Warten auf Warteschlangenstatus","queueRequiresAttention":"Die Warteschlange erfordert Aufmerksamkeit","deliveryQueueHealthy":"Die Zustellwarteschlange funktioniert ordnungsgemäß","open":"Öffnen","dashboardOverview":"Dashboardübersicht","live":"Live"},
+    "en":{"refreshDashboardData":"Refresh dashboard data","waitingForServices":"Waiting for services","runningCount":"{running} running","runningOf":"{running} of {total} running","waitingForQueueStatus":"Waiting for queue status","queueRequiresAttention":"Queue requires attention","deliveryQueueHealthy":"Delivery queue is healthy","open":"Open","dashboardOverview":"Dashboard overview","live":"Live"},
+    "es":{"refreshDashboardData":"Actualizar los datos del panel","waitingForServices":"A la espera de los servicios","runningCount":"{running} en ejecución","runningOf":"{running} de {total} en ejecución","waitingForQueueStatus":"A la espera del estado de la cola","queueRequiresAttention":"La cola requiere atención","deliveryQueueHealthy":"La cola de entrega funciona correctamente","open":"Abrir","dashboardOverview":"Resumen del panel","live":"En vivo"},
+    "fi":{"refreshDashboardData":"Päivitä hallintapaneelin tiedot","waitingForServices":"Odotetaan palveluja","runningCount":"{running} käynnissä","runningOf":"{running}/{total} käynnissä","waitingForQueueStatus":"Odotetaan jonon tilaa","queueRequiresAttention":"Jono vaatii huomiota","deliveryQueueHealthy":"Toimitusjono toimii normaalisti","open":"Avaa","dashboardOverview":"Hallintapaneelin yleiskatsaus","live":"Reaaliajassa"},
+    "fr":{"refreshDashboardData":"Actualiser les données du tableau de bord","waitingForServices":"En attente des services","runningCount":"{running} en cours d’exécution","runningOf":"{running} sur {total} en cours d’exécution","waitingForQueueStatus":"En attente de l’état de la file d’attente","queueRequiresAttention":"La file d’attente nécessite une intervention","deliveryQueueHealthy":"La file d’attente de distribution fonctionne normalement","open":"Ouvrir","dashboardOverview":"Vue d’ensemble du tableau de bord","live":"En direct"},
     "nb":{"refreshDashboardData":"Oppdater dataene i kontrollpanelet","waitingForServices":"Venter på tjenester","runningCount":"{running} kjører","runningOf":"{running} av {total} kjører","waitingForQueueStatus":"Venter på køstatus","queueRequiresAttention":"Køen krever oppmerksomhet","deliveryQueueHealthy":"Leveringskøen fungerer normalt","open":"Åpne","dashboardOverview":"Oversikt over kontrollpanelet","live":"Sanntid"},
-    "nl":{"refreshDashboardData":"Dashboardgegevens vernieuwen","waitingForServices":"Wachten op services","runningCount":"{running} actief","runningOf":"{running} van {total} actief","waitingForQueueStatus":"Wachten op wachtrijstatus","queueRequiresAttention":"De wachtrij vereist aandacht","deliveryQueueHealthy":"De bezorgwachtrij is in orde","open":"Openen","dashboardOverview":"Dashboardoverzicht","live":"Live"},
-    "pl":{"refreshDashboardData":"Odśwież dane panelu","waitingForServices":"Oczekiwanie na usługi","runningCount":"{running} działa","runningOf":"{running} z {total} działa","waitingForQueueStatus":"Oczekiwanie na stan kolejki","queueRequiresAttention":"Kolejka wymaga uwagi","deliveryQueueHealthy":"Kolejka dostarczania działa prawidłowo","open":"Otwórz","dashboardOverview":"Przegląd panelu","live":"Na żywo"},
-    "sv":{"refreshDashboardData":"Uppdatera data i kontrollpanelen","waitingForServices":"Väntar på tjänster","runningCount":"{running} körs","runningOf":"{running} av {total} körs","waitingForQueueStatus":"Väntar på köstatus","queueRequiresAttention":"Kön kräver åtgärd","deliveryQueueHealthy":"Leveranskön fungerar normalt","open":"Öppna","dashboardOverview":"Översikt över kontrollpanelen","live":"Realtid"}
+    "nl":{"refreshDashboardData":"Dashboardgegevens vernieuwen","waitingForServices":"Wachten op services","runningCount":"{running} actief","runningOf":"{running} van {total} actief","waitingForQueueStatus":"Wachten op de wachtrijstatus","queueRequiresAttention":"De wachtrij vereist aandacht","deliveryQueueHealthy":"De verzendwachtrij werkt normaal","open":"Openen","dashboardOverview":"Dashboardoverzicht","live":"Live"},
+    "pl":{"refreshDashboardData":"Odśwież dane panelu","waitingForServices":"Oczekiwanie na usługi","runningCount":"Aktywne: {running}","runningOf":"Aktywne: {running} z {total}","waitingForQueueStatus":"Oczekiwanie na stan kolejki","queueRequiresAttention":"Kolejka wymaga uwagi","deliveryQueueHealthy":"Kolejka wysyłkowa działa prawidłowo","open":"Otwórz","dashboardOverview":"Przegląd panelu","live":"Na żywo"},
+    "sv":{"refreshDashboardData":"Uppdatera data i kontrollpanelen","waitingForServices":"Väntar på tjänster","runningCount":"{running} körs","runningOf":"{running} av {total} körs","waitingForQueueStatus":"Väntar på köstatus","queueRequiresAttention":"Kön kräver åtgärd","deliveryQueueHealthy":"E-postkön fungerar normalt","open":"Öppna","dashboardOverview":"Översikt över kontrollpanelen","live":"Realtid"}
   });
 
   const byId=id=>document.getElementById(id);
   const clamp=value=>Math.max(0,Math.min(100,Number.isFinite(value)?value:0));
+  const localizedLiveValues=new Set(Object.values(REDESIGN_TRANSLATIONS).map(messages=>messages.live));
   const currentLanguage=()=>{
     const picker=byId('languageSelect');
     const candidate=String(picker?.value||document.documentElement.lang||'en').toLowerCase().split('-')[0];
@@ -87,13 +88,13 @@
     document.querySelectorAll('[data-hp-page]').forEach(control=>{
       const page=control.getAttribute('data-hp-page');
       const navLink=page?document.querySelector(`#nav a[data-page="${CSS.escape(page)}"]`):null;
-      if(!page||!navLink||navLink.hidden){
-        control.hidden=true;
+      if(!page || !navLink || navLink.hidden){
+        control.hidden = true;
         return;
       }
       control.addEventListener('click',event=>{
         event.preventDefault();
-        location.hash=`#/panel/${page}`;
+        location.hash = `#/panel/${page}`;
       });
     });
   }
@@ -109,7 +110,7 @@
     const overview=document.querySelector('.hp-dashboard-rail');
     if(overview)overview.setAttribute('aria-label',copy('dashboardOverview'));
     const live=byId('dashboardUptimeRail');
-    if(live&&(!live.textContent||['Live','Realtid','En vivo','Reaaliaikainen','En direct','Sanntid','Na żywo'].includes(live.textContent.trim())))live.textContent=copy('live');
+    if(live&&(!live.textContent||localizedLiveValues.has(live.textContent.trim())))live.textContent=copy('live');
     updateServiceHealth();
     renderMailState();
   }
@@ -131,7 +132,7 @@
 
   function boot(){
     document.body.classList.add('hp-redesign');
-    document.body.dataset.uiVersion='3.0.0';
+    document.body.dataset.uiVersion = '3.0.0';
     setMeter('cpu','cpuMeter');
     setMeter('ram','ramMeter');
     setMeter('disk','diskMeter');
