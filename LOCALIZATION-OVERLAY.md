@@ -8,7 +8,7 @@ This commit-addressed overlay extends the signed `3.4.0-hardened-r5` source rele
 - Portuguese (`pt`)
 - Simplified Chinese (`zh`)
 
-All regional tags are normalized to the supported base locale. The `pt` catalog now uses consistent Brazilian Portuguese administrative terminology; generic and regional Portuguese browser tags currently resolve to that single catalog. The Chinese catalog is explicitly Simplified Chinese.
+All regional tags are normalized to the supported base locale. The `pt` catalog uses Brazilian Portuguese administrative terminology; generic and regional Portuguese browser tags currently resolve to that single catalog. The Chinese catalog is explicitly Simplified Chinese.
 
 ## Existing catalog review
 
@@ -19,19 +19,24 @@ All ten existing catalogs retain their complete key sets. The overlay:
 - uses `nyckel` consistently for Swedish passkey wording in the login flow
 - preserves URLs, commands, paths, certificates, identifiers, placeholders, product names, and protocol names
 
-## High-risk new-language review
+## Reviewed new-language correction layers
 
-A focused editorial and contamination pass corrected 55 strings before native sign-off:
+The checksum-locked compressed bundle remains unchanged. Two source-visible review layers are applied after the base catalogs:
 
-- 19 Japanese strings
-- 21 Brazilian Portuguese strings
-- 15 Simplified Chinese strings
+1. **Initial high-risk and contamination layer:** 55 values — 19 Japanese, 21 Brazilian Portuguese, and 15 Simplified Chinese.
+2. **Semantic final layer:** 128 values — 37 Japanese, 31 Brazilian Portuguese, and 60 Simplified Chinese.
 
-The reviewed scope covers destructive confirmations, identity and authentication, encrypted credentials, subscriptions and billing, compliance evidence, backup and restore, disaster recovery, firewall rollback, OpenLiteSpeed migration, migration confirmation tokens, and Portuguese language contamination. A dedicated regression test locks the exact reviewed values, verifies placeholder parity against the English catalog in the signed source archive, reconstructs the final Portuguese catalog, and rejects known Spanish, Italian, French, and European Portuguese residue.
+Together they provide **183 explicit reviewed corrections**:
+
+- 56 Japanese values
+- 52 Brazilian Portuguese values
+- 75 Simplified Chinese values
+
+The semantic layer corrects meaning-changing errors in destructive confirmations, credentials, passwords, subscriptions, billing, backup and restore, migration, rollback, disaster recovery, DNS, firewall, mail, database, staging, OpenLiteSpeed, and account-management copy. It is split into four exact files and applied by `apply_localization_overlay_reviewed.py` after the locked bundle.
 
 ## Trust model
 
-The original source archive and its signature are not modified. `bootstrap-install.sh` first verifies that signed archive, then verifies every localization overlay file against the operator-supplied full Git commit before applying it to the extracted source tree. The overlay remains source-visible in the repository so catalog and terminology changes can be reviewed independently. Both the original localization audit and the stricter editorial audit must pass before installation can begin.
+The original source archive and its signature are not modified. `bootstrap-install.sh` first verifies that signed archive, then verifies every localization overlay file against the operator-supplied full Git commit before applying it to the extracted source tree. The compressed bundle still requires exactly 63,168 Base64 bytes and its existing SHA-256. The wrapper rejects missing, extra, unsafe, malformed, or duplicate final-override files before applying their reviewed values.
 
 ## Verification
 
@@ -39,13 +44,14 @@ The localization workflow checks:
 
 - 13 catalogs with exact 2,215-key parity and order
 - ten production locales and three release-candidate locales
-- non-empty UTF-8 values
-- placeholder multiplicity
-- protected technical tokens
-- unsafe markup and mojibake
+- non-empty UTF-8 values and placeholder multiplicity
+- protected technical tokens, unsafe markup, and mojibake
 - reviewed Swedish interface labels remain translated
-- exact counts, values, and placeholders for the 55 high-risk and contamination overrides
-- the reconstructed Portuguese catalog contains no known cross-language residue
-- selector, registry, login, Python, JavaScript, and Bash syntax consistency
+- initial reviewed counts and canonical SHA-256
+- semantic final counts `37/31/60` and canonical SHA-256 `bb44356c5ece1b3b767ffe0cd45cdf657c8ce357ed6ad9ef60785b307ac35250`
+- combined source-visible counts `56/52/75` and canonical SHA-256 `f74f4268c699fb6359d261bc3cd77869d055b96ab85f01ba54ce2943842867d0`
+- every reviewed key exists in the signed English source and preserves its placeholders
+- the reconstructed Brazilian Portuguese catalog contains no known cross-language residue
+- selector, registry, login, Python, JavaScript, Bash, installer, and QEMU integration consistency
 
-The three new catalogs were produced with language-specific machine assistance, protected-token reconstruction, and editorial overrides. Specialized legal, billing, tax, contractual, and jurisdiction-specific compliance language still requires native-speaking subject-matter review before contractual use.
+The three new catalogs remain release candidates. Specialized legal, billing, tax, contractual, security, and jurisdiction-specific compliance language still requires native-speaking subject-matter review before contractual use.
