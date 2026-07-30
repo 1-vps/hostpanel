@@ -1,0 +1,65 @@
+name: Japanese locale generation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/localization-ja-fugu.yml
+      - tools/generate_japanese_fugu.py
+      - hostpanel-v3.4.0-hardened-r5-source.tar.gz
+      - SHA256SUMS
+
+permissions:
+  contents: read
+
+jobs:
+  generate-ja:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and extract signed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep ' hostpanel-v3.4.0-hardened-r5-source.tar.gz$' SHA256SUMS | sha256sum -c -
+          mkdir -p localization-source
+          tar -xzf hostpanel-v3.4.0-hardened-r5-source.tar.gz -C localization-source
+      - name: Install translation runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install 'transformers==4.44.2' 'sentencepiece==0.2.0' 'sacremoses==0.1.1'
+      - name: Generate Japanese catalog
+        shell: bash
+        env:
+          TOKENIZERS_PARALLELISM: 'false'
+        run: |
+          set -euo pipefail
+          SOURCE_ROOT="$(find localization-source -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
+          test -n "$SOURCE_ROOT"
+          python tools/generate_japanese_fugu.py "$SOURCE_ROOT" generated --batch-size 64
+      - name: Verify key parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_ROOT="$(find localization-source -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
+          python - "$SOURCE_ROOT" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          english = json.loads((root / 'app/static/i18n.en.json').read_text(encoding='utf-8'))
+          catalog = json.loads((pathlib.Path('generated') / 'i18n.ja.json').read_text(encoding='utf-8'))
+          if list(catalog) != list(english):
+              raise SystemExit('key order or parity mismatch')
+          if any(not isinstance(value, str) or not value for value in catalog.values()):
+              raise SystemExit('blank or non-string value')
+          print('ja', len(catalog))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hostpanel-locale-ja-fugu
+          path: generated/
+          retention-days: 1
+          compression-level: 0
