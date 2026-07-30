@@ -18,7 +18,7 @@ HostPanel exposes thirteen supported interface-language catalogs in both the pan
 
 Every supported catalog contains the complete set of 2,215 stable keys. Regional browser tags are normalized to their base locale, so `ja-JP`, `pt-BR`, `pt-PT`, `zh-CN`, and `zh-Hans` resolve to the supported catalog.
 
-The release audit rejects missing or unknown keys, blank values, placeholder mismatches, unsafe markup, and suspicious source-identical English prose. The editorial audit additionally rejects repeated CJK corruption, known Japanese machine-translation errors, Portuguese language contamination, and untranslated natural-language labels in Japanese and Simplified Chinese. Commands, URLs, paths, code identifiers, certificates, cryptographic terms, and product names remain unchanged where translation would make them invalid or misleading.
+The release audit rejects missing or unknown keys, blank values, placeholder mismatches, unsafe markup, and suspicious source-identical English prose. The editorial audit additionally rejects repeated CJK corruption, known Japanese machine-translation errors, Portuguese language contamination, untranslated natural-language labels in Japanese and Simplified Chinese, and regression of the reviewed Swedish UI translations. Commands, URLs, paths, code identifiers, certificates, cryptographic terms, and product names remain unchanged where translation would make them invalid or misleading.
 
 Run:
 
