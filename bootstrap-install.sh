@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fetch a reviewed HostPanel commit, verify the signed source archive with the
-# embedded release trust root, verify every executable overlay against the full
-# Git object ID, and run the hardened installer from the complete source tree.
+# embedded release trust root, verify every installer and localization overlay
+# against the full Git object ID, and run the hardened installer from the complete source tree.
 set -euo pipefail
 
 REPO="${HP_REPO:-https://github.com/1-vps/hostpanel.git}"
@@ -273,6 +273,11 @@ LOCALIZATION_FILES=(
   localization-overlay/LOCALIZATION-REVIEW-v3.4.0-overlay.md
   localization-overlay/login-messages.json
   localization-overlay/catalog-overrides.json
+  localization-overlay/catalog-overrides.json.gz.b64.part01
+  localization-overlay/catalog-overrides.json.gz.b64.part02
+  localization-overlay/catalog-overrides.json.gz.b64.part03
+  localization-overlay/catalog-overrides.json.gz.b64.part04
+  localization-overlay/catalog-overrides.json.gz.b64.part05
   localization-overlay/existing-catalog-corrections.json
   localization-overlay/catalogs/i18n.ja.json
   localization-overlay/catalogs/i18n.pt.json
