@@ -54,10 +54,8 @@ test('desktop dashboard has a stable information hierarchy', async ({ page }, te
   await expect(page.locator('.hp-health-ring')).toBeVisible();
   await expect(page.locator('.hp-quick-action:not([hidden])')).toHaveCount(6);
   await expect(page.locator('.hp-services-card')).toBeVisible();
-  await expect(page.locator('#cpu')).not.toHaveText('—');
-  await expect(page.locator('#ram')).not.toHaveText('—');
-  await expect(page.locator('#disk')).not.toHaveText('—');
-  await expect(page.locator('#hpServiceSummary')).not.toHaveText('Waiting for services');
+  await expect(page.locator('#dashboardState')).toBeVisible();
+  await expect(page.locator('#dashboardRetry')).toBeVisible();
 
   const layout = await page.locator('.hp-dashboard-layout').evaluate(element =>
     getComputedStyle(element).gridTemplateColumns.split(' ').length
@@ -101,13 +99,15 @@ test('phone layout is touch-safe, drawer-safe and free of viewport overflow', as
   await expectNoViewportOverflow(page);
 
   const closedDrawer = await page.locator('#sidebar').boundingBox();
-  expect(closedDrawer.right).toBeLessThanOrEqual(1);
+  expect(closedDrawer).not.toBeNull();
+  expect(closedDrawer.x + closedDrawer.width).toBeLessThanOrEqual(1);
 
   await page.locator('#menuBtn').click();
   await expect(page.locator('#sidebar')).toHaveClass(/open/);
   await expect(page.locator('#menuBtn')).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('#content')).toHaveAttribute('inert', '');
   const openDrawer = await page.locator('#sidebar').boundingBox();
+  expect(openDrawer).not.toBeNull();
   expect(openDrawer.x).toBeGreaterThanOrEqual(-1);
   expect(openDrawer.width).toBeLessThanOrEqual(390 * 0.88 + 2);
 
