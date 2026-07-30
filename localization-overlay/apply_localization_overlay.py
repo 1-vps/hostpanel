@@ -143,6 +143,36 @@ def load_override_bundle(overlay: pathlib.Path, overrides: dict[str, dict[str, s
         target.update(entries)
 
 
+def load_existing_corrections(overlay: pathlib.Path) -> dict[str, dict[str, str]]:
+    paths = [overlay / "existing-catalog-corrections.json"]
+    paths.extend(sorted(overlay.glob("existing-catalog-corrections.*.json")))
+    corrections: dict[str, dict[str, str]] = {}
+    valid_locales = {code for code, _label in LANGUAGES} - RELEASE_CANDIDATES
+    for path in paths:
+        if not path.is_file() or path.is_symlink():
+            raise SystemExit(f"missing or unsafe correction file: {path.name}")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"{path.name}: invalid JSON: {exc}") from exc
+        if not isinstance(payload, dict) or not set(payload).issubset(valid_locales):
+            raise SystemExit(f"{path.name}: corrections must target existing production locales only")
+        for locale, entries in payload.items():
+            if not isinstance(entries, dict) or any(
+                not isinstance(key, str) or not isinstance(value, str) or not value.strip()
+                for key, value in entries.items()
+            ):
+                raise SystemExit(f"{path.name}: invalid correction entries for {locale}")
+            target = corrections.setdefault(locale, {})
+            duplicate = sorted(set(target) & set(entries))
+            if duplicate:
+                raise SystemExit(
+                    f"{path.name}: duplicate correction keys for {locale}: {duplicate[:8]}"
+                )
+            target.update(entries)
+    return corrections
+
+
 def write_language_status(path: pathlib.Path, key_count: int) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
@@ -172,7 +202,7 @@ def main() -> int:
     if not isinstance(overrides, dict):
         raise SystemExit("catalog-overrides.json must contain an object")
     load_override_bundle(overlay, overrides)
-    corrections = json.loads((overlay / "existing-catalog-corrections.json").read_text(encoding="utf-8"))
+    corrections = load_existing_corrections(overlay)
     english_path = source / "app/static/i18n.en.json"
     english = json.loads(english_path.read_text(encoding="utf-8"))
     english_keys = list(english)
