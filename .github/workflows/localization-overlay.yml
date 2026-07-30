@@ -27,10 +27,13 @@ jobs:
         run: |
           set -euo pipefail
           grep ' hostpanel-v3.4.0-hardened-r5-source.tar.gz$' SHA256SUMS | sha256sum -c -
-      - name: Verify reviewed high-risk locale overrides
+      - name: Verify reviewed locale override layers
         run: |
           set -euo pipefail
-          python3 -m py_compile tests/test_high_risk_locale_overrides.py
+          python3 -m py_compile \
+            localization-overlay/apply_localization_overlay.py \
+            localization-overlay/apply_localization_overlay_reviewed.py \
+            tests/test_high_risk_locale_overrides.py
           python3 -m unittest discover -s tests -p 'test_high_risk_locale_overrides.py' -v
       - name: Extract signed source
         shell: bash
@@ -44,7 +47,7 @@ jobs:
           set -euo pipefail
           SOURCE_ROOT="$(find localization-source -mindepth 1 -maxdepth 1 -type d -name 'hostpanel-v*' -print -quit)"
           test -n "$SOURCE_ROOT"
-          python3 localization-overlay/apply_localization_overlay.py \
+          python3 localization-overlay/apply_localization_overlay_reviewed.py \
             "$SOURCE_ROOT" localization-overlay
           python3 "$SOURCE_ROOT/tools/audit_locales.py"
           python3 "$SOURCE_ROOT/tools/review_locales.py"
