@@ -16,6 +16,7 @@ done
 }
 install -o root -g root -m 600 /tmp/guest.env /root/hostpanel-qemu.env
 source /root/hostpanel-qemu.env
+rm -f /tmp/guest.env
 EVIDENCE=/root/hostpanel-qemu-evidence
 PREFLIGHT_LOG="$EVIDENCE/preflight.log"
 PRIVATE_LOG=/root/hostpanel-qemu-private-install.log
@@ -190,6 +191,9 @@ fi
 
 echo 'Running full installation; generated credentials stay in the root-only guest log.'
 env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
+sed -i '/^export GIT_/d' /root/hostpanel-qemu.env
+chmod 600 /root/hostpanel-qemu.env
+unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
 
 FAILURE_PHASE=pre-reboot-validation
 ACTUAL_VERSION="$(tr -d '[:space:]' < /opt/hostpanel/VERSION)"
