@@ -8,6 +8,7 @@ async function signIn(page) {
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.locator('[data-view="dashboard"]')).toBeVisible();
   await expect(page.locator('body')).toHaveClass(/hp-redesign/);
+  await expect(page.locator('#languageSelect')).toHaveValue('en');
   await expect(page.locator('#dashboardRetry')).toHaveAttribute('aria-label', 'Refresh dashboard data');
 }
 
