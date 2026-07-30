@@ -91,6 +91,19 @@ jobs:
           install -m 0644 app/static/panel-redesign.js "$UI_ROOT/app/static/panel-redesign.js"
           python3 tools/patch_panel_ui.py "$UI_ROOT/app/templates/panel.html"
           install -m 0644 tests/browser/panel-redesign.spec.js "$UI_ROOT/tests/browser/panel-redesign.spec.js"
+          python3 - "$UI_ROOT/tests/browser/panel.spec.js" <<'PY'
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          text = path.read_text(encoding='utf-8')
+          old = "getByRole('button', { name: 'Sign in' })"
+          new = "getByRole('button', { name: 'Sign in', exact: true })"
+          count = text.count(old)
+          if count < 1:
+              raise SystemExit(f'expected at least one legacy login selector, found {count}')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
           printf 'root=%s\n' "$UI_ROOT" >> "$GITHUB_OUTPUT"
 
       - name: Install locked Python audit environment
