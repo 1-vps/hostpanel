@@ -87,18 +87,20 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     renderMailState();
   }
 
-  function routeLabel(){
+  function routeLink(){
     const match=location.hash.match(/^#\/panel\/([^/?#]+)/);
     const active=document.querySelector('#nav a.active[data-page]');
     const page=match?.[1]||active?.getAttribute('data-page')||'dashboard';
-    const navLink=document.querySelector(`#nav a[data-page="${CSS.escape(page)}"]`);
-    return navLink?.textContent?.trim()||'';
+    return document.querySelector(`#nav a[data-page="${CSS.escape(page)}"]`);
   }
 
   function syncRouteLabel(){
-    const label=routeLabel();
+    const navLink=routeLink();
+    const label=navLink?.textContent?.trim();
     const crumb=byId('crumb');
     if(!label||!crumb)return;
+    const key=navLink.getAttribute('data-i18n');
+    if(key&&crumb.getAttribute('data-i18n')!==key)crumb.setAttribute('data-i18n',key);
     if(crumb.textContent.trim()!==label)crumb.textContent=label;
     const title=`HostPanel — ${label}`;
     if(document.title!==title)document.title=title;
@@ -127,7 +129,7 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     const crumb=byId('crumb');
     if(crumb){
       new MutationObserver(()=>{
-        const label=routeLabel();
+        const label=routeLink()?.textContent?.trim();
         if(label&&crumb.textContent.trim()!==label)scheduleRouteLabel();
       }).observe(crumb,{childList:true,characterData:true,subtree:true});
     }
