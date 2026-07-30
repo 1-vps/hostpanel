@@ -21,7 +21,7 @@ All ten existing catalogs retain their complete key sets. The overlay:
 
 ## Trust model
 
-The original source archive and its signature are not modified. `bootstrap-install.sh` first verifies that signed archive, then verifies every localization overlay file against the operator-supplied full Git commit before applying it to the extracted source tree. Both the original localization audit and the stricter editorial audit must pass before installation can begin.
+The original source archive and its signature are not modified. `bootstrap-install.sh` first verifies that signed archive, then verifies every localization overlay file against the operator-supplied full Git commit before applying it to the extracted source tree. The overlay remains source-visible in the repository so catalog and terminology changes can be reviewed independently. Both the original localization audit and the stricter editorial audit must pass before installation can begin.
 
 ## Verification
 
