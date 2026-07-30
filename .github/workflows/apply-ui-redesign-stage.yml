@@ -67,6 +67,12 @@ jobs:
           node --check tests/browser/panel-redesign.spec.js
           python3 -m unittest tests.test_panel_redesign tests.test_php_runtime_support tests.test_qemu_vm_acceptance -v
           bash -n bootstrap-install.sh
+
+          # Workflow files are published separately through the GitHub connector,
+          # because GITHUB_TOKEN cannot modify workflows without workflow scope.
+          git restore .github/workflows/qemu-vm-acceptance.yml
+          rm -f .github/workflows/ui-audit.yml
+
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add \
@@ -77,9 +83,7 @@ jobs:
             tests/test_php_runtime_support.py \
             tests/php-runtime-compat.php \
             tests/browser/panel-redesign.spec.js \
-            .github/workflows/ui-audit.yml \
             bootstrap-install.sh \
-            .github/workflows/qemu-vm-acceptance.yml \
             tests/test_qemu_vm_acceptance.py
           git commit -m 'Redesign control panel and add viewport audits'
           git push origin "HEAD:${{ github.head_ref }}"
