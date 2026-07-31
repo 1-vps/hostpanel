@@ -18,7 +18,7 @@ on:
       - tests/browser/panel-redesign.spec.js
       - hostpanel-*-source.tar.gz
       - hostpanel-*-source.tar.gz.sig
-      - requirements.lock
+      - SHA256SUMS
   push:
     branches: [main]
     paths:
@@ -37,7 +37,7 @@ on:
       - tests/browser/panel-redesign.spec.js
       - hostpanel-*-source.tar.gz
       - hostpanel-*-source.tar.gz.sig
-      - requirements.lock
+      - SHA256SUMS
   workflow_dispatch:
 
 permissions:
@@ -62,6 +62,8 @@ jobs:
         run: |
           set -euo pipefail
           archive=hostpanel-v3.4.0-hardened-r5-source.tar.gz
+          test -f SHA256SUMS
+          test ! -L SHA256SUMS
           test -f "$archive"
           test -f "$archive.sig"
           test ! -L "$archive"
@@ -310,7 +312,7 @@ jobs:
           set -euo pipefail
           cd "$UI_ROOT"
           npm ci --ignore-scripts
-          npx playwright install --with-deps chromium
+          ./node_modules/.bin/playwright install --with-deps chromium
 
       - name: Run Chromium interaction and Axe audit
         env:
