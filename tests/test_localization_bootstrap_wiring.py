@@ -16,10 +16,15 @@ FINAL_OVERRIDE_FILES = (
     "localization-overlay/catalog-final-overrides.zh-01.json",
     "localization-overlay/catalog-final-overrides.zh-02.json",
 )
+UI_OVERRIDE_FILES = (
+    "localization-overlay/catalog-ui-overrides.pt-01.json",
+)
 
 
 def load_wrapper():
-    spec = importlib.util.spec_from_file_location("hostpanel_localization_reviewed", WRAPPER_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "hostpanel_localization_reviewed", WRAPPER_PATH
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError("could not load reviewed localization wrapper")
     module = importlib.util.module_from_spec(spec)
@@ -45,41 +50,55 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
             'python3 "$LOCALIZATION_ROOT/apply_localization_overlay.py"',
             self.bootstrap,
         )
-        for path in FINAL_OVERRIDE_FILES:
+        for path in FINAL_OVERRIDE_FILES + UI_OVERRIDE_FILES:
             with self.subTest(path=path):
                 self.assertEqual(self.bootstrap.count(path), 1)
 
-    def test_localization_workflow_uses_wrapper_and_runs_override_regression(self):
+    def test_localization_workflow_uses_wrapper_and_runs_override_regressions(self):
         self.assertIn(
             "python3 localization-overlay/apply_localization_overlay_reviewed.py",
             self.localization_workflow,
         )
         self.assertIn("test_high_risk_locale_overrides.py", self.localization_workflow)
+        self.assertIn("test_portuguese_ui_overrides.py", self.localization_workflow)
         self.assertIn("test_localization_bootstrap_wiring.py", self.localization_workflow)
         self.assertIn("apply_localization_overlay_reviewed.py", self.localization_workflow)
 
     def test_qemu_runs_for_localization_changes(self):
         self.assertIn("      - localization-overlay/**", self.qemu_workflow)
         self.assertIn("      - tests/test_high_risk_locale_overrides.py", self.qemu_workflow)
+        self.assertIn("      - tests/test_portuguese_ui_overrides.py", self.qemu_workflow)
         self.assertIn("      - tests/test_localization_bootstrap_wiring.py", self.qemu_workflow)
         self.assertIn("test_high_risk_locale_overrides.py", self.qemu_workflow)
+        self.assertIn("test_portuguese_ui_overrides.py", self.qemu_workflow)
         self.assertIn("test_localization_bootstrap_wiring.py", self.qemu_workflow)
 
     def test_runtime_digest_constants_match_reviewed_layers(self):
-        self.assertEqual(self.wrapper.EXPECTED_BASE_COUNTS, {"ja": 19, "pt": 21, "zh": 15})
+        self.assertEqual(
+            self.wrapper.EXPECTED_BASE_COUNTS, {"ja": 19, "pt": 21, "zh": 15}
+        )
         self.assertEqual(
             self.wrapper.EXPECTED_BASE_CANONICAL_SHA256,
             "98e88a7c679eb3b4342a268deac8b0548c4e9509a1769b3ffc5626411a388604",
         )
-        self.assertEqual(self.wrapper.EXPECTED_FINAL_COUNTS, {"ja": 91, "pt": 31, "zh": 60})
+        self.assertEqual(
+            self.wrapper.EXPECTED_FINAL_COUNTS, {"ja": 91, "pt": 31, "zh": 60}
+        )
         self.assertEqual(
             self.wrapper.EXPECTED_FINAL_CANONICAL_SHA256,
             "5bbb02dfacb69ed83157a89348ac2e24da85665ffed8b6eb1866ca69ad232b5f",
         )
-        self.assertEqual(self.wrapper.EXPECTED_VISIBLE_COUNTS, {"ja": 110, "pt": 52, "zh": 75})
+        self.assertEqual(
+            self.wrapper.EXPECTED_VISIBLE_COUNTS, {"ja": 110, "pt": 52, "zh": 75}
+        )
         self.assertEqual(
             self.wrapper.EXPECTED_VISIBLE_CANONICAL_SHA256,
             "6d17c244c021aa08edc4a0a14cb7c49427e9bb5653e7e36725efa82a8fc0afec",
+        )
+        self.assertEqual(self.wrapper.EXPECTED_UI_COUNTS, {"pt": 80})
+        self.assertEqual(
+            self.wrapper.EXPECTED_UI_CANONICAL_SHA256,
+            "193ef6c9f6b0e3b36f755ace7d685109974ae30aa480bd4db9bdc01eceb2c08c",
         )
 
     def test_runtime_payload_validator_accepts_only_exact_reviewed_data(self):
