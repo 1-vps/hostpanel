@@ -1,3 +1,4 @@
+import ast
 import pathlib
 import tarfile
 import unittest
@@ -124,7 +125,41 @@ class QemuVmAcceptanceTests(unittest.TestCase):
 
     def test_guest_inputs_are_escaped_and_promoted_before_root_use(self):
         self.assertIn("printf 'HP_PANEL_HOST=%q\\n'", self.harness)
-        promotion = self.harness.index('sudo python3 - "$(id -u)" <<PYROOT')
+        promotion_marker = 'sudo python3 - "$(id -u)" <<PYROOT\n'
+        self.assertIn(promotion_marker, self.harness)
+        promotion_script = self.harness.split(promotion_marker, 1)[1].split(
+            "\nPYROOT\n", 1
+        )[0]
+        promotion_tree = ast.parse(promotion_script)
+
+        promoted_assignment = next(
+            node
+            for node in ast.walk(promotion_tree)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "promoted"
+                for target in node.targets
+            )
+        )
+        promoted_validation = next(
+            node
+            for node in ast.walk(promotion_tree)
+            if isinstance(node, ast.If)
+            and "QEMU guest input promotion failed" in ast.unparse(node)
+        )
+        self.assertLess(promoted_assignment.lineno, promoted_validation.lineno)
+        validation_predicates = ast.unparse(promoted_validation.test)
+        for predicate in (
+            "not stat.S_ISREG(promoted.st_mode)",
+            "promoted.st_uid != 0",
+            "promoted.st_gid != 0",
+            "promoted.st_nlink != 1",
+            "stat.S_IMODE(promoted.st_mode) != mode",
+        ):
+            with self.subTest(predicate=predicate):
+                self.assertIn(predicate, validation_predicates)
+
+        promotion = self.harness.index(promotion_marker)
         open_descriptor = self.harness.index("os.open(path,", promotion)
         no_follow = self.harness.index("os.O_NOFOLLOW", open_descriptor)
         descriptor_check = self.harness.index("metadata = os.fstat(source_fd)", no_follow)
@@ -149,9 +184,8 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         extra_byte_check = self.harness.index("if source.read(1):", bounded_read)
         atomic_replace = self.harness.index("os.replace(temp_name, path)", extra_byte_check)
         promoted_metadata = self.harness.index("promoted = path.lstat()", atomic_replace)
-        validation_start = self.harness.index("        if (", promoted_metadata)
-        validation_end = self.harness.index("        ):", validation_start)
-        guest_start = self.harness.index("sudo /tmp/qemu-guest-install.sh", validation_end)
+        promotion_end = self.harness.index("\nPYROOT\n", promoted_metadata)
+        guest_start = self.harness.index("sudo /tmp/qemu-guest-install.sh", promotion_end)
         self.assertLess(promotion, open_descriptor)
         self.assertLess(open_descriptor, no_follow)
         self.assertLess(no_follow, descriptor_check)
@@ -164,19 +198,8 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertLess(bounded_read, extra_byte_check)
         self.assertLess(extra_byte_check, atomic_replace)
         self.assertLess(atomic_replace, promoted_metadata)
-        self.assertLess(promoted_metadata, validation_start)
-        self.assertLess(validation_start, validation_end)
-        self.assertLess(validation_end, guest_start)
-        validation_block = self.harness[validation_start:validation_end]
-        for predicate in (
-            "not stat.S_ISREG(promoted.st_mode)",
-            "promoted.st_uid != 0",
-            "promoted.st_gid != 0",
-            "promoted.st_nlink != 1",
-            "stat.S_IMODE(promoted.st_mode) != mode",
-        ):
-            with self.subTest(predicate=predicate):
-                self.assertIn(predicate, validation_block)
+        self.assertLess(promoted_metadata, promotion_end)
+        self.assertLess(promotion_end, guest_start)
         self.assertNotIn("shutil.copyfileobj(source, target)", self.harness)
         self.assertNotIn("sudo chown root:root /tmp/bootstrap-install.sh", self.harness)
         self.assertNotIn("sudo chmod 700 /tmp/bootstrap-install.sh", self.harness)
