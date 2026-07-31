@@ -8,7 +8,7 @@ This commit-addressed overlay extends the signed `3.4.0-hardened-r5` source rele
 - Portuguese (`pt`, Brazilian terminology)
 - Simplified Chinese (`zh`)
 
-All regional tags are normalized to the supported base locale. Generic and regional Portuguese browser tags currently resolve to the single Brazilian-terminology `pt` catalog; a separate European Portuguese catalog is not included. The Chinese catalog is explicitly Simplified Chinese.
+All regional tags are normalized to the supported base locale. Generic and regional Portuguese browser tags currently resolve to the single Brazilian-terminology `pt` catalog; a separate European Portuguese catalog is not included. To make that scope visible to users, login and panel language selectors label the locale **Português (Brasil)** rather than the ambiguous **Português**. The Chinese catalog is explicitly Simplified Chinese.
 
 ## Existing catalog review
 
@@ -64,6 +64,7 @@ The localization workflow checks:
 - reviewed layers win after the checksum-locked compressed bundle
 - the explicitly reviewed Brazilian Portuguese values contain none of the tracked cross-language contamination markers
 - `cPanel` and `DirectAdmin` remain intact in Portuguese navigation
+- the `pt` locale is displayed exactly once as `Português (Brasil)` while other language labels remain unchanged
 - selector, registry, login, Python, JavaScript, Bash, installer, and QEMU integration consistency
 - bootstrap verifies every one of the five semantic final-override files against its Git object
 - the wrapper verifies all six reviewed JSON files against the selected checkout's Git objects before content validation
