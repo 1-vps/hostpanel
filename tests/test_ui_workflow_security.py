@@ -25,8 +25,10 @@ class UiWorkflowSecurityTests(unittest.TestCase):
             self.source,
         )
         self.assertIn("expected one checksum", self.source)
+        self.assertIn("test ! -L SHA256SUMS", self.source)
         self.assertIn('test ! -L "$archive"', self.source)
         self.assertIn('test ! -L "$archive.sig"', self.source)
+        self.assertEqual(self.source.count("      - SHA256SUMS\n"), 2)
 
     def test_checkout_and_python_bootstrap_are_bounded(self) -> None:
         self.assertIn("fetch-depth: 1", self.source)
@@ -36,6 +38,17 @@ class UiWorkflowSecurityTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: true", self.source)
         self.assertIn("'pip==25.1.1'", self.source)
         self.assertNotIn("pip install --disable-pip-version-check --upgrade pip", self.source)
+
+    def test_browser_install_uses_the_signed_local_dependency(self) -> None:
+        self.assertIn(
+            "./node_modules/.bin/playwright install --with-deps chromium",
+            self.source,
+        )
+        self.assertNotIn("npx playwright install", self.source)
+        self.assertLess(
+            self.source.index("npm ci --ignore-scripts"),
+            self.source.index("./node_modules/.bin/playwright install"),
+        )
 
     def test_security_regressions_are_executed_by_the_ui_workflow(self) -> None:
         for name in (
