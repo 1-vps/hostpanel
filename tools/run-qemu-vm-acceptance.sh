@@ -125,6 +125,9 @@ PY
 
 collect_evidence(){
   set +e
+  if [[ -n "$WORK_DIR" && -d "$WORK_DIR" && ! -L "$WORK_DIR" ]]; then
+    rm -f -- "$WORK_DIR/guest.env"
+  fi
   if qemu_pid_is_ours; then
     ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
       'sudo tar -C /root -czf - hostpanel-qemu-evidence 2>/dev/null' \
@@ -160,6 +163,8 @@ done
   || die 'HP_QEMU_REPO_TOKEN is required to fetch the reviewed private commit'
 [[ "$REPO_TOKEN" != *$'\n'* && "$REPO_TOKEN" != *$'\r'* ]] \
   || die 'HP_QEMU_REPO_TOKEN contains an invalid line break'
+unset HP_QEMU_REPO_TOKEN
+export -n REPO_TOKEN 2>/dev/null || true
 case "$MTA" in postfix|exim) ;; *) die "unsupported MTA: $MTA" ;; esac
 HOST_FORWARD_PORTS=(
   "$SSH_PORT" "$PANEL_FORWARD_PORT" 30025 30143 30993 30080 30443
@@ -194,22 +199,6 @@ for source_file in \
   [[ -f "$source_file" && ! -L "$source_file" ]] || die "unsafe or missing source file: $source_file"
 done
 
-REPO_AUTH_HEADER="$(printf 'x-access-token:%s' "$REPO_TOKEN" | base64 | tr -d '\r\n')"
-{
-  printf 'HP_REVIEWED_COMMIT_SHA=%q\n' "$REVIEWED_COMMIT_SHA"
-  printf 'HP_EXPECTED_VERSION=%q\n' "$EXPECTED_VERSION"
-  printf 'HP_PANEL_HOST=%q\n' "$PANEL_HOST"
-  printf 'HP_EXPECTED_PUBLIC_IP=%q\n' "$GUEST_IP"
-  printf 'HP_PANEL_ADMIN_CIDR=%q\n' "$ADMIN_CIDR"
-  printf 'HP_MTA=%q\n' "$MTA"
-  printf 'export GIT_CONFIG_COUNT=1\n'
-  printf 'export GIT_CONFIG_KEY_0=%q\n' 'http.https://github.com/.extraheader'
-  printf 'export GIT_CONFIG_VALUE_0=%q\n' "AUTHORIZATION: basic $REPO_AUTH_HEADER"
-  printf 'export GIT_TERMINAL_PROMPT=0\n'
-} > "$WORK_DIR/guest.env"
-chmod 600 "$WORK_DIR/guest.env"
-unset HP_QEMU_REPO_TOKEN REPO_TOKEN REPO_AUTH_HEADER
-
 printf '%s  %s\n' "$IMAGE_SHA256" "$WORK_DIR/base.img" > "$WORK_DIR/image.sha256"
 curl -fL --retry 5 --retry-all-errors --connect-timeout 20 \
   "$IMAGE_URL" -o "$WORK_DIR/base.img"
@@ -219,11 +208,11 @@ qemu-img resize "$WORK_DIR/disk.qcow2" "$VM_DISK_SIZE"
 
 ssh-keygen -q -t ed25519 -N '' -f "$WORK_DIR/id_ed25519"
 SSH_PUBLIC_KEY="$(cat "$WORK_DIR/id_ed25519.pub")"
-cat > "$WORK_DIR/meta-data" <<EOF
+cat > "$WORK_DIR/meta-data" <<EOF_META
 instance-id: hostpanel-qemu-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}
 local-hostname: hostpanel-qemu
-EOF
-cat > "$WORK_DIR/user-data" <<EOF
+EOF_META
+cat > "$WORK_DIR/user-data" <<EOF_USER
 #cloud-config
 manage_etc_hosts: true
 users:
@@ -243,7 +232,7 @@ growpart:
   mode: auto
   devices: ['/']
 resize_rootfs: true
-EOF
+EOF_USER
 cloud-localds "$WORK_DIR/seed.img" "$WORK_DIR/user-data" "$WORK_DIR/meta-data"
 
 accel_args=(-accel tcg,thread=multi -cpu max)
@@ -251,7 +240,7 @@ if [[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]]; then
   accel_args=(-enable-kvm -cpu host)
 fi
 printf 'QEMU acceleration: %s\n' "${accel_args[*]}"
-qemu-system-x86_64 \
+env -u HP_QEMU_REPO_TOKEN -u REPO_TOKEN qemu-system-x86_64 \
   -name hostpanel-acceptance \
   "${accel_args[@]}" \
   -machine type=q35 \
@@ -287,12 +276,29 @@ ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
   'test "$(cat /proc/1/comm)" = systemd; cat /etc/os-release; uname -a; df -hT; free -h' \
   | tee "$ARTIFACT_DIR/pre-install-inventory.txt"
 
+REPO_AUTH_HEADER="$(printf 'x-access-token:%s' "$REPO_TOKEN" | base64 | tr -d '\r\n')"
+{
+  printf 'HP_REVIEWED_COMMIT_SHA=%q\n' "$REVIEWED_COMMIT_SHA"
+  printf 'HP_EXPECTED_VERSION=%q\n' "$EXPECTED_VERSION"
+  printf 'HP_PANEL_HOST=%q\n' "$PANEL_HOST"
+  printf 'HP_EXPECTED_PUBLIC_IP=%q\n' "$GUEST_IP"
+  printf 'HP_PANEL_ADMIN_CIDR=%q\n' "$ADMIN_CIDR"
+  printf 'HP_MTA=%q\n' "$MTA"
+  printf 'export GIT_CONFIG_COUNT=1\n'
+  printf 'export GIT_CONFIG_KEY_0=%q\n' 'http.https://github.com/.extraheader'
+  printf 'export GIT_CONFIG_VALUE_0=%q\n' "AUTHORIZATION: basic $REPO_AUTH_HEADER"
+  printf 'export GIT_TERMINAL_PROMPT=0\n'
+} > "$WORK_DIR/guest.env"
+chmod 600 "$WORK_DIR/guest.env"
+unset REPO_TOKEN REPO_AUTH_HEADER
+
 scp "${scp_opts[@]}" \
   "$REPO_ROOT/bootstrap-install.sh" \
   "$REPO_ROOT/tools/validate-production-vm.sh" \
   "$REPO_ROOT/tools/qemu-guest-install.sh" \
   "$WORK_DIR/guest.env" \
   hostpanel@127.0.0.1:/tmp/
+rm -f -- "$WORK_DIR/guest.env"
 ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 '
 set -eu
 for path in /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh /tmp/guest.env; do
