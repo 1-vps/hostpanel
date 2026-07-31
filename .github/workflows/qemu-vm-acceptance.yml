@@ -33,6 +33,7 @@ on:
       - requirements.lock
       - SHA256SUMS
       - '*.sig'
+      - tests/test_existing_catalog_corrections.py
       - tests/test_high_risk_locale_overrides.py
       - tests/test_portuguese_ui_overrides.py
       - tests/test_localization_bootstrap_wiring.py
@@ -88,6 +89,7 @@ jobs:
           set -euo pipefail
           bash -n tools/run-qemu-vm-acceptance.sh
           bash -n tools/qemu-guest-install.sh
+          python3 -m unittest discover -s tests -p 'test_existing_catalog_corrections.py' -v
           python3 -m unittest discover -s tests -p 'test_high_risk_locale_overrides.py' -v
           python3 -m unittest discover -s tests -p 'test_portuguese_ui_overrides.py' -v
           python3 -m unittest discover -s tests -p 'test_localization_bootstrap_wiring.py' -v
