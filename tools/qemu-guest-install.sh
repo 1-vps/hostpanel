@@ -16,6 +16,7 @@ done
 }
 install -o root -g root -m 600 /tmp/guest.env /root/hostpanel-qemu.env
 source /root/hostpanel-qemu.env
+rm -f /tmp/guest.env
 EVIDENCE=/root/hostpanel-qemu-evidence
 PREFLIGHT_LOG="$EVIDENCE/preflight.log"
 PRIVATE_LOG=/root/hostpanel-qemu-private-install.log
@@ -24,8 +25,17 @@ install -d -o root -g root -m 700 "$EVIDENCE"
 : > "$PRIVATE_LOG"
 chmod 600 "$PRIVATE_LOG"
 
+clear_repo_auth(){
+  if [[ -f /root/hostpanel-qemu.env && ! -L /root/hostpanel-qemu.env ]]; then
+    sed -i '/^export GIT_/d' /root/hostpanel-qemu.env || true
+    chmod 600 /root/hostpanel-qemu.env || true
+  fi
+  unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
+}
+trap clear_repo_auth EXIT
+
 collect_failure_evidence(){
-  local status=$? stage=""
+  local status="${1:-$?}" stage=""
   trap - ERR
   if [[ -r /etc/hostpanel/install-state ]]; then
     stage="$(awk -F= '$1 == "stage" {sub(/^stage=/, ""); print; exit}' /etc/hostpanel/install-state)"
@@ -182,14 +192,28 @@ common_env=(
 )
 install_args=(--mta "$HP_MTA")
 echo 'Running installer preflight; its non-secret diagnostics are exported as evidence.'
-if ! env "${common_env[@]}" bash /root/bootstrap-install.sh --check "${install_args[@]}" > "$PREFLIGHT_LOG" 2>&1; then
+set +e
+env "${common_env[@]}" bash /root/bootstrap-install.sh --check "${install_args[@]}" > "$PREFLIGHT_LOG" 2>&1
+PREFLIGHT_STATUS=$?
+set -e
+if ((PREFLIGHT_STATUS != 0)); then
   echo 'Installer preflight failed:' >&2
   tail -n 200 "$PREFLIGHT_LOG" >&2
-  exit 1
+  clear_repo_auth
+  trap - EXIT
+  collect_failure_evidence "$PREFLIGHT_STATUS"
 fi
 
 echo 'Running full installation; generated credentials stay in the root-only guest log.'
+set +e
 env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
+INSTALL_STATUS=$?
+set -e
+clear_repo_auth
+trap - EXIT
+if ((INSTALL_STATUS != 0)); then
+  collect_failure_evidence "$INSTALL_STATUS"
+fi
 
 FAILURE_PHASE=pre-reboot-validation
 ACTUAL_VERSION="$(tr -d '[:space:]' < /opt/hostpanel/VERSION)"
