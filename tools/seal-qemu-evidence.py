@@ -10,12 +10,18 @@ import pathlib
 import stat
 import sys
 import tarfile
-import tempfile
 from types import ModuleType
+from typing import Any
 
 
 SANITIZER_PATH = pathlib.Path(__file__).with_name("sanitize-qemu-evidence.py")
 ARCHIVE_ROOT = pathlib.PurePosixPath("qemu-vm-acceptance")
+_DIRECTORY_FLAGS = (
+    os.O_RDONLY
+    | os.O_CLOEXEC
+    | getattr(os, "O_DIRECTORY", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+)
 
 
 def _load_sanitizer() -> ModuleType:
@@ -33,30 +39,62 @@ def _load_sanitizer() -> ModuleType:
 SANITIZER = _load_sanitizer()
 
 
-def _require_safe_root(root: pathlib.Path) -> pathlib.Path:
-    resolved = root.resolve(strict=True)
-    metadata = resolved.lstat()
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-        raise RuntimeError("unsafe evidence root")
-    return resolved
+def _directory_signature(metadata: Any) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_gid,
+    )
 
 
-def _require_safe_output(root: pathlib.Path, archive: pathlib.Path) -> pathlib.Path:
-    SANITIZER._require_safe_name(archive)
-    parent = archive.parent.resolve(strict=True)
-    parent_metadata = parent.lstat()
-    if stat.S_ISLNK(parent_metadata.st_mode) or not stat.S_ISDIR(parent_metadata.st_mode):
-        raise RuntimeError("unsafe sealed evidence parent")
-    resolved = parent / archive.name
-    if resolved.exists() or resolved.is_symlink():
-        raise RuntimeError("sealed evidence archive already exists")
+def _open_stable_directory(path: pathlib.Path, label: str) -> int:
+    initial = path.lstat()
+    if stat.S_ISLNK(initial.st_mode) or not stat.S_ISDIR(initial.st_mode):
+        raise RuntimeError(f"unsafe {label}")
+    descriptor = os.open(path, _DIRECTORY_FLAGS)
+    opened = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(opened.st_mode)
+        or _directory_signature(initial) != _directory_signature(opened)
+    ):
+        os.close(descriptor)
+        raise RuntimeError(f"{label} changed while opening")
+    return descriptor
+
+
+def _descriptor_path(descriptor: int) -> pathlib.Path:
+    return pathlib.Path(f"/proc/self/fd/{descriptor}")
+
+
+def _actual_directory_path(descriptor: int) -> pathlib.Path:
+    target = os.readlink(_descriptor_path(descriptor))
+    if target.endswith(" (deleted)"):
+        raise RuntimeError("sealed evidence directory was removed")
+    return pathlib.Path(target)
+
+
+def _require_absent_output(parent_descriptor: int, name: str) -> None:
     try:
-        resolved.relative_to(root)
+        os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    raise RuntimeError("sealed evidence archive already exists")
+
+
+def _require_output_outside_root(
+    root_descriptor: int,
+    parent_descriptor: int,
+    name: str,
+) -> None:
+    root = _actual_directory_path(root_descriptor)
+    target = _actual_directory_path(parent_descriptor) / name
+    try:
+        target.relative_to(root)
     except ValueError:
-        pass
-    else:
-        raise RuntimeError("sealed evidence archive must be outside the evidence tree")
-    return resolved
+        return
+    raise RuntimeError("sealed evidence archive must be outside the evidence tree")
 
 
 def _archive_name(root: pathlib.Path, path: pathlib.Path) -> str:
@@ -64,36 +102,69 @@ def _archive_name(root: pathlib.Path, path: pathlib.Path) -> str:
     return (ARCHIVE_ROOT / pathlib.PurePosixPath(*relative.parts)).as_posix()
 
 
-def _fsync_directory(directory: pathlib.Path) -> None:
-    descriptor = os.open(
-        directory,
-        os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0),
-    )
+def _same_file(left: Any, right: Any) -> bool:
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
+def _remove_created_archive(
+    parent_descriptor: int,
+    name: str,
+    created: Any | None,
+) -> None:
+    if created is None:
+        return
     try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        current = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if _same_file(created, current):
+        os.unlink(name, dir_fd=parent_descriptor)
+        os.fsync(parent_descriptor)
 
 
 def seal_tree(root: pathlib.Path, archive: pathlib.Path) -> tuple[int, int]:
-    root = _require_safe_root(root)
-    archive = _require_safe_output(root, archive)
-    paths = sorted(
-        SANITIZER._regular_files(root),
-        key=lambda path: os.fsencode(str(path.relative_to(root))),
-    )
-    if not paths:
-        raise RuntimeError("evidence tree contains no regular files")
-
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{archive.name}.seal.",
-        dir=archive.parent,
-    )
-    temporary_path = pathlib.Path(temporary_name)
-    published = False
-    total_bytes = 0
+    SANITIZER._require_safe_name(archive)
+    root_descriptor = _open_stable_directory(root, "evidence root")
+    parent_descriptor = -1
+    archive_descriptor = -1
+    created_metadata: Any | None = None
     try:
-        with os.fdopen(descriptor, "wb") as output:
+        parent_descriptor = _open_stable_directory(
+            archive.parent,
+            "sealed evidence parent",
+        )
+        _require_absent_output(parent_descriptor, archive.name)
+        _require_output_outside_root(
+            root_descriptor,
+            parent_descriptor,
+            archive.name,
+        )
+
+        root_view = _descriptor_path(root_descriptor)
+        paths = sorted(
+            SANITIZER._regular_files(root_view),
+            key=lambda path: os.fsencode(str(path.relative_to(root_view))),
+        )
+        if not paths:
+            raise RuntimeError("evidence tree contains no regular files")
+
+        archive_descriptor = os.open(
+            archive.name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_CLOEXEC
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=parent_descriptor,
+        )
+        os.fchmod(archive_descriptor, 0o600)
+        created_metadata = os.fstat(archive_descriptor)
+        if not stat.S_ISREG(created_metadata.st_mode) or created_metadata.st_nlink != 1:
+            raise RuntimeError("sealed evidence archive creation is unsafe")
+
+        total_bytes = 0
+        with os.fdopen(os.dup(archive_descriptor), "wb") as output:
             with tarfile.open(
                 fileobj=output,
                 mode="w",
@@ -104,7 +175,7 @@ def seal_tree(root: pathlib.Path, archive: pathlib.Path) -> tuple[int, int]:
                     total_bytes += len(data)
                     if total_bytes > SANITIZER.MAX_TOTAL_BYTES:
                         raise RuntimeError("sealed evidence exceeds total size limit")
-                    member = tarfile.TarInfo(_archive_name(root, path))
+                    member = tarfile.TarInfo(_archive_name(root_view, path))
                     member.size = len(data)
                     member.mode = 0o600
                     member.uid = 0
@@ -116,26 +187,37 @@ def seal_tree(root: pathlib.Path, archive: pathlib.Path) -> tuple[int, int]:
                     sealed.addfile(member, io.BytesIO(data))
             output.flush()
             os.fsync(output.fileno())
-        os.chmod(temporary_path, 0o600)
-        os.link(temporary_path, archive, follow_symlinks=False)
-        published = True
-        temporary_path.unlink()
-        _fsync_directory(archive.parent)
+        os.fsync(archive_descriptor)
 
-        metadata = archive.lstat()
+        final_descriptor_metadata = os.fstat(archive_descriptor)
+        final_path_metadata = os.stat(
+            archive.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
         if (
-            not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_nlink != 1
-            or stat.S_IMODE(metadata.st_mode) != 0o600
+            not stat.S_ISREG(final_descriptor_metadata.st_mode)
+            or final_descriptor_metadata.st_nlink != 1
+            or stat.S_IMODE(final_descriptor_metadata.st_mode) != 0o600
+            or not _same_file(final_descriptor_metadata, final_path_metadata)
         ):
             raise RuntimeError("sealed evidence archive metadata is unsafe")
+        os.fsync(parent_descriptor)
         return len(paths), total_bytes
     except Exception:
-        if published:
-            archive.unlink(missing_ok=True)
+        if parent_descriptor >= 0:
+            _remove_created_archive(
+                parent_descriptor,
+                archive.name,
+                created_metadata,
+            )
         raise
     finally:
-        temporary_path.unlink(missing_ok=True)
+        if archive_descriptor >= 0:
+            os.close(archive_descriptor)
+        if parent_descriptor >= 0:
+            os.close(parent_descriptor)
+        os.close(root_descriptor)
 
 
 def main(argv: list[str]) -> int:
