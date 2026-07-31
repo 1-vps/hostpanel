@@ -36,8 +36,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: control-panel-ui-audit-${{ github.sha }}
-  cancel-in-progress: false
+  group: control-panel-ui-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   static-and-browser:
@@ -107,6 +107,16 @@ jobs:
                   "getByRole('button', { name: 'Logga in' })",
                   "getByRole('button', { name: 'Logga in', exact: true })",
                   'legacy Swedish login selector',
+              ),
+              (
+                  "toHaveText('Filhanterare')",
+                  "toHaveText('Fil hanterare')",
+                  'signed-source Swedish file-manager label assertion',
+              ),
+              (
+                  "toHaveTitle('HostPanel — Filhanterare')",
+                  "toHaveTitle('HostPanel — Fil hanterare')",
+                  'signed-source Swedish file-manager title assertion',
               ),
               (
                   r"await expect(page).toHaveURL(/#\/panel\/dashboard$/);",
