@@ -17,9 +17,17 @@ FINAL_OVERRIDE_FILES = (
     "catalog-final-overrides.zh-01.json",
     "catalog-final-overrides.zh-02.json",
 )
+EXPECTED_BASE_COUNTS = {"ja": 19, "pt": 21, "zh": 15}
+EXPECTED_BASE_CANONICAL_SHA256 = (
+    "98e88a7c679eb3b4342a268deac8b0548c4e9509a1769b3ffc5626411a388604"
+)
 EXPECTED_FINAL_COUNTS = {"ja": 37, "pt": 31, "zh": 60}
 EXPECTED_FINAL_CANONICAL_SHA256 = (
     "bb44356c5ece1b3b767ffe0cd45cdf657c8ce357ed6ad9ef60785b307ac35250"
+)
+EXPECTED_VISIBLE_COUNTS = {"ja": 56, "pt": 52, "zh": 75}
+EXPECTED_VISIBLE_CANONICAL_SHA256 = (
+    "f74f4268c699fb6359d261bc3cd77869d055b96ab85f01ba54ce2943842867d0"
 )
 
 
@@ -31,6 +39,32 @@ def canonical_sha256(payload: dict[str, dict[str, str]]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
+
+
+def validate_reviewed_payload(
+    label: str,
+    payload: dict[str, dict[str, str]],
+    expected_counts: dict[str, int],
+    expected_digest: str,
+) -> None:
+    if set(payload) != set(expected_counts):
+        raise SystemExit(
+            f"{label} locale mismatch: expected {sorted(expected_counts)}, got {sorted(payload)}"
+        )
+    for locale, entries in payload.items():
+        if not isinstance(entries, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str) or not value.strip()
+            for key, value in entries.items()
+        ):
+            raise SystemExit(f"{label}: invalid reviewed entries for {locale}")
+    counts = {locale: len(entries) for locale, entries in payload.items()}
+    if counts != expected_counts:
+        raise SystemExit(f"{label} count mismatch: expected {expected_counts}, got {counts}")
+    digest = canonical_sha256(payload)
+    if digest != expected_digest:
+        raise SystemExit(
+            f"{label} digest mismatch: expected {expected_digest}, got {digest}"
+        )
 
 
 def load_core():
@@ -46,6 +80,14 @@ def install_final_override_loader(core) -> None:
     original = core.load_override_bundle
 
     def load_override_bundle(overlay: pathlib.Path, overrides: dict[str, dict[str, str]]) -> None:
+        base_payload = {locale: dict(entries) for locale, entries in overrides.items()}
+        validate_reviewed_payload(
+            "base reviewed override",
+            base_payload,
+            EXPECTED_BASE_COUNTS,
+            EXPECTED_BASE_CANONICAL_SHA256,
+        )
+
         original(overlay, overrides)
         expected = [overlay / name for name in FINAL_OVERRIDE_FILES]
         missing = [path.name for path in expected if not path.is_file() or path.is_symlink()]
@@ -79,17 +121,28 @@ def install_final_override_loader(core) -> None:
                     raise SystemExit(f"{path.name}: duplicate final override keys: {duplicate[:8]}")
                 target.update(entries)
 
-        counts = {locale: len(entries) for locale, entries in final_payload.items()}
-        if counts != EXPECTED_FINAL_COUNTS:
-            raise SystemExit(
-                f"final override count mismatch: expected {EXPECTED_FINAL_COUNTS}, got {counts}"
-            )
-        digest = canonical_sha256(final_payload)
-        if digest != EXPECTED_FINAL_CANONICAL_SHA256:
-            raise SystemExit(
-                "final override digest mismatch: "
-                f"expected {EXPECTED_FINAL_CANONICAL_SHA256}, got {digest}"
-            )
+        validate_reviewed_payload(
+            "final semantic override",
+            final_payload,
+            EXPECTED_FINAL_COUNTS,
+            EXPECTED_FINAL_CANONICAL_SHA256,
+        )
+
+        visible_payload = {locale: dict(entries) for locale, entries in base_payload.items()}
+        for locale, entries in final_payload.items():
+            overlap = sorted(set(visible_payload[locale]) & set(entries))
+            if overlap:
+                raise SystemExit(
+                    f"reviewed override layers overlap for {locale}: {overlap[:8]}"
+                )
+            visible_payload[locale].update(entries)
+        validate_reviewed_payload(
+            "combined source-visible override",
+            visible_payload,
+            EXPECTED_VISIBLE_COUNTS,
+            EXPECTED_VISIBLE_CANONICAL_SHA256,
+        )
+
         for locale, entries in final_payload.items():
             overrides.setdefault(locale, {}).update(entries)
 
