@@ -5,6 +5,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "vps-acceptance.yml"
+REVIEWED_COMMIT = "9c38d0095563ea33efd14124babfd29556c0da46"
 
 
 class VPSAcceptanceWorkflowTests(unittest.TestCase):
@@ -34,13 +35,26 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
         self.assertNotIn("StrictHostKeyChecking=no", self.text)
         self.assertNotIn("UserKnownHostsFile=/dev/null", self.text)
 
+    def test_checkout_and_install_inputs_are_commit_pinned(self) -> None:
+        self.assertIn(f"REVIEWED_COMMIT_SHA: {REVIEWED_COMMIT}", self.text)
+        self.assertIn(f"ref: {REVIEWED_COMMIT}", self.text)
+        self.assertGreaterEqual(
+            self.text.count('[[ "$(git rev-parse HEAD)" == "$REVIEWED_COMMIT_SHA" ]]'),
+            2,
+        )
+        self.assertIn("bootstrap-install.sh", self.text)
+        self.assertIn("tools/validate-production-vm.sh", self.text)
+        self.assertNotIn("raw.githubusercontent.com/1-vps/hostpanel", self.text)
+
     def test_install_is_pinned_and_preserves_evidence(self) -> None:
-        self.assertIn("9c38d0095563ea33efd14124babfd29556c0da46", self.text)
         self.assertIn("EXPECTED_VERSION: 3.4.0", self.text)
         self.assertNotIn("EXPECTED_VERSION: 3.4.0-hardened-r6", self.text)
         self.assertIn("validate-production-vm.sh --prepare-reboot", self.text)
         self.assertIn("validate-production-vm.sh --post-reboot", self.text)
-        self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", self.text)
+        self.assertIn(
+            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            self.text,
+        )
         self.assertNotIn("eval ", self.text)
 
     def test_private_repository_auth_is_transient(self) -> None:
@@ -55,9 +69,14 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
             self.text,
         )
         self.assertIn("unset HP_VPS_REPO_TOKEN REPO_AUTH_HEADER", self.text)
-        self.assertNotIn("raw.githubusercontent.com/1-vps/hostpanel", self.text)
-        self.assertIn("bootstrap-install.sh", self.text)
-        self.assertIn("tools/validate-production-vm.sh", self.text)
+
+    def test_runner_removes_transient_token_files_on_every_exit(self) -> None:
+        self.assertIn("local_cleanup(){", self.text)
+        self.assertIn("trap local_cleanup EXIT", self.text)
+        self.assertIn(
+            "rm -f /tmp/hostpanel-acceptance.env /tmp/hostpanel-acceptance-remote.sh",
+            self.text,
+        )
 
     def test_generated_credentials_stay_on_the_vps(self) -> None:
         self.assertNotIn("/var/log/hostpanel-install.log", self.text)
