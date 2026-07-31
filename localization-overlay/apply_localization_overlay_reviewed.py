@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the core localization overlay plus reviewed final-language corrections."""
+"""Apply the core localization overlay plus reviewed language corrections."""
 from __future__ import annotations
 
 import hashlib
@@ -18,6 +18,9 @@ FINAL_OVERRIDE_FILES = (
     "catalog-final-overrides.zh-01.json",
     "catalog-final-overrides.zh-02.json",
 )
+UI_OVERRIDE_FILES = (
+    "catalog-ui-overrides.pt-01.json",
+)
 EXPECTED_BASE_COUNTS = {"ja": 19, "pt": 21, "zh": 15}
 EXPECTED_BASE_CANONICAL_SHA256 = (
     "98e88a7c679eb3b4342a268deac8b0548c4e9509a1769b3ffc5626411a388604"
@@ -29,6 +32,10 @@ EXPECTED_FINAL_CANONICAL_SHA256 = (
 EXPECTED_VISIBLE_COUNTS = {"ja": 110, "pt": 52, "zh": 75}
 EXPECTED_VISIBLE_CANONICAL_SHA256 = (
     "6d17c244c021aa08edc4a0a14cb7c49427e9bb5653e7e36725efa82a8fc0afec"
+)
+EXPECTED_UI_COUNTS = {"pt": 80}
+EXPECTED_UI_CANONICAL_SHA256 = (
+    "193ef6c9f6b0e3b36f755ace7d685109974ae30aa480bd4db9bdc01eceb2c08c"
 )
 
 
@@ -77,6 +84,47 @@ def load_core():
     return module
 
 
+def load_review_files(
+    overlay: pathlib.Path,
+    file_names: tuple[str, ...],
+    pattern: str,
+    allowed_locales: frozenset[str],
+    label: str,
+) -> dict[str, dict[str, str]]:
+    expected = [overlay / name for name in file_names]
+    missing = [path.name for path in expected if not path.is_file() or path.is_symlink()]
+    discovered = sorted(overlay.glob(pattern))
+    unexpected = [path.name for path in discovered if path not in set(expected)]
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append(f"missing {label} files: {missing}")
+        if unexpected:
+            details.append(f"unexpected {label} files: {unexpected}")
+        raise SystemExit(f"{label} layout mismatch: " + "; ".join(details))
+
+    result: dict[str, dict[str, str]] = {}
+    for path in expected:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"{path.name}: invalid JSON: {exc}") from exc
+        if not isinstance(payload, dict) or not set(payload).issubset(allowed_locales):
+            raise SystemExit(f"{path.name}: invalid locales for {label}")
+        for locale, entries in payload.items():
+            if not isinstance(entries, dict) or any(
+                not isinstance(key, str) or not isinstance(value, str) or not value.strip()
+                for key, value in entries.items()
+            ):
+                raise SystemExit(f"{path.name}: invalid {label} entries for {locale}")
+            target = result.setdefault(locale, {})
+            duplicate = sorted(set(target) & set(entries))
+            if duplicate:
+                raise SystemExit(f"{path.name}: duplicate {label} keys: {duplicate[:8]}")
+            target.update(entries)
+    return result
+
+
 def install_final_override_loader(core) -> None:
     original = core.load_override_bundle
 
@@ -90,38 +138,14 @@ def install_final_override_loader(core) -> None:
         )
 
         original(overlay, overrides)
-        expected = [overlay / name for name in FINAL_OVERRIDE_FILES]
-        missing = [path.name for path in expected if not path.is_file() or path.is_symlink()]
-        discovered = sorted(overlay.glob("catalog-final-overrides.*.json"))
-        unexpected = [path.name for path in discovered if path not in set(expected)]
-        if missing or unexpected:
-            details = []
-            if missing:
-                details.append(f"missing final overrides: {missing}")
-            if unexpected:
-                details.append(f"unexpected final overrides: {unexpected}")
-            raise SystemExit("final override layout mismatch: " + "; ".join(details))
 
-        final_payload: dict[str, dict[str, str]] = {}
-        for path in expected:
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as exc:
-                raise SystemExit(f"{path.name}: invalid JSON: {exc}") from exc
-            if not isinstance(payload, dict) or not set(payload).issubset(core.RELEASE_CANDIDATES):
-                raise SystemExit(f"{path.name}: final overrides must target release-candidate locales")
-            for locale, entries in payload.items():
-                if not isinstance(entries, dict) or any(
-                    not isinstance(key, str) or not isinstance(value, str) or not value.strip()
-                    for key, value in entries.items()
-                ):
-                    raise SystemExit(f"{path.name}: invalid final overrides for {locale}")
-                target = final_payload.setdefault(locale, {})
-                duplicate = sorted(set(target) & set(entries))
-                if duplicate:
-                    raise SystemExit(f"{path.name}: duplicate final override keys: {duplicate[:8]}")
-                target.update(entries)
-
+        final_payload = load_review_files(
+            overlay,
+            FINAL_OVERRIDE_FILES,
+            "catalog-final-overrides.*.json",
+            frozenset(core.RELEASE_CANDIDATES),
+            "final semantic override",
+        )
         validate_reviewed_payload(
             "final semantic override",
             final_payload,
@@ -144,7 +168,28 @@ def install_final_override_loader(core) -> None:
             EXPECTED_VISIBLE_CANONICAL_SHA256,
         )
 
+        ui_payload = load_review_files(
+            overlay,
+            UI_OVERRIDE_FILES,
+            "catalog-ui-overrides.*.json",
+            frozenset({"pt"}),
+            "Portuguese UI override",
+        )
+        validate_reviewed_payload(
+            "Portuguese UI override",
+            ui_payload,
+            EXPECTED_UI_COUNTS,
+            EXPECTED_UI_CANONICAL_SHA256,
+        )
+        ui_overlap = sorted(set(visible_payload["pt"]) & set(ui_payload["pt"]))
+        if ui_overlap:
+            raise SystemExit(
+                f"Portuguese UI override overlaps reviewed values: {ui_overlap[:8]}"
+            )
+
         for locale, entries in final_payload.items():
+            overrides.setdefault(locale, {}).update(entries)
+        for locale, entries in ui_payload.items():
             overrides.setdefault(locale, {}).update(entries)
 
     core.load_override_bundle = load_override_bundle
