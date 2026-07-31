@@ -33,6 +33,7 @@ on:
       - SHA256SUMS
       - '*.sig'
       - tests/test_qemu_vm_acceptance.py
+      - tests/test_qemu_token_scope.py
       - tests/test_qemu_default_version.py
       - tests/test_post_install_health.py
       - tests/test_first_reboot_hardening.py
@@ -46,8 +47,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: qemu-vm-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
-  cancel-in-progress: false
+  group: qemu-vm-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   release-state-inspection:
@@ -81,6 +82,7 @@ jobs:
           bash -n tools/run-qemu-vm-acceptance.sh
           bash -n tools/qemu-guest-install.sh
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
+          python3 -m unittest discover -s tests -p 'test_qemu_token_scope.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_default_version.py' -v
           python3 -m unittest discover -s tests -p 'test_systemd_resolved_dns.py' -v
           python3 -m unittest discover -s tests -p 'test_panel_redesign.py' -v
@@ -109,6 +111,8 @@ jobs:
           fi
 
       - name: Boot, install, reboot, and validate
+        env:
+          HP_QEMU_REPO_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/qemu-vm-acceptance
