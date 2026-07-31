@@ -45,8 +45,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: qemu-vm-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
-  cancel-in-progress: false
+  group: qemu-vm-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   release-state-inspection:
