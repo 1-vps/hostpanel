@@ -146,6 +146,27 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
         self.assertIn("test_portuguese_ui_overrides.py", self.qemu_workflow)
         self.assertIn("test_localization_bootstrap_wiring.py", self.qemu_workflow)
 
+    def test_workflows_cancel_superseded_pull_request_runs(self):
+        expected_groups = (
+            (
+                self.localization_workflow,
+                "group: localization-overlay-${{ github.event.pull_request.number || github.ref }}",
+            ),
+            (
+                self.qemu_workflow,
+                "group: qemu-vm-acceptance-${{ github.event.pull_request.number || github.ref }}",
+            ),
+        )
+        for workflow, expected_group in expected_groups:
+            with self.subTest(group=expected_group):
+                self.assertIn(expected_group, workflow)
+                self.assertIn("cancel-in-progress: true", workflow)
+                self.assertNotIn("cancel-in-progress: false", workflow)
+                self.assertNotIn(
+                    "github.event.pull_request.head.sha || github.sha",
+                    workflow.split("jobs:", 1)[0],
+                )
+
     def test_runtime_digest_constants_match_reviewed_layers(self):
         self.assertEqual(self.wrapper.EXPECTED_BASE_COUNTS, {"ja": 19, "pt": 21, "zh": 15})
         self.assertEqual(self.wrapper.EXPECTED_FINAL_COUNTS, {"ja": 91, "pt": 31, "zh": 60})
