@@ -11,6 +11,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent
 CORE_PATH = ROOT / "apply_localization_overlay.py"
+BRAZILIAN_PORTUGUESE_LABEL = "Português (Brasil)"
 FINAL_OVERRIDE_FILES = (
     "catalog-final-overrides.ja-01.json",
     "catalog-final-overrides.ja-02.json",
@@ -121,6 +122,22 @@ def load_core():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def install_language_labels(core) -> None:
+    updated: list[tuple[str, str]] = []
+    replaced = 0
+    for code, label in core.LANGUAGES:
+        if code == "pt":
+            updated.append((code, BRAZILIAN_PORTUGUESE_LABEL))
+            replaced += 1
+        else:
+            updated.append((code, label))
+    if replaced != 1:
+        raise SystemExit(
+            f"expected exactly one Portuguese language entry, found {replaced}"
+        )
+    core.LANGUAGES = updated
 
 
 def load_review_files(
@@ -266,6 +283,7 @@ def install_final_override_loader(core) -> None:
 
 def main() -> int:
     core = load_core()
+    install_language_labels(core)
     install_final_override_loader(core)
     return core.main()
 
