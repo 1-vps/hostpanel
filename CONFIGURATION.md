@@ -7,8 +7,11 @@ the pinned bootstrap. Do not execute an unpinned branch script as root.
 Validated installer and VM-harness commit:
 
 ```text
-01f171b489bc9971eab4e3ebe7aad58f10255124
+9c38d0095563ea33efd14124babfd29556c0da46
 ```
+
+The working-release label is `3.4.0-hardened-r6`, while the value installed in
+`/opt/hostpanel/VERSION` is `3.4.0`.
 
 ## Required installation settings
 
