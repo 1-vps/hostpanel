@@ -235,7 +235,13 @@ class QemuEvidenceSealerTests(unittest.TestCase):
         self.assertEqual(len(archive_assignments), 1)
         archive_descriptor = archive_assignments[0].targets[0].id
 
-        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+        seal_tree_function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "seal_tree"
+        )
+        seal_tree_nodes = list(ast.walk(seal_tree_function))
+        calls = [node for node in seal_tree_nodes if isinstance(node, ast.Call)]
         self.assertTrue(
             any(
                 _os_call(call, "fchmod")
@@ -256,11 +262,47 @@ class QemuEvidenceSealerTests(unittest.TestCase):
                 for call in calls
             )
         )
+
+        path_metadata_assignments = [
+            node
+            for node in seal_tree_nodes
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and _os_call(node.value, "stat")
+            and any(keyword.arg == "dir_fd" for keyword in node.value.keywords)
+        ]
+        self.assertEqual(len(path_metadata_assignments), 1)
+        final_path_assignment = path_metadata_assignments[0]
+        final_path_metadata = final_path_assignment.targets[0].id
+
+        descriptor_metadata_assignments = [
+            node
+            for node in seal_tree_nodes
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and _os_call(node.value, "fstat")
+            and node.value.args
+            and isinstance(node.value.args[0], ast.Name)
+            and node.value.args[0].id == archive_descriptor
+            and node.lineno < final_path_assignment.lineno
+        ]
+        self.assertGreaterEqual(len(descriptor_metadata_assignments), 2)
+        final_descriptor_metadata = max(
+            descriptor_metadata_assignments,
+            key=lambda node: node.lineno,
+        ).targets[0].id
+
         self.assertTrue(
             any(
                 isinstance(call.func, ast.Name)
                 and call.func.id == "_same_file"
                 and len(call.args) == 2
+                and isinstance(call.args[0], ast.Name)
+                and call.args[0].id == final_descriptor_metadata
+                and isinstance(call.args[1], ast.Name)
+                and call.args[1].id == final_path_metadata
                 for call in calls
             )
         )
