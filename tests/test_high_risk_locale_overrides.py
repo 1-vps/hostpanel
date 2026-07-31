@@ -12,16 +12,17 @@ OVERLAY = ROOT / "localization-overlay"
 BASE_OVERRIDES = OVERLAY / "catalog-overrides.json"
 FINAL_OVERRIDE_FILES = (
     "catalog-final-overrides.ja-01.json",
+    "catalog-final-overrides.ja-02.json",
     "catalog-final-overrides.pt-01.json",
     "catalog-final-overrides.zh-01.json",
     "catalog-final-overrides.zh-02.json",
 )
 EXPECTED_BASE_COUNTS = {"ja": 19, "pt": 21, "zh": 15}
 EXPECTED_BASE_CANONICAL_SHA256 = "98e88a7c679eb3b4342a268deac8b0548c4e9509a1769b3ffc5626411a388604"
-EXPECTED_FINAL_COUNTS = {"ja": 37, "pt": 31, "zh": 60}
-EXPECTED_FINAL_CANONICAL_SHA256 = "bb44356c5ece1b3b767ffe0cd45cdf657c8ce357ed6ad9ef60785b307ac35250"
-EXPECTED_VISIBLE_COUNTS = {"ja": 56, "pt": 52, "zh": 75}
-EXPECTED_VISIBLE_CANONICAL_SHA256 = "f74f4268c699fb6359d261bc3cd77869d055b96ab85f01ba54ce2943842867d0"
+EXPECTED_FINAL_COUNTS = {"ja": 91, "pt": 31, "zh": 60}
+EXPECTED_FINAL_CANONICAL_SHA256 = "5bbb02dfacb69ed83157a89348ac2e24da85665ffed8b6eb1866ca69ad232b5f"
+EXPECTED_VISIBLE_COUNTS = {"ja": 110, "pt": 52, "zh": 75}
+EXPECTED_VISIBLE_CANONICAL_SHA256 = "6d17c244c021aa08edc4a0a14cb7c49427e9bb5653e7e36725efa82a8fc0afec"
 PLACEHOLDER = re.compile(r"\{[A-Za-z0-9_.-]+\}")
 PORTUGUESE_CONTAMINATION = re.compile(
     r"(?i)(?<![\w])(?:permanecen|hasta|contraseña|archivos|datos|correo|"
