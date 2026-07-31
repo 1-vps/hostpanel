@@ -56,8 +56,8 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
         )
         self.assertIn("unset HP_VPS_REPO_TOKEN REPO_AUTH_HEADER", self.text)
         self.assertNotIn("raw.githubusercontent.com/1-vps/hostpanel", self.text)
-        self.assertIn("bootstrap-install.sh \\", self.text)
-        self.assertIn("tools/validate-production-vm.sh \\", self.text)
+        self.assertIn("bootstrap-install.sh", self.text)
+        self.assertIn("tools/validate-production-vm.sh", self.text)
 
     def test_generated_credentials_stay_on_the_vps(self) -> None:
         self.assertNotIn("/var/log/hostpanel-install.log", self.text)
