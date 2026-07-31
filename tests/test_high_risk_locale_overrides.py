@@ -88,11 +88,15 @@ def load_final_overrides() -> dict[str, dict[str, str]]:
     return result
 
 
-def load_complete_overrides() -> dict[str, dict[str, str]]:
-    wrapper = load_module(
+def load_wrapper():
+    return load_module(
         OVERLAY / "apply_localization_overlay_reviewed.py",
         "hostpanel_localization_reviewed",
     )
+
+
+def load_complete_overrides() -> dict[str, dict[str, str]]:
+    wrapper = load_wrapper()
     core = wrapper.load_core()
     wrapper.install_final_override_loader(core)
     overrides = json.loads(BASE_OVERRIDES.read_text(encoding="utf-8"))
@@ -105,6 +109,8 @@ class HighRiskLocaleOverrideTests(unittest.TestCase):
     def setUpClass(cls):
         cls.base = json.loads(BASE_OVERRIDES.read_text(encoding="utf-8"))
         cls.final = load_final_overrides()
+        cls.wrapper = load_wrapper()
+        cls.ui = cls.wrapper.PORTUGUESE_UI_OVERRIDES
         cls.english = load_signed_english_catalog()
 
     def test_base_reviewed_payload_is_locked(self):
@@ -133,8 +139,12 @@ class HighRiskLocaleOverrideTests(unittest.TestCase):
         )
         self.assertEqual(canonical_sha256(visible), EXPECTED_VISIBLE_CANONICAL_SHA256)
 
-    def test_every_visible_key_exists_and_preserves_placeholders(self):
-        for source_name, payload in (("base", self.base), ("final", self.final)):
+    def test_every_reviewed_key_exists_and_preserves_placeholders(self):
+        for source_name, payload in (
+            ("base", self.base),
+            ("final", self.final),
+            ("Portuguese UI", self.ui),
+        ):
             for locale, entries in payload.items():
                 for key, value in entries.items():
                     with self.subTest(source=source_name, locale=locale, key=key):
@@ -146,18 +156,20 @@ class HighRiskLocaleOverrideTests(unittest.TestCase):
                             sorted(PLACEHOLDER.findall(self.english[key])),
                         )
 
-    def test_final_overrides_land_after_the_locked_bundle(self):
+    def test_reviewed_overrides_land_after_the_locked_bundle(self):
         complete = load_complete_overrides()
-        for locale, entries in self.final.items():
-            for key, expected in entries.items():
-                with self.subTest(locale=locale, key=key):
-                    self.assertEqual(complete[locale][key], expected)
+        for payload in (self.final, self.ui):
+            for locale, entries in payload.items():
+                for key, expected in entries.items():
+                    with self.subTest(locale=locale, key=key):
+                        self.assertEqual(complete[locale][key], expected)
 
-    def test_final_portuguese_catalog_has_no_known_language_contamination(self):
-        catalog = json.loads((OVERLAY / "catalogs" / "i18n.pt.json").read_text(encoding="utf-8"))
-        catalog.update(load_complete_overrides()["pt"])
+    def test_reviewed_portuguese_values_have_no_known_contamination_markers(self):
+        reviewed = dict(self.base["pt"])
+        reviewed.update(self.final["pt"])
+        reviewed.update(self.ui["pt"])
         contaminated = {
-            key: value for key, value in catalog.items()
+            key: value for key, value in reviewed.items()
             if PORTUGUESE_CONTAMINATION.search(value)
         }
         self.assertEqual(contaminated, {})
