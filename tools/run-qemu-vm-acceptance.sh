@@ -301,15 +301,56 @@ scp "${scp_opts[@]}" \
 rm -f -- "$WORK_DIR/guest.env"
 ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 '
 set -eu
-for path in /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh /tmp/guest.env; do
-  test -f "$path"
-  test ! -L "$path"
-  test "$(stat -c %u "$path")" = "$(id -u)"
-  test "$(stat -c %h "$path")" = 1
-done
-sudo chown root:root /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh /tmp/guest.env
-sudo chmod 700 /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh
-sudo chmod 600 /tmp/guest.env
+sudo python3 - "$(id -u)" <<PYROOT
+import os
+import pathlib
+import shutil
+import stat
+import sys
+import tempfile
+
+expected_uid = int(sys.argv[1])
+inputs = (
+    (pathlib.Path("/tmp/bootstrap-install.sh"), 0o700),
+    (pathlib.Path("/tmp/validate-production-vm.sh"), 0o700),
+    (pathlib.Path("/tmp/qemu-guest-install.sh"), 0o700),
+    (pathlib.Path("/tmp/guest.env"), 0o600),
+)
+for path, mode in inputs:
+    source_fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    temp_name = None
+    try:
+        metadata = os.fstat(source_fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise SystemExit(f"QEMU guest input is not regular: {path}")
+        if metadata.st_uid != expected_uid or metadata.st_nlink != 1:
+            raise SystemExit(f"QEMU guest input ownership or link count is unsafe: {path}")
+        if metadata.st_size > 16 * 1024 * 1024:
+            raise SystemExit(f"QEMU guest input is unexpectedly large: {path}")
+
+        temp_fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        with os.fdopen(os.dup(source_fd), "rb") as source, os.fdopen(temp_fd, "wb") as target:
+            shutil.copyfileobj(source, target)
+            target.flush()
+            os.fsync(target.fileno())
+        os.chmod(temp_name, mode)
+        os.replace(temp_name, path)
+        temp_name = None
+
+        promoted = path.lstat()
+        if (
+            not stat.S_ISREG(promoted.st_mode)
+            or promoted.st_uid != 0
+            or promoted.st_gid != 0
+            or promoted.st_nlink != 1
+            or stat.S_IMODE(promoted.st_mode) != mode
+        ):
+            raise SystemExit(f"QEMU guest input promotion failed: {path}")
+    finally:
+        os.close(source_fd)
+        if temp_name is not None:
+            pathlib.Path(temp_name).unlink(missing_ok=True)
+PYROOT
 sudo /tmp/qemu-guest-install.sh
 '
 

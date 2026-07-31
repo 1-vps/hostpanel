@@ -61,6 +61,29 @@ class QemuTokenScopeTests(unittest.TestCase):
         self.assertLess(cleanup_remove, evidence_ssh)
         self.assertNotIn('$ARTIFACT_DIR/guest.env', self.harness)
 
+    def test_guest_inputs_are_promoted_from_verified_descriptors(self):
+        promotion = self.harness.index('sudo python3 - "$(id -u)" <<PYROOT')
+        open_descriptor = self.harness.index("os.open(path,", promotion)
+        no_follow = self.harness.index("os.O_NOFOLLOW", open_descriptor)
+        descriptor_check = self.harness.index("metadata = os.fstat(source_fd)", no_follow)
+        ownership_check = self.harness.index(
+            "metadata.st_uid != expected_uid or metadata.st_nlink != 1",
+            descriptor_check,
+        )
+        descriptor_copy = self.harness.index("os.dup(source_fd)", ownership_check)
+        atomic_replace = self.harness.index("os.replace(temp_name, path)", descriptor_copy)
+        root_check = self.harness.index("promoted.st_uid != 0", atomic_replace)
+        guest_start = self.harness.index("sudo /tmp/qemu-guest-install.sh", root_check)
+        self.assertLess(promotion, open_descriptor)
+        self.assertLess(open_descriptor, descriptor_check)
+        self.assertLess(descriptor_check, ownership_check)
+        self.assertLess(ownership_check, descriptor_copy)
+        self.assertLess(descriptor_copy, atomic_replace)
+        self.assertLess(atomic_replace, root_check)
+        self.assertLess(root_check, guest_start)
+        self.assertNotIn("sudo chown root:root /tmp/bootstrap-install.sh", self.harness)
+        self.assertNotIn("sudo chmod 700 /tmp/bootstrap-install.sh", self.harness)
+
     def test_guest_removes_transient_authentication_state(self):
         self.assertIn("rm -f /tmp/guest.env", self.guest_installer)
         self.assertIn("clear_repo_auth(){", self.guest_installer)
