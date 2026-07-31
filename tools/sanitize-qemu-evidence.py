@@ -13,6 +13,11 @@ from collections.abc import Iterator
 
 MAX_FILE_BYTES = 128 * 1024 * 1024
 MAX_TOTAL_BYTES = 256 * 1024 * 1024
+_SECRET_FIELD = rb"(?:access[_-]?token|token|password|passwd|secret|api[_-]?key)"
+_SECRET_VALUE = rb"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s\"']+)"
+_ASSIGNMENT_VALUE = rb"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s&#;]+)"
+_JSON_VALUE = rb"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^,\s}]+)"
+_TOKEN_VALUE = rb"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^@\s/\"']+)"
 
 _RULES: tuple[tuple[re.Pattern[bytes], bytes], ...] = (
     (
@@ -24,20 +29,31 @@ _RULES: tuple[tuple[re.Pattern[bytes], bytes], ...] = (
     ),
     (
         re.compile(
-            rb"(\bauthorization\s*:\s*(?:basic|bearer)\s+)[^\s\"']+",
+            rb"(\bauthorization\s*[:=]\s*(?:basic|bearer)\s+)" + _SECRET_VALUE,
             re.IGNORECASE,
         ),
         rb"\1[REDACTED]",
     ),
     (
         re.compile(
-            rb"([?&](?:access[_-]?token|token|password|passwd|secret|api[_-]?key)=)[^&\s#]+",
+            rb"((?:^|[?&;\s])" + _SECRET_FIELD + rb"\s*=\s*)" + _ASSIGNMENT_VALUE,
+            re.IGNORECASE | re.MULTILINE,
+        ),
+        rb"\1[REDACTED]",
+    ),
+    (
+        re.compile(
+            rb"((?:\"" + _SECRET_FIELD + rb"\"|'" + _SECRET_FIELD + rb"')\s*:\s*)"
+            + _JSON_VALUE,
             re.IGNORECASE,
         ),
         rb"\1[REDACTED]",
     ),
     (
-        re.compile(rb"(x-access-token:)[^@\s/]+", re.IGNORECASE),
+        re.compile(
+            rb"(x-access-token\s*:\s*)" + _TOKEN_VALUE,
+            re.IGNORECASE,
+        ),
         rb"\1[REDACTED]",
     ),
     (
@@ -62,14 +78,28 @@ _LEAK_PATTERNS: tuple[re.Pattern[bytes], ...] = (
         re.IGNORECASE,
     ),
     re.compile(
-        rb"\bauthorization\s*:\s*(?:basic|bearer)\s+(?!\[REDACTED\])[^\s\"']+",
+        rb"\bauthorization\s*[:=]\s*(?:basic|bearer)\s+"
+        rb"(?!\[REDACTED\])"
+        + _SECRET_VALUE,
         re.IGNORECASE,
     ),
     re.compile(
-        rb"[?&](?:access[_-]?token|token|password|passwd|secret|api[_-]?key)=(?!\[REDACTED\])[^&\s#]+",
+        rb"(?:^|[?&;\s])"
+        + _SECRET_FIELD
+        + rb"\s*=\s*(?!\[REDACTED\])"
+        + _ASSIGNMENT_VALUE,
+        re.IGNORECASE | re.MULTILINE,
+    ),
+    re.compile(
+        rb"(?:\"" + _SECRET_FIELD + rb"\"|'" + _SECRET_FIELD + rb"')\s*:\s*"
+        rb"(?!\[REDACTED\])"
+        + _JSON_VALUE,
         re.IGNORECASE,
     ),
-    re.compile(rb"x-access-token:(?!\[REDACTED\])[^@\s/]+", re.IGNORECASE),
+    re.compile(
+        rb"x-access-token\s*:\s*(?!\[REDACTED\])" + _TOKEN_VALUE,
+        re.IGNORECASE,
+    ),
     re.compile(
         rb"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b",
         re.IGNORECASE,
