@@ -18,9 +18,6 @@ FINAL_OVERRIDE_FILES = (
     "catalog-final-overrides.zh-01.json",
     "catalog-final-overrides.zh-02.json",
 )
-UI_OVERRIDE_FILES = (
-    "catalog-ui-overrides.pt-01.json",
-)
 EXPECTED_BASE_COUNTS = {"ja": 19, "pt": 21, "zh": 15}
 EXPECTED_BASE_CANONICAL_SHA256 = (
     "98e88a7c679eb3b4342a268deac8b0548c4e9509a1769b3ffc5626411a388604"
@@ -33,6 +30,88 @@ EXPECTED_VISIBLE_COUNTS = {"ja": 110, "pt": 52, "zh": 75}
 EXPECTED_VISIBLE_CANONICAL_SHA256 = (
     "6d17c244c021aa08edc4a0a14cb7c49427e9bb5653e7e36725efa82a8fc0afec"
 )
+PORTUGUESE_UI_OVERRIDES = {'pt': {'dialog.account_name': 'Nome da conta (opcional):',
+        'dialog.cancel': 'Cancelar',
+        'dialog.close': 'Fechar',
+        'dialog.confirm_action': 'Confirmar ação',
+        'dialog.continue': 'Continuar',
+        'dialog.delete_cluster_plan': 'Excluir este plano de cluster?',
+        'dialog.delete_dr_schedule': 'Excluir este agendamento de DR?',
+        'dialog.delete_maintenance_plan': 'Excluir este plano de manutenção?',
+        'dialog.delete_permanently': 'Excluir permanentemente?',
+        'dialog.delete_plan': 'Excluir este plano de capacidade?',
+        'dialog.delete_probe_schedule': 'Excluir este agendamento de sonda?',
+        'dialog.delete_profile': 'Excluir este perfil de provedor?',
+        'dialog.delete_recovery_plan': 'Excluir este plano de recuperação?',
+        'dialog.destination_node': 'Nó de destino (opcional):',
+        'dialog.enter_value': 'Insira um valor',
+        'dialog.information': 'Informações',
+        'dialog.move_to_trash': 'Mover {name} para a lixeira?',
+        'dialog.search_files': 'Pesquisar nomes e conteúdo de arquivos:',
+        'dialog.share_minutes': 'Validade do link em minutos:',
+        'dialog.type_cluster_plan': 'Digite o nome do plano de cluster para continuar:',
+        'dialog.type_cluster_plan_rollback': 'Digite o nome do plano de cluster para reverter:',
+        'dialog.type_maintenance_plan': 'Digite o nome do plano de manutenção para continuar:',
+        'dialog.type_maintenance_plan_rollback': 'Digite o nome do plano de manutenção para '
+                                                 'reverter:',
+        'dialog.type_recovery_plan': 'Digite o nome do plano de recuperação para continuar:',
+        'dialog.type_recovery_plan_rollback': 'Digite o nome do plano de recuperação para '
+                                              'reverter:',
+        'dialog.value': 'Valor',
+        'errors.choose_file': 'Selecione um arquivo',
+        'errors.field_required': 'Campo obrigatório',
+        'errors.invalid_request': 'A solicitação contém valores inválidos.',
+        'errors.json_list': 'Insira uma lista JSON válida',
+        'errors.popup_blocked': 'O navegador bloqueou a janela de login.',
+        'errors.validation_field': '{field}: {message}',
+        'route.accounts': 'Contas',
+        'route.alerts': 'Alertas',
+        'route.apps': 'Aplicativos',
+        'route.appservers': 'Servidores de aplicativos',
+        'route.audit': 'Log de auditoria',
+        'route.backups': 'Backups',
+        'route.cache': 'Cache Redis',
+        'route.certs': 'Certificados',
+        'route.cpanel': 'cPanel',
+        'route.cron': 'Tarefas agendadas',
+        'route.dashboard': 'Painel',
+        'route.databases': 'Bancos de dados',
+        'route.dbadmin': 'Gerenciador de bancos de dados',
+        'route.dbusers': 'Usuários de banco de dados',
+        'route.directadmin': 'DirectAdmin',
+        'route.dns': 'Zonas DNS',
+        'route.domains': 'Domínios',
+        'route.expansion': 'Infraestrutura e ecossistema',
+        'route.files': 'Gerenciador de arquivos',
+        'route.firewall': 'Firewall',
+        'route.fleet': 'Cluster e posicionamento',
+        'route.ftp': 'Contas FTP',
+        'route.git': 'Implantação Git',
+        'route.governance': 'Identidade e governança',
+        'route.isolation': 'Isolamento da conta',
+        'route.mail': 'E-mail',
+        'route.migrate': 'Migração',
+        'route.mysecurity': 'Minha segurança',
+        'route.php': 'Versões do PHP',
+        'route.phpconf': 'Configurações do PHP',
+        'route.plans': 'Planos de hospedagem',
+        'route.platform': 'Suíte da plataforma',
+        'route.postgres': 'PostgreSQL',
+        'route.production': 'Controles de produção',
+        'route.reliability': 'Confiabilidade e ecossistema',
+        'route.resources': 'Disco e largura de banda',
+        'route.security': 'Segurança do servidor',
+        'route.sieve': 'Regras de e-mail',
+        'route.sitetools': 'Ferramentas do site',
+        'route.spam': 'Proteção contra spam',
+        'route.ssh': 'Acesso SSH',
+        'route.staging': 'Staging',
+        'route.subdomains': 'Subdomínios e aliases',
+        'route.support': 'Sessões de suporte',
+        'route.tokens': 'Tokens de API',
+        'route.waf': 'Firewall de aplicações web',
+        'route.webserver': 'Servidor web',
+        'route.webstats': 'Estatísticas de visitantes'}}
 EXPECTED_UI_COUNTS = {"pt": 80}
 EXPECTED_UI_CANONICAL_SHA256 = (
     "193ef6c9f6b0e3b36f755ace7d685109974ae30aa480bd4db9bdc01eceb2c08c"
@@ -106,12 +185,12 @@ def load_review_files(
     result: dict[str, dict[str, str]] = {}
     for path in expected:
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            file_payload = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise SystemExit(f"{path.name}: invalid JSON: {exc}") from exc
-        if not isinstance(payload, dict) or not set(payload).issubset(allowed_locales):
+        if not isinstance(file_payload, dict) or not set(file_payload).issubset(allowed_locales):
             raise SystemExit(f"{path.name}: invalid locales for {label}")
-        for locale, entries in payload.items():
+        for locale, entries in file_payload.items():
             if not isinstance(entries, dict) or any(
                 not isinstance(key, str) or not isinstance(value, str) or not value.strip()
                 for key, value in entries.items()
@@ -168,20 +247,15 @@ def install_final_override_loader(core) -> None:
             EXPECTED_VISIBLE_CANONICAL_SHA256,
         )
 
-        ui_payload = load_review_files(
-            overlay,
-            UI_OVERRIDE_FILES,
-            "catalog-ui-overrides.*.json",
-            frozenset({"pt"}),
-            "Portuguese UI override",
-        )
         validate_reviewed_payload(
             "Portuguese UI override",
-            ui_payload,
+            PORTUGUESE_UI_OVERRIDES,
             EXPECTED_UI_COUNTS,
             EXPECTED_UI_CANONICAL_SHA256,
         )
-        ui_overlap = sorted(set(visible_payload["pt"]) & set(ui_payload["pt"]))
+        ui_overlap = sorted(
+            set(visible_payload["pt"]) & set(PORTUGUESE_UI_OVERRIDES["pt"])
+        )
         if ui_overlap:
             raise SystemExit(
                 f"Portuguese UI override overlaps reviewed values: {ui_overlap[:8]}"
@@ -189,7 +263,7 @@ def install_final_override_loader(core) -> None:
 
         for locale, entries in final_payload.items():
             overrides.setdefault(locale, {}).update(entries)
-        for locale, entries in ui_payload.items():
+        for locale, entries in PORTUGUESE_UI_OVERRIDES.items():
             overrides.setdefault(locale, {}).update(entries)
 
     core.load_override_bundle = load_override_bundle
