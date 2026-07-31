@@ -13,7 +13,6 @@ from collections.abc import Iterator
 
 MAX_FILE_BYTES = 128 * 1024 * 1024
 MAX_TOTAL_BYTES = 256 * 1024 * 1024
-REDACTED = b"[REDACTED]"
 
 _RULES: tuple[tuple[re.Pattern[bytes], bytes], ...] = (
     (
@@ -79,6 +78,28 @@ _LEAK_PATTERNS: tuple[re.Pattern[bytes], ...] = (
 )
 
 
+def _sanitize(data: bytes) -> bytes:
+    sanitized = data
+    for pattern, replacement in _RULES:
+        sanitized = pattern.sub(replacement, sanitized)
+    for pattern in _LEAK_PATTERNS:
+        if pattern.search(sanitized):
+            raise RuntimeError("secret-shaped content remains after sanitization")
+    return sanitized
+
+
+def _require_safe_name(path: pathlib.Path) -> None:
+    encoded_name = os.fsencode(path.name)
+    try:
+        sanitized_name = _sanitize(encoded_name)
+    except RuntimeError as error:
+        raise RuntimeError(
+            "evidence entry name contains secret-shaped content"
+        ) from error
+    if sanitized_name != encoded_name:
+        raise RuntimeError("evidence entry name contains secret-shaped content")
+
+
 def _regular_files(root: pathlib.Path) -> Iterator[pathlib.Path]:
     for current, directory_names, file_names in os.walk(
         root,
@@ -88,11 +109,13 @@ def _regular_files(root: pathlib.Path) -> Iterator[pathlib.Path]:
         directory = pathlib.Path(current)
         for name in directory_names:
             candidate = directory / name
+            _require_safe_name(candidate)
             metadata = candidate.lstat()
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
                 raise RuntimeError(f"unsafe evidence directory: {candidate}")
         for name in file_names:
             candidate = directory / name
+            _require_safe_name(candidate)
             metadata = candidate.lstat()
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
                 raise RuntimeError(f"unsafe evidence file: {candidate}")
@@ -121,16 +144,6 @@ def _read_stable(path: pathlib.Path) -> bytes:
         return data
     finally:
         os.close(descriptor)
-
-
-def _sanitize(data: bytes) -> bytes:
-    sanitized = data
-    for pattern, replacement in _RULES:
-        sanitized = pattern.sub(replacement, sanitized)
-    for pattern in _LEAK_PATTERNS:
-        if pattern.search(sanitized):
-            raise RuntimeError("secret-shaped content remains after sanitization")
-    return sanitized
 
 
 def _replace_atomically(path: pathlib.Path, content: bytes) -> None:
