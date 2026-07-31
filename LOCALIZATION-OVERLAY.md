@@ -8,7 +8,7 @@ This commit-addressed overlay extends the signed `3.4.0-hardened-r5` source rele
 - Portuguese (`pt`, Brazilian terminology)
 - Simplified Chinese (`zh`)
 
-All regional tags are normalized to the supported base locale. Generic and regional Portuguese browser tags currently resolve to the single Brazilian-terminology `pt` catalog; a separate European Portuguese catalog is not included. To make that scope visible to users, login and panel language selectors label the locale **Português (Brasil)** rather than the ambiguous **Português**. The Chinese catalog is explicitly Simplified Chinese.
+Regional tags are normalized to the supported base locale. Generic and regional Portuguese browser tags resolve to the single Brazilian-terminology `pt` catalog; a separate European Portuguese catalog is not included. Login and panel selectors therefore display **Português (Brasil)**. The Chinese catalog is explicitly Simplified Chinese.
 
 ## Existing catalog review
 
@@ -19,56 +19,67 @@ All ten existing catalogs retain their complete key sets. The overlay:
 - uses `nyckel` consistently for Swedish passkey wording in the login flow
 - preserves URLs, commands, paths, certificates, identifiers, placeholders, product names, and protocol names
 
+The exact production-correction file layout and Git blobs are regression-locked:
+
+```text
+existing-catalog-corrections.json              b0b6a0b6f2176ba5f6c98d3ac6d80dcca5e7c43f
+existing-catalog-corrections.sv-ui-1.json      9011dfafc66d79e61e7384b44e8900d64605edc5
+existing-catalog-corrections.sv-ui-2.json      a7b45ab2320169c8ad4cffd10956756cc637b2b6
+```
+
 ## Reviewed new-language correction layers
 
 The checksum-locked compressed bundle remains unchanged. Three reviewed layers are applied after the base catalogs:
 
 1. **Initial high-risk and contamination layer:** 55 values — 19 Japanese, 21 Brazilian Portuguese, and 15 Simplified Chinese.
 2. **Semantic final layer:** 182 values — 91 Japanese, 31 Brazilian Portuguese, and 60 Simplified Chinese.
-3. **Brazilian Portuguese visible-UI layer:** 80 dialog, validation, and primary-navigation values in the source-visible `catalog-visible-ui-overrides.pt.json` file.
+3. **Brazilian Portuguese visible-UI layer:** 80 dialog, validation, and primary-navigation values in `catalog-visible-ui-overrides.pt.json`.
 
-Together they provide **317 explicit reviewed corrections**:
+Together they provide **317 explicit reviewed catalog corrections**:
 
 - 110 Japanese values
 - 132 Brazilian Portuguese values
 - 75 Simplified Chinese values
 
-The reviewed layers correct meaning-changing errors in destructive confirmations, credentials, passwords, subscriptions, billing, backup and restore, migration, rollback, disaster recovery, DNS, firewall, mail, database, staging, OpenLiteSpeed, account-management copy, dialogs, route labels, status messages, and operational feedback. Product names such as `cPanel` and `DirectAdmin` remain unchanged.
+PR #11 separately supplies ten redesign-owned dynamic dashboard strings for each new locale. Those 30 strings have key and placeholder parity tests, but remain part of native SME sign-off and are not included in the 317 catalog-correction count.
 
 ## Trust model
 
-The original source archive and its signature are not modified. `bootstrap-install.sh` first verifies that signed archive and verifies the core overlay, the reviewed wrapper, and all five semantic final-override files against the operator-supplied full Git commit before applying them to the extracted source tree. The compressed bundle still requires exactly 63,168 Base64 bytes and its existing SHA-256.
+The source archive and signature are not modified. The localization workflow:
 
-As a defense-in-depth check, the already commit-verified runtime wrapper resolves the selected checkout's `HEAD` commit and compares every one of the five semantic final-override files plus `catalog-visible-ui-overrides.pt.json` with its exact Git blob before reading JSON. A missing file, symlink, worktree modification, uncommitted replacement, or file absent from the selected commit is rejected.
+1. requires exactly one SHA-256 entry for the signed archive;
+2. verifies the archive with the embedded Ed25519 release public key;
+3. rejects absolute paths, traversal, links, devices, unsupported member types, excessive member counts, excessive expansion size, and ambiguous top-level roots;
+4. extracts into a private directory and reuses one recorded source root for all later steps.
 
-The runtime wrapper then enforces the reviewed content contracts before writing any catalog:
+`bootstrap-install.sh` verifies the core overlay, reviewed wrapper, correction files, compressed bundle chunks, catalogs, and documentation against the operator-supplied full Git commit before application.
 
-- initial layer counts `19/21/15` and SHA-256 `98e88a7c679eb3b4342a268deac8b0548c4e9509a1769b3ffc5626411a388604`
+The reviewed runtime wrapper additionally compares the five semantic final-override files and `catalog-visible-ui-overrides.pt.json` with the selected checkout's exact Git objects before reading JSON. Missing files, symlinks, worktree modifications, uncommitted replacements, and files absent from the selected commit are rejected.
+
+The wrapper enforces:
+
+- initial counts `19/21/15` and SHA-256 `98e88a7c679eb3b4342a268deac8b0548c4e9509a1769b3ffc5626411a388604`
 - semantic final counts `91/31/60` and SHA-256 `5bbb02dfacb69ed83157a89348ac2e24da85665ffed8b6eb1866ca69ad232b5f`
 - combined initial and semantic counts `110/52/75` and SHA-256 `6d17c244c021aa08edc4a0a14cb7c49427e9bb5653e7e36725efa82a8fc0afec`
 - Portuguese visible-UI count `80` and SHA-256 `193ef6c9f6b0e3b36f755ace7d685109974ae30aa480bd4db9bdc01eceb2c08c`
 
-It also rejects missing, extra, unsafe, malformed, empty, duplicate, or overlapping review files and values. These runtime checks remain effective even when external CI is unavailable.
-
 ## Verification
 
-The localization workflow checks:
+The stacked localization and QEMU workflows check:
 
 - 13 catalogs with exact 2,215-key parity and order
 - ten production locales and three release-candidate locales
 - non-empty UTF-8 values and placeholder multiplicity
-- protected technical tokens, unsafe markup, and mojibake
-- reviewed Swedish interface labels remain translated
-- all runtime counts and canonical digests
-- every explicitly reviewed key exists in the signed English source and preserves its placeholders
-- reviewed layers win after the checksum-locked compressed bundle
-- the explicitly reviewed Brazilian Portuguese values contain none of the tracked cross-language contamination markers
-- `cPanel` and `DirectAdmin` remain intact in Portuguese navigation
-- the `pt` locale is displayed exactly once as `Português (Brasil)` while other language labels remain unchanged
-- selector, registry, login, Python, JavaScript, Bash, installer, and QEMU integration consistency
-- bootstrap verifies every one of the five semantic final-override files against its Git object
-- the wrapper verifies all six reviewed JSON files against the selected checkout's Git objects before content validation
-- the visible-UI file has the exact expected name, is not a symlink, and matches the locked digest
-- negative runtime tests reject locale, count, digest, empty-value, layout, worktree-tampering, and wiring drift
+- protected technical tokens, unsafe markup, mojibake, and tracked contamination
+- reviewed Swedish labels remain translated
+- exact runtime counts and canonical digests
+- exact production-correction file layout and Git blobs
+- every reviewed key exists in the signed English source and preserves placeholders
+- reviewed layers win after the checksum-locked bundle
+- `cPanel` and `DirectAdmin` remain intact
+- `pt` appears exactly once as `Português (Brasil)`
+- Japanese, Brazilian Portuguese, and Simplified Chinese redesign copy remains explicit and placeholder-compatible
+- selector, registry, login, Python, JavaScript, Bash, installer, UI, and QEMU integration consistency
+- negative tests for locale, count, digest, empty-value, layout, unsafe archive extraction, worktree tampering, and wiring drift
 
-The three new catalogs remain release candidates. The 317 corrected values are not equivalent to full-catalog native approval. In particular, the remaining machine-assisted Portuguese base catalog may still contain unreviewed wording or cross-language residue outside the explicitly reviewed subset. Japanese, Brazilian Portuguese, and Simplified Chinese therefore require complete native-speaking subject-matter review before contractual or production-critical use.
+The three new catalogs remain release candidates. The 317 catalog corrections and 30 redesign strings are not equivalent to full native approval. Complete native-speaking subject-matter review remains required before contractual or production-critical use.
