@@ -149,18 +149,9 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         extra_byte_check = self.harness.index("if source.read(1):", bounded_read)
         atomic_replace = self.harness.index("os.replace(temp_name, path)", extra_byte_check)
         promoted_metadata = self.harness.index("promoted = path.lstat()", atomic_replace)
-        promoted_regular = self.harness.index(
-            "not stat.S_ISREG(promoted.st_mode)",
-            promoted_metadata,
-        )
-        root_check = self.harness.index("promoted.st_uid != 0", promoted_regular)
-        group_check = self.harness.index("promoted.st_gid != 0", root_check)
-        link_check = self.harness.index("promoted.st_nlink != 1", group_check)
-        mode_check = self.harness.index(
-            "stat.S_IMODE(promoted.st_mode) != mode",
-            link_check,
-        )
-        guest_start = self.harness.index("sudo /tmp/qemu-guest-install.sh", mode_check)
+        validation_start = self.harness.index("        if (", promoted_metadata)
+        validation_end = self.harness.index("        ):", validation_start)
+        guest_start = self.harness.index("sudo /tmp/qemu-guest-install.sh", validation_end)
         self.assertLess(promotion, open_descriptor)
         self.assertLess(open_descriptor, no_follow)
         self.assertLess(no_follow, descriptor_check)
@@ -173,12 +164,19 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertLess(bounded_read, extra_byte_check)
         self.assertLess(extra_byte_check, atomic_replace)
         self.assertLess(atomic_replace, promoted_metadata)
-        self.assertLess(promoted_metadata, promoted_regular)
-        self.assertLess(promoted_regular, root_check)
-        self.assertLess(root_check, group_check)
-        self.assertLess(group_check, link_check)
-        self.assertLess(link_check, mode_check)
-        self.assertLess(mode_check, guest_start)
+        self.assertLess(promoted_metadata, validation_start)
+        self.assertLess(validation_start, validation_end)
+        self.assertLess(validation_end, guest_start)
+        validation_block = self.harness[validation_start:validation_end]
+        for predicate in (
+            "not stat.S_ISREG(promoted.st_mode)",
+            "promoted.st_uid != 0",
+            "promoted.st_gid != 0",
+            "promoted.st_nlink != 1",
+            "stat.S_IMODE(promoted.st_mode) != mode",
+        ):
+            with self.subTest(predicate=predicate):
+                self.assertIn(predicate, validation_block)
         self.assertNotIn("shutil.copyfileobj(source, target)", self.harness)
         self.assertNotIn("sudo chown root:root /tmp/bootstrap-install.sh", self.harness)
         self.assertNotIn("sudo chmod 700 /tmp/bootstrap-install.sh", self.harness)
