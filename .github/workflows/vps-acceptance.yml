@@ -53,26 +53,39 @@ jobs:
       MTA: ${{ inputs.mta }}
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Check out the reviewed acceptance commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: 9c38d0095563ea33efd14124babfd29556c0da46
+          fetch-depth: 1
           persist-credentials: false
 
-      - name: Validate authorization, inputs, and secrets
+      - name: Validate authorization, pinned source, inputs, and secrets
         shell: bash
         run: |
           set -euo pipefail
           [[ "${{ inputs.confirm }}" == ERASE-AND-INSTALL ]]
+          [[ "$(git rev-parse HEAD)" == "$REVIEWED_COMMIT_SHA" ]] || {
+            echo 'Checkout does not match REVIEWED_COMMIT_SHA.' >&2
+            exit 1
+          }
           [[ "$VPS_PROVIDER_SNAPSHOT_CONFIRMED" == yes ]] || {
             echo 'VPS_PROVIDER_SNAPSHOT_CONFIRMED must be the environment secret yes.' >&2
             exit 1
           }
           for name in VPS_HOST VPS_ROOT_PASSWORD VPS_SSH_KNOWN_HOSTS; do
-            [[ -n "${!name:-}" ]] || { echo "Missing required environment secret: $name" >&2; exit 1; }
+            [[ -n "${!name:-}" ]] || {
+              echo "Missing required environment secret: $name" >&2
+              exit 1
+            }
           done
 
           VPS_PORT="${VPS_SSH_PORT:-22}"
           [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && ((VPS_PORT >= 1 && VPS_PORT <= 65535))
-          case "$MTA" in postfix|exim) ;; *) echo 'Unsupported MTA.' >&2; exit 1 ;; esac
+          case "$MTA" in
+            postfix|exim) ;;
+            *) echo 'Unsupported MTA.' >&2; exit 1 ;;
+          esac
 
           python3 - "$VPS_HOST" "$VPS_IPV6" "$PANEL_HOST_INPUT" <<'PY'
           import ipaddress
@@ -80,15 +93,11 @@ jobs:
           import sys
 
           host, ipv6, panel = sys.argv[1:]
-          try:
-              address = ipaddress.ip_address(host)
-          except ValueError as exc:
-              raise SystemExit(f"VPS_HOST must be a literal IP address: {exc}")
+          address = ipaddress.ip_address(host)
           if ipv6:
               parsed_v6 = ipaddress.ip_address(ipv6)
               if parsed_v6.version != 6:
                   raise SystemExit("VPS_IPV6 must be an IPv6 literal")
-
           if panel:
               if len(panel) > 253 or not re.fullmatch(
                   r"(?=.{1,253}\Z)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?",
@@ -105,10 +114,10 @@ jobs:
           fi
           RUNNER_IPV4="$(curl -4fsS --retry 4 --connect-timeout 10 https://api.ipify.org)"
           python3 - "$RUNNER_IPV4" <<'PY'
-          import ipaddress, sys
-          address = ipaddress.ip_address(sys.argv[1])
-          if address.version != 4:
-              raise SystemExit('GitHub runner did not return an IPv4 address')
+          import ipaddress
+          import sys
+          if ipaddress.ip_address(sys.argv[1]).version != 4:
+              raise SystemExit("GitHub runner did not return an IPv4 address")
           PY
 
           {
@@ -121,7 +130,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq openssh-client sshpass curl dnsutils netcat-openbsd
+          sudo apt-get install -y -qq --no-install-recommends \
+            openssh-client sshpass curl dnsutils netcat-openbsd
 
       - name: Configure strict SSH host verification
         run: |
@@ -171,6 +181,11 @@ jobs:
           HP_VPS_REPO_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          local_cleanup(){
+            rm -f /tmp/hostpanel-acceptance.env /tmp/hostpanel-acceptance-remote.sh
+          }
+          trap local_cleanup EXIT
+
           SSH=(sshpass -e ssh -p "$VPS_PORT"
             -o StrictHostKeyChecking=yes
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
@@ -186,9 +201,11 @@ jobs:
             -o PubkeyAuthentication=no
             -o ConnectTimeout=20)
 
+          [[ "$(git rev-parse HEAD)" == "$REVIEWED_COMMIT_SHA" ]]
           [[ -n "$HP_VPS_REPO_TOKEN" ]]
           [[ "$HP_VPS_REPO_TOKEN" != *$'\n'* && "$HP_VPS_REPO_TOKEN" != *$'\r'* ]]
           REPO_AUTH_HEADER="$(printf 'x-access-token:%s' "$HP_VPS_REPO_TOKEN" | base64 | tr -d '\r\n')"
+
           umask 077
           {
             printf 'HP_PANEL_HOST=%q\n' "$PANEL_HOST"
@@ -240,7 +257,10 @@ jobs:
               echo "Unsafe or missing acceptance input: $input" >&2
               exit 1
             }
-            chown root:root "$input"
+            [[ "$(stat -c '%u:%h' "$input")" == "0:1" ]] || {
+              echo "Unsafe acceptance input ownership or link count: $input" >&2
+              exit 1
+            }
             chmod 700 "$input"
           done
 
@@ -278,8 +298,7 @@ jobs:
           clear_repo_auth
           trap - EXIT
 
-          test "$(cat /opt/hostpanel/VERSION)" = "$HP_EXPECTED_VERSION"
-
+          test "$(tr -d '[:space:]' < /opt/hostpanel/VERSION)" = "$HP_EXPECTED_VERSION"
           echo 'Running non-sensitive VM validation.'
           env \
             HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
@@ -307,8 +326,11 @@ jobs:
             /tmp/hostpanel-acceptance.env \
             /tmp/hostpanel-acceptance-remote.sh \
             root@"$VPS_HOST":/root/
-          "${SSH[@]}" root@"$VPS_HOST" 'chmod 600 /root/hostpanel-acceptance.env && chmod 700 /root/hostpanel-acceptance-remote.sh && /root/hostpanel-acceptance-remote.sh'
-          rm -f /tmp/hostpanel-acceptance.env
+          "${SSH[@]}" root@"$VPS_HOST" '
+            chmod 600 /root/hostpanel-acceptance.env
+            chmod 700 /root/bootstrap-install.sh /root/validate-production-vm.sh /root/hostpanel-acceptance-remote.sh
+            /root/hostpanel-acceptance-remote.sh
+          '
 
       - name: Reboot and wait for SSH
         env:
@@ -326,13 +348,22 @@ jobs:
           port_open(){ nc -z -w 3 "$VPS_HOST" "$VPS_PORT" >/dev/null 2>&1; }
           went_down=false
           for _ in $(seq 1 60); do
-            if ! port_open; then went_down=true; break; fi
+            if ! port_open; then
+              went_down=true
+              break
+            fi
             sleep 5
           done
-          [[ "$went_down" == true ]] || { echo 'SSH did not close for reboot.' >&2; exit 1; }
+          [[ "$went_down" == true ]] || {
+            echo 'SSH did not close for reboot.' >&2
+            exit 1
+          }
 
           for _ in $(seq 1 180); do
-            if port_open; then sleep 10; exit 0; fi
+            if port_open; then
+              sleep 10
+              exit 0
+            fi
             sleep 5
           done
           echo 'SSH did not return after reboot.' >&2
