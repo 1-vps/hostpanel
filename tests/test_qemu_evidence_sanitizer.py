@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import os
 import pathlib
 import stat
 import subprocess
@@ -86,6 +85,18 @@ class QemuEvidenceSanitizerTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("unsafe evidence file", result.stderr)
             self.assertEqual(outside.read_text(encoding="utf-8"), "outside-secret")
+
+    def test_secret_shaped_filename_fails_without_echoing_secret(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            evidence = pathlib.Path(temporary_directory)
+            secret_name = "github_pat_123456789012345678901234567890.txt"
+            (evidence / secret_name).write_text("non-secret content\n", encoding="utf-8")
+
+            result = self.run_sanitizer(evidence)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("evidence entry name contains secret-shaped content", result.stderr)
+            self.assertNotIn(secret_name, result.stderr)
 
     def test_workflow_sanitizes_before_conditional_upload(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
