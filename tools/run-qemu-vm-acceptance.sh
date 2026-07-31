@@ -304,11 +304,11 @@ set -eu
 sudo python3 - "$(id -u)" <<PYROOT
 import os
 import pathlib
-import shutil
 import stat
 import sys
 import tempfile
 
+MAX_INPUT_BYTES = 16 * 1024 * 1024
 expected_uid = int(sys.argv[1])
 inputs = (
     (pathlib.Path("/tmp/bootstrap-install.sh"), 0o700),
@@ -325,12 +325,20 @@ for path, mode in inputs:
             raise SystemExit(f"QEMU guest input is not regular: {path}")
         if metadata.st_uid != expected_uid or metadata.st_nlink != 1:
             raise SystemExit(f"QEMU guest input ownership or link count is unsafe: {path}")
-        if metadata.st_size > 16 * 1024 * 1024:
+        if metadata.st_size > MAX_INPUT_BYTES:
             raise SystemExit(f"QEMU guest input is unexpectedly large: {path}")
 
         temp_fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
         with os.fdopen(os.dup(source_fd), "rb") as source, os.fdopen(temp_fd, "wb") as target:
-            shutil.copyfileobj(source, target)
+            remaining = metadata.st_size
+            while remaining:
+                chunk = source.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise SystemExit(f"QEMU guest input changed while copying: {path}")
+                target.write(chunk)
+                remaining -= len(chunk)
+            if source.read(1):
+                raise SystemExit(f"QEMU guest input grew while copying: {path}")
             target.flush()
             os.fsync(target.fileno())
         os.chmod(temp_name, mode)

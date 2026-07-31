@@ -70,17 +70,32 @@ class QemuTokenScopeTests(unittest.TestCase):
             "metadata.st_uid != expected_uid or metadata.st_nlink != 1",
             descriptor_check,
         )
-        descriptor_copy = self.harness.index("os.dup(source_fd)", ownership_check)
-        atomic_replace = self.harness.index("os.replace(temp_name, path)", descriptor_copy)
+        size_limit = self.harness.index(
+            "metadata.st_size > MAX_INPUT_BYTES",
+            ownership_check,
+        )
+        descriptor_copy = self.harness.index("os.dup(source_fd)", size_limit)
+        observed_size = self.harness.index("remaining = metadata.st_size", descriptor_copy)
+        bounded_read = self.harness.index(
+            "source.read(min(1024 * 1024, remaining))",
+            observed_size,
+        )
+        extra_byte_check = self.harness.index("if source.read(1):", bounded_read)
+        atomic_replace = self.harness.index("os.replace(temp_name, path)", extra_byte_check)
         root_check = self.harness.index("promoted.st_uid != 0", atomic_replace)
         guest_start = self.harness.index("sudo /tmp/qemu-guest-install.sh", root_check)
         self.assertLess(promotion, open_descriptor)
         self.assertLess(open_descriptor, descriptor_check)
         self.assertLess(descriptor_check, ownership_check)
-        self.assertLess(ownership_check, descriptor_copy)
-        self.assertLess(descriptor_copy, atomic_replace)
+        self.assertLess(ownership_check, size_limit)
+        self.assertLess(size_limit, descriptor_copy)
+        self.assertLess(descriptor_copy, observed_size)
+        self.assertLess(observed_size, bounded_read)
+        self.assertLess(bounded_read, extra_byte_check)
+        self.assertLess(extra_byte_check, atomic_replace)
         self.assertLess(atomic_replace, root_check)
         self.assertLess(root_check, guest_start)
+        self.assertNotIn("shutil.copyfileobj(source, target)", self.harness)
         self.assertNotIn("sudo chown root:root /tmp/bootstrap-install.sh", self.harness)
         self.assertNotIn("sudo chmod 700 /tmp/bootstrap-install.sh", self.harness)
 
