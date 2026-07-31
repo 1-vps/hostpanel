@@ -4,6 +4,7 @@ import json
 import pathlib
 import re
 import tarfile
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -62,6 +63,15 @@ class PortugueseUiOverrideTests(unittest.TestCase):
         cls.payload = json.loads(UI_FILE.read_text(encoding="utf-8"))
         cls.english = load_signed_english_catalog()
 
+    def load_ui_files(self, overlay: pathlib.Path) -> dict[str, dict[str, str]]:
+        return self.wrapper.load_review_files(
+            overlay,
+            self.wrapper.PORTUGUESE_UI_OVERRIDE_FILES,
+            "catalog-visible-ui-overrides.*.json",
+            frozenset({"pt"}),
+            "Portuguese UI override",
+        )
+
     def test_payload_is_exactly_locked(self):
         self.assertFalse(UI_FILE.is_symlink())
         self.assertEqual(
@@ -109,6 +119,55 @@ class PortugueseUiOverrideTests(unittest.TestCase):
         for key, expected in self.payload["pt"].items():
             with self.subTest(key=key):
                 self.assertEqual(overrides["pt"][key], expected)
+
+    def test_runtime_loader_rejects_missing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(SystemExit):
+                self.load_ui_files(pathlib.Path(directory))
+
+    def test_runtime_loader_rejects_extra_matching_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            overlay = pathlib.Path(directory)
+            (overlay / UI_FILE.name).write_text(
+                UI_FILE.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            (overlay / "catalog-visible-ui-overrides.extra.json").write_text(
+                '{"pt":{"route.dashboard":"Painel"}}\n', encoding="utf-8"
+            )
+            with self.assertRaises(SystemExit):
+                self.load_ui_files(overlay)
+
+    def test_runtime_loader_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            overlay = pathlib.Path(directory)
+            target = overlay / "payload.json"
+            target.write_text(UI_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+            try:
+                (overlay / UI_FILE.name).symlink_to(target.name)
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"symlinks are unavailable: {exc}")
+            with self.assertRaises(SystemExit):
+                self.load_ui_files(overlay)
+
+    def test_runtime_loader_rejects_wrong_locale(self):
+        with tempfile.TemporaryDirectory() as directory:
+            overlay = pathlib.Path(directory)
+            (overlay / UI_FILE.name).write_text(
+                '{"es":{"route.dashboard":"Panel"}}\n', encoding="utf-8"
+            )
+            with self.assertRaises(SystemExit):
+                self.load_ui_files(overlay)
+
+    def test_runtime_validator_rejects_digest_drift(self):
+        changed = json.loads(json.dumps(self.payload, ensure_ascii=False))
+        changed["pt"]["route.dashboard"] = "Painel alterado"
+        with self.assertRaises(SystemExit):
+            self.wrapper.validate_reviewed_payload(
+                "Portuguese UI override",
+                changed,
+                EXPECTED_COUNTS,
+                EXPECTED_SHA256,
+            )
 
 
 if __name__ == "__main__":
