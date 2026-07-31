@@ -257,13 +257,21 @@ OVERLAY_FILES=(
   install.base.sh
   tools/harden_install.py
   tools/harden_install_runtime.py
+  tools/patch_panel_ui.py
+  app/static/panel-redesign.css
+  app/static/panel-redesign.js
 )
 for overlay in "${OVERLAY_FILES[@]}"; do verify_commit_file "$overlay"; done
 install -m 0755 "$CHECKOUT/install.sh" "$SOURCE_ROOT/install.sh"
 install -m 0755 "$CHECKOUT/install.base.sh" "$SOURCE_ROOT/install.base.sh"
-install -d -m 0755 "$SOURCE_ROOT/tools"
+install -d -m 0755 "$SOURCE_ROOT/tools" "$SOURCE_ROOT/app/static"
 install -m 0755 "$CHECKOUT/tools/harden_install.py" "$SOURCE_ROOT/tools/harden_install.py"
 install -m 0755 "$CHECKOUT/tools/harden_install_runtime.py" "$SOURCE_ROOT/tools/harden_install_runtime.py"
+install -m 0755 "$CHECKOUT/tools/patch_panel_ui.py" "$SOURCE_ROOT/tools/patch_panel_ui.py"
+install -m 0644 "$CHECKOUT/app/static/panel-redesign.css" "$SOURCE_ROOT/app/static/panel-redesign.css"
+install -m 0644 "$CHECKOUT/app/static/panel-redesign.js" "$SOURCE_ROOT/app/static/panel-redesign.js"
+python3 "$SOURCE_ROOT/tools/patch_panel_ui.py" "$SOURCE_ROOT/app/templates/panel.html" \
+  || die "Could not apply the reviewed control-panel UI overlay"
 
 LOCALIZATION_ROOT="$CHECKOUT/localization-overlay"
 LOCALIZATION_FILES=(

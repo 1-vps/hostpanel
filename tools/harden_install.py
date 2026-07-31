@@ -9,7 +9,7 @@ import stat
 import subprocess
 import sys
 
-EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
+EXPECTED_IMPL_BLOB = "ac1a86fba8dd6bace70cd844a61bfccdda55d916"
 EXPECTED_CLI_PATCHER_BLOB = "a20ce7252351179fa225a9a0b168b5fa9568883c"
 IMPLEMENTATION_NAME = "harden_install_impl.py"
 

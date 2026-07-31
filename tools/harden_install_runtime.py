@@ -247,6 +247,43 @@ COMMON_PACKAGES=''',
     )
     text = replace_once(
         text,
+        r'''if [[ "$PKG_FAMILY" == debian ]]; then printf 'php%s-%s\n' "$version" "$suffix"; return; fi''',
+        r'''if [[ "$PKG_FAMILY" == debian ]]; then
+  case "$suffix" in
+    xsl) printf 'php%s-xml\n' "$version" ;;
+    *) printf 'php%s-%s\n' "$version" "$suffix" ;;
+  esac
+  return
+fi''',
+        "Debian PHP bundled extension mapping",
+    )
+    text = replace_once(
+        text,
+        r'''    memcached|apcu|igbinary|msgpack|ssh2|yaml|mailparse|protobuf|lz4|zstd|oauth|amqp|zmq|mongodb|grpc|swoole|ds|uuid|xdebug|pcov) printf '%specl-%s\n' "$base" "$suffix" ;;''',
+        r'''    memcached|apcu|igbinary|msgpack|ssh2|yaml|mailparse|protobuf|lz4|zstd|oauth|amqp|zmq|mongodb|grpc|swoole|ds|uuid|event|xdebug|pcov) printf '%specl-%s\n' "$base" "$suffix" ;;''',
+        "Enterprise Linux PECL PHP mapping",
+    )
+    text = replace_once(
+        text,
+        r'''    imagick) printf '%specl-imagick-im7\n%specl-imagick\n' "$base" "$base" ;;''',
+        r'''    imagick) printf '%specl-imagick-im7\n%specl-imagick\n' "$base" "$base" ;;
+    xsl) printf '%sxml\n' "$base" ;;''',
+        "Enterprise Linux XSL PHP mapping",
+    )
+    text = replace_once(
+        text,
+        'PHP_SUFFIXES=(fpm cli common mysql curl mbstring xml zip gd intl bcmath soap opcache readline pgsql sqlite3 redis memcached apcu imagick bz2 gmp ldap imap igbinary msgpack ssh2 snmp yaml tidy pspell mailparse protobuf lz4 zstd)',
+        'PHP_SUFFIXES=(fpm cli common mysql curl mbstring xml zip gd intl bcmath soap opcache readline pgsql sqlite3 redis memcached apcu imagick bz2 gmp ldap imap igbinary msgpack ssh2 snmp yaml tidy pspell mailparse protobuf lz4 zstd xsl enchant odbc)',
+        "recommended PHP extension packages",
+    )
+    text = replace_once(
+        text,
+        'PHP_OPTIONAL_SUFFIXES=(oauth amqp zmq mongodb grpc swoole ds uuid)',
+        'PHP_OPTIONAL_SUFFIXES=(oauth amqp zmq mongodb grpc swoole ds uuid event)',
+        "full PHP extension profile",
+    )
+    text = replace_once(
+        text,
         '''if has_role web; then
 say "Installing OpenLiteSpeed and LSPHP"''',
         '''if has_role web && pkg_available "$(pkg_name openlitespeed)"; then
@@ -519,28 +556,54 @@ EOF''',
     )
     text = replace_once(
         text,
-        '''printf '%s\n' "${PHP_INSTALLED[@]}" >/etc/hostpanel/php-versions
+        r'''printf '%s\n' "${PHP_INSTALLED[@]}" >/etc/hostpanel/php-versions
 ok "PHP-FPM installed: ${PHP_INSTALLED[*]}"''',
-        '''printf '%s\n' "${PHP_INSTALLED[@]}" >/etc/hostpanel/php-versions
+        r'''printf '%s\n' "${PHP_INSTALLED[@]}" >/etc/hostpanel/php-versions
 if ((${#PHP_SKIPPED_MODULES[@]})); then
   printf '%s\n' "${PHP_SKIPPED_MODULES[@]}" | sort -u >/etc/hostpanel/php-skipped-packages
   warn "Some optional PHP modules were unavailable; recorded in /etc/hostpanel/php-skipped-packages"
 else
   rm -f /etc/hostpanel/php-skipped-packages
 fi
+: >/etc/hostpanel/php-recommended-missing
 for version in "${PHP_INSTALLED[@]}"; do
   php_cli="$(php_cli_bin "$version")"
-  php_modules="$($php_cli -m 2>>"$LOG")" || die "PHP $version could not enumerate loaded modules"
-  for requirement in curl mbstring SimpleXML zip gd intl bcmath soap pgsql sqlite3; do
-    grep -Eqi "^${requirement}$" <<<"$php_modules" \
-      || die "PHP $version is missing required loaded module: $requirement"
+  php_fpm="$(php_fpm_bin "$version")"
+  php_cli_modules="$($php_cli -m 2>>"$LOG")" || die "PHP $version CLI could not enumerate loaded modules"
+  php_fpm_modules="$($php_fpm -m 2>>"$LOG")" || die "PHP $version FPM could not enumerate loaded modules"
+  for requirement in bcmath ctype curl dom exif fileinfo filter gd iconv intl json mbstring openssl PDO pdo_mysql pdo_pgsql pdo_sqlite Phar session SimpleXML sodium soap tokenizer xml xmlreader xmlwriter zip mysqli; do
+    grep -Eqi "^${requirement}$" <<<"$php_cli_modules" \
+      || die "PHP $version CLI is missing required loaded module: $requirement"
+    grep -Eqi "^${requirement}$" <<<"$php_fpm_modules" \
+      || die "PHP $version FPM is missing required loaded module: $requirement"
   done
-  grep -Eqi '^(mysqli|pdo_mysql)$' <<<"$php_modules" \
-    || die "PHP $version is missing a MySQL driver"
-  grep -Eqi '^(Zend OPcache|opcache)$' <<<"$php_modules" \
-    || die "PHP $version is missing OPcache"
+  grep -Eqi '^(Zend OPcache|opcache)$' <<<"$php_cli_modules" \
+    || die "PHP $version CLI is missing OPcache"
+  grep -Eqi '^(Zend OPcache|opcache)$' <<<"$php_fpm_modules" \
+    || die "PHP $version FPM is missing OPcache"
+  for recommended in apcu bz2 calendar ftp gettext gmp igbinary imagick imap ldap memcached msgpack pcntl posix redis snmp sockets ssh2 tidy xsl yaml; do
+    grep -Eqi "^${recommended}$" <<<"$php_cli_modules" \
+      || printf 'php%s:%s\n' "$version" "$recommended" >>/etc/hostpanel/php-recommended-missing
+  done
+  "$php_cli" -r '
+    $password = str_repeat("HostPanel!", 6);
+    $hash = password_hash($password, PASSWORD_BCRYPT, ["cost" => 12]);
+    $info = is_string($hash) ? password_get_info($hash) : [];
+    if (!is_string($hash) || ($info["algoName"] ?? "") !== "bcrypt") { exit(71); }
+    if (($info["options"]["cost"] ?? 0) < 12) { exit(72); }
+    if (!password_verify($password, $hash) || password_verify($password . "x", $hash)) { exit(73); }
+    $curl = curl_version();
+    if (!in_array("https", $curl["protocols"] ?? [], true)) { exit(74); }
+    if (!function_exists("sodium_crypto_pwhash") || !function_exists("random_bytes")) { exit(75); }
+  ' >>"$LOG" 2>&1 || die "PHP $version failed bcrypt, cURL HTTPS, sodium, or CSPRNG runtime validation"
 done
-ok "PHP-FPM installed: ${PHP_INSTALLED[*]}"''',
+if [[ -s /etc/hostpanel/php-recommended-missing ]]; then
+  sort -u -o /etc/hostpanel/php-recommended-missing /etc/hostpanel/php-recommended-missing
+  warn "Some recommended PHP capabilities are unavailable; see /etc/hostpanel/php-recommended-missing"
+else
+  rm -f /etc/hostpanel/php-recommended-missing
+fi
+ok "PHP-FPM installed and runtime-audited: ${PHP_INSTALLED[*]}"''',
         "validate loaded PHP baseline",
     )
 

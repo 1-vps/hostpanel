@@ -11,7 +11,7 @@ IMPLEMENTATION = ROOT / "tools" / "harden_install_impl.py"
 PATCHER = ROOT / "tools" / "patch_cli_runtime_env.py"
 MATRIX = ROOT / "test-matrix.sh"
 BASE = ROOT / "install.base.sh"
-EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
+EXPECTED_IMPL_BLOB = "ac1a86fba8dd6bace70cd844a61bfccdda55d916"
 EXPECTED_PATCHER_BLOB = "a20ce7252351179fa225a9a0b168b5fa9568883c"
 
 
