@@ -95,6 +95,23 @@ def load_wrapper():
     )
 
 
+def load_portuguese_ui_overrides(wrapper) -> dict[str, dict[str, str]]:
+    payload = wrapper.load_review_files(
+        OVERLAY,
+        wrapper.PORTUGUESE_UI_OVERRIDE_FILES,
+        "catalog-visible-ui-overrides.*.json",
+        frozenset({"pt"}),
+        "Portuguese UI override",
+    )
+    wrapper.validate_reviewed_payload(
+        "Portuguese UI override",
+        payload,
+        wrapper.EXPECTED_UI_COUNTS,
+        wrapper.EXPECTED_UI_CANONICAL_SHA256,
+    )
+    return payload
+
+
 def load_complete_overrides() -> dict[str, dict[str, str]]:
     wrapper = load_wrapper()
     core = wrapper.load_core()
@@ -110,7 +127,7 @@ class HighRiskLocaleOverrideTests(unittest.TestCase):
         cls.base = json.loads(BASE_OVERRIDES.read_text(encoding="utf-8"))
         cls.final = load_final_overrides()
         cls.wrapper = load_wrapper()
-        cls.ui = cls.wrapper.PORTUGUESE_UI_OVERRIDES
+        cls.ui = load_portuguese_ui_overrides(cls.wrapper)
         cls.english = load_signed_english_catalog()
 
     def test_base_reviewed_payload_is_locked(self):
@@ -126,6 +143,16 @@ class HighRiskLocaleOverrideTests(unittest.TestCase):
             EXPECTED_FINAL_COUNTS,
         )
         self.assertEqual(canonical_sha256(self.final), EXPECTED_FINAL_CANONICAL_SHA256)
+
+    def test_portuguese_ui_payload_is_locked(self):
+        self.assertEqual(
+            {locale: len(entries) for locale, entries in self.ui.items()},
+            self.wrapper.EXPECTED_UI_COUNTS,
+        )
+        self.assertEqual(
+            canonical_sha256(self.ui),
+            self.wrapper.EXPECTED_UI_CANONICAL_SHA256,
+        )
 
     def test_visible_reviewed_payload_is_locked_and_non_overlapping(self):
         visible = {locale: dict(entries) for locale, entries in self.base.items()}
