@@ -47,13 +47,7 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
         )
         for path in FINAL_OVERRIDE_FILES:
             with self.subTest(path=path):
-                if path.endswith("ja-02.json"):
-                    self.assertIn(
-                        path.removeprefix("localization-overlay/"),
-                        WRAPPER_PATH.read_text(encoding="utf-8"),
-                    )
-                else:
-                    self.assertEqual(self.bootstrap.count(path), 1)
+                self.assertEqual(self.bootstrap.count(path), 1)
 
     def test_localization_workflow_uses_wrapper_and_runs_override_regression(self):
         self.assertIn(
