@@ -126,10 +126,24 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertIn("hostpanel-qemu-post-reboot.sh", self.harness)
         self.assertIn("hostpanel-qemu-post-reboot.sh", self.guest_installer)
 
-    def test_guest_inputs_are_escaped_and_checked_before_root_use(self):
+    def test_guest_inputs_are_escaped_and_promoted_before_root_use(self):
         self.assertIn("printf 'HP_PANEL_HOST=%q\\n'", self.harness)
-        self.assertIn('test ! -L "$path"', self.harness)
-        self.assertIn('test "$(stat -c %h "$path")" = 1', self.harness)
+        promotion = self.harness.index('sudo python3 - "$(id -u)" <<PYROOT')
+        guest_start = self.harness.index("sudo /tmp/qemu-guest-install.sh", promotion)
+        for marker in (
+            "os.O_NOFOLLOW",
+            "metadata = os.fstat(source_fd)",
+            "metadata.st_uid != expected_uid or metadata.st_nlink != 1",
+            "os.dup(source_fd)",
+            "os.replace(temp_name, path)",
+            "promoted.st_uid != 0",
+            "stat.S_IMODE(promoted.st_mode) != mode",
+        ):
+            with self.subTest(marker=marker):
+                position = self.harness.index(marker, promotion)
+                self.assertLess(position, guest_start)
+        self.assertNotIn("sudo chown root:root /tmp/bootstrap-install.sh", self.harness)
+        self.assertNotIn("sudo chmod 700 /tmp/bootstrap-install.sh", self.harness)
         self.assertIn('[[ -f "$input" && ! -L "$input" ]]', self.guest_installer)
         self.assertIn("0:600:1", self.guest_installer)
         self.assertIn("/root/hostpanel-qemu.env", self.guest_installer)
