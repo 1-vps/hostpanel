@@ -17,6 +17,7 @@ on:
       - tools/run-qemu-vm-acceptance.sh
       - tools/qemu-guest-install.sh
       - tools/sanitize-qemu-evidence.py
+      - tools/seal-qemu-evidence.py
       - tools/inspect-release-state.py
       - tools/validate-production-vm.sh
       - tools/harden_install.py
@@ -36,6 +37,7 @@ on:
       - tests/test_qemu_vm_acceptance.py
       - tests/test_qemu_token_scope.py
       - tests/test_qemu_evidence_sanitizer.py
+      - tests/test_qemu_evidence_sealer.py
       - tests/test_qemu_default_version.py
       - tests/test_post_install_health.py
       - tests/test_first_reboot_hardening.py
@@ -88,6 +90,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_token_scope.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_evidence_sanitizer.py' -v
+          python3 -m unittest discover -s tests -p 'test_qemu_evidence_sealer.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_default_version.py' -v
           python3 -m unittest discover -s tests -p 'test_systemd_resolved_dns.py' -v
           python3 -m unittest discover -s tests -p 'test_panel_redesign.py' -v
@@ -125,18 +128,21 @@ jobs:
           mkdir -p artifacts/qemu-vm-acceptance
           bash tools/run-qemu-vm-acceptance.sh
 
-      - name: Sanitize VM evidence before upload
+      - name: Sanitize and seal VM evidence before upload
         id: sanitize-evidence
         if: ${{ always() }}
         run: |
           set -euo pipefail
           python3 tools/sanitize-qemu-evidence.py artifacts/qemu-vm-acceptance
+          python3 tools/seal-qemu-evidence.py \
+            artifacts/qemu-vm-acceptance \
+            artifacts/qemu-vm-acceptance.tar
 
       - name: Upload non-sensitive VM evidence
         if: ${{ always() && steps.sanitize-evidence.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: qemu-vm-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/qemu-vm-acceptance
+          path: artifacts/qemu-vm-acceptance.tar
           if-no-files-found: error
           retention-days: 14
