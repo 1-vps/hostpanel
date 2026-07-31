@@ -326,6 +326,7 @@ jobs:
             /tmp/hostpanel-acceptance.env \
             /tmp/hostpanel-acceptance-remote.sh \
             root@"$VPS_HOST":/root/
+          rm -f /tmp/hostpanel-acceptance.env
           "${SSH[@]}" root@"$VPS_HOST" '
             chmod 600 /root/hostpanel-acceptance.env
             chmod 700 /root/bootstrap-install.sh /root/validate-production-vm.sh /root/hostpanel-acceptance-remote.sh

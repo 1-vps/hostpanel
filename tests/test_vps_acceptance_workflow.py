@@ -78,6 +78,20 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
             self.text,
         )
 
+    def test_runner_removes_token_file_immediately_after_transfer(self) -> None:
+        lines = self.text.splitlines()
+        create = lines.index("          } > /tmp/hostpanel-acceptance.env")
+        scp_target = lines.index('            root@"$VPS_HOST":/root/')
+        cleanup = lines.index("          rm -f /tmp/hostpanel-acceptance.env", scp_target)
+        ssh = lines.index('          "${SSH[@]}" root@"$VPS_HOST" \'', cleanup)
+        self.assertLess(create, scp_target)
+        self.assertEqual(cleanup, scp_target + 1)
+        self.assertEqual(ssh, cleanup + 1)
+        self.assertGreaterEqual(
+            self.text.count("rm -f /tmp/hostpanel-acceptance.env"),
+            2,
+        )
+
     def test_generated_credentials_stay_on_the_vps(self) -> None:
         self.assertNotIn("/var/log/hostpanel-install.log", self.text)
         self.assertIn("PRIVATE_LOG=/root/hostpanel-acceptance-private-install.log", self.text)
