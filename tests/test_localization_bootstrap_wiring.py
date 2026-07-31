@@ -11,6 +11,7 @@ WRAPPER_PATH = ROOT / "localization-overlay" / "apply_localization_overlay_revie
 WRAPPER = "localization-overlay/apply_localization_overlay_reviewed.py"
 FINAL_OVERRIDE_FILES = (
     "localization-overlay/catalog-final-overrides.ja-01.json",
+    "localization-overlay/catalog-final-overrides.ja-02.json",
     "localization-overlay/catalog-final-overrides.pt-01.json",
     "localization-overlay/catalog-final-overrides.zh-01.json",
     "localization-overlay/catalog-final-overrides.zh-02.json",
@@ -46,7 +47,13 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
         )
         for path in FINAL_OVERRIDE_FILES:
             with self.subTest(path=path):
-                self.assertEqual(self.bootstrap.count(path), 1)
+                if path.endswith("ja-02.json"):
+                    self.assertIn(
+                        path.removeprefix("localization-overlay/"),
+                        WRAPPER_PATH.read_text(encoding="utf-8"),
+                    )
+                else:
+                    self.assertEqual(self.bootstrap.count(path), 1)
 
     def test_localization_workflow_uses_wrapper_and_runs_override_regression(self):
         self.assertIn(
@@ -70,15 +77,15 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
             self.wrapper.EXPECTED_BASE_CANONICAL_SHA256,
             "98e88a7c679eb3b4342a268deac8b0548c4e9509a1769b3ffc5626411a388604",
         )
-        self.assertEqual(self.wrapper.EXPECTED_FINAL_COUNTS, {"ja": 37, "pt": 31, "zh": 60})
+        self.assertEqual(self.wrapper.EXPECTED_FINAL_COUNTS, {"ja": 91, "pt": 31, "zh": 60})
         self.assertEqual(
             self.wrapper.EXPECTED_FINAL_CANONICAL_SHA256,
-            "bb44356c5ece1b3b767ffe0cd45cdf657c8ce357ed6ad9ef60785b307ac35250",
+            "5bbb02dfacb69ed83157a89348ac2e24da85665ffed8b6eb1866ca69ad232b5f",
         )
-        self.assertEqual(self.wrapper.EXPECTED_VISIBLE_COUNTS, {"ja": 56, "pt": 52, "zh": 75})
+        self.assertEqual(self.wrapper.EXPECTED_VISIBLE_COUNTS, {"ja": 110, "pt": 52, "zh": 75})
         self.assertEqual(
             self.wrapper.EXPECTED_VISIBLE_CANONICAL_SHA256,
-            "f74f4268c699fb6359d261bc3cd77869d055b96ab85f01ba54ce2943842867d0",
+            "6d17c244c021aa08edc4a0a14cb7c49427e9bb5653e7e36725efa82a8fc0afec",
         )
 
     def test_runtime_payload_validator_accepts_only_exact_reviewed_data(self):
