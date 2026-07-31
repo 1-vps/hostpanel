@@ -30,8 +30,11 @@ class QemuEvidenceSanitizerTests(unittest.TestCase):
             output.write_bytes(
                 b"database=postgresql://hostpanel:database-secret@db.internal/panel\n"
                 b"Authorization: Bearer bearer-secret-value\n"
+                b"Authorization: Basic \"quoted-basic-secret\"\n"
                 b"https://x-access-token:ghp_123456789012345678901234567890@github.com/repo\n"
                 b"https://example.invalid/?access_token=query-secret&mode=test\n"
+                b"password=assignment-secret\n"
+                b"{\"api_key\":\"json-secret\"}\n"
                 b"github_pat_123456789012345678901234567890\n"
                 b"-----BEGIN OPENSSH PRIVATE KEY-----\nprivate-material\n"
                 b"-----END OPENSSH PRIVATE KEY-----\n"
@@ -44,16 +47,22 @@ class QemuEvidenceSanitizerTests(unittest.TestCase):
             for secret in (
                 b"database-secret",
                 b"bearer-secret-value",
+                b"quoted-basic-secret",
                 b"ghp_123456789012345678901234567890",
                 b"query-secret",
+                b"assignment-secret",
+                b"json-secret",
                 b"github_pat_123456789012345678901234567890",
                 b"private-material",
             ):
                 self.assertNotIn(secret, sanitized)
             self.assertIn(b"postgresql://hostpanel:[REDACTED]@db.internal", sanitized)
             self.assertIn(b"Authorization: Bearer [REDACTED]", sanitized)
+            self.assertIn(b"Authorization: Basic [REDACTED]", sanitized)
             self.assertIn(b"x-access-token:[REDACTED]@github.com", sanitized)
             self.assertIn(b"access_token=[REDACTED]&mode=test", sanitized)
+            self.assertIn(b"password=[REDACTED]", sanitized)
+            self.assertIn(b'{"api_key":"[REDACTED]"}', sanitized)
             self.assertIn(b"[REDACTED_GITHUB_TOKEN]", sanitized)
             self.assertIn(b"[REDACTED_PRIVATE_KEY]", sanitized)
             self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
