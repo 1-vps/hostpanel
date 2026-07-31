@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import importlib.util
 import pathlib
 import stat
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SANITIZER = ROOT / "tools" / "sanitize-qemu-evidence.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "qemu-vm-acceptance.yml"
+MODULE_SPEC = importlib.util.spec_from_file_location("qemu_evidence_sanitizer", SANITIZER)
+if MODULE_SPEC is None or MODULE_SPEC.loader is None:
+    raise RuntimeError("could not load QEMU evidence sanitizer")
+SANITIZER_MODULE = importlib.util.module_from_spec(MODULE_SPEC)
+MODULE_SPEC.loader.exec_module(SANITIZER_MODULE)
 
 
 class QemuEvidenceSanitizerTests(unittest.TestCase):
@@ -29,6 +37,7 @@ class QemuEvidenceSanitizerTests(unittest.TestCase):
             output = evidence / "failure.txt"
             output.write_bytes(
                 b"database=postgresql://hostpanel:database-secret@db.internal/panel\n"
+                b"empty-user=https://:empty-user-secret@example.com/panel\n"
                 b"Authorization: Bearer bearer-secret-value\n"
                 b"Authorization: Basic \"quoted-basic-secret\"\n"
                 b"https://x-access-token:ghp_123456789012345678901234567890@github.com/repo\n"
@@ -46,6 +55,7 @@ class QemuEvidenceSanitizerTests(unittest.TestCase):
             sanitized = output.read_bytes()
             for secret in (
                 b"database-secret",
+                b"empty-user-secret",
                 b"bearer-secret-value",
                 b"quoted-basic-secret",
                 b"ghp_123456789012345678901234567890",
@@ -57,6 +67,7 @@ class QemuEvidenceSanitizerTests(unittest.TestCase):
             ):
                 self.assertNotIn(secret, sanitized)
             self.assertIn(b"postgresql://hostpanel:[REDACTED]@db.internal", sanitized)
+            self.assertIn(b"https://:[REDACTED]@example.com/panel", sanitized)
             self.assertIn(b"Authorization: Bearer [REDACTED]", sanitized)
             self.assertIn(b"Authorization: Basic [REDACTED]", sanitized)
             self.assertIn(b"x-access-token:[REDACTED]@github.com", sanitized)
@@ -79,6 +90,36 @@ class QemuEvidenceSanitizerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(output.read_text(encoding="utf-8"), "validator passed\n")
             self.assertEqual(output.stat().st_ino, before)
+
+    def test_metadata_change_during_read_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            evidence_file = pathlib.Path(temporary_directory) / "evidence.txt"
+            evidence_file.write_bytes(b"same-size content")
+            initial = evidence_file.stat()
+            changed_values = {
+                name: getattr(initial, name)
+                for name in (
+                    "st_dev",
+                    "st_ino",
+                    "st_mode",
+                    "st_uid",
+                    "st_gid",
+                    "st_nlink",
+                    "st_size",
+                    "st_mtime_ns",
+                    "st_ctime_ns",
+                )
+            }
+            changed_values["st_mtime_ns"] += 1
+            changed = types.SimpleNamespace(**changed_values)
+
+            with mock.patch.object(
+                SANITIZER_MODULE.os,
+                "fstat",
+                side_effect=[initial, changed],
+            ):
+                with self.assertRaisesRegex(RuntimeError, "changed while reading"):
+                    SANITIZER_MODULE._read_stable(evidence_file)
 
     def test_symlinked_evidence_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
