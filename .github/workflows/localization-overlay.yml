@@ -173,9 +173,12 @@ jobs:
             "$SOURCE_ROOT/app/main.py" \
             "$SOURCE_ROOT/tools/audit_locales.py" \
             "$SOURCE_ROOT/tools/review_locales.py"
-          python3 -m pip install --disable-pip-version-check \
+          python3 -m venv /tmp/hostpanel-localization-venv
+          /tmp/hostpanel-localization-venv/bin/python -m pip install \
+            --disable-pip-version-check \
             'beautifulsoup4==4.13.4' 'jinja2==3.1.6'
-          TERM=xterm python3 "$SOURCE_ROOT/tests/test_ui_ux_remediation.py"
+          TERM=xterm /tmp/hostpanel-localization-venv/bin/python \
+            "$SOURCE_ROOT/tests/test_ui_ux_remediation.py"
           node --check "$SOURCE_ROOT/app/static/login.js"
           node --check "$SOURCE_ROOT/app/static/panel-i18n.js"
           bash -n bootstrap-install.sh
