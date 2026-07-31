@@ -70,6 +70,35 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
             "193ef6c9f6b0e3b36f755ace7d685109974ae30aa480bd4db9bdc01eceb2c08c",
         )
 
+    def test_brazilian_portuguese_label_is_explicit_and_unique(self):
+        core = self.wrapper.load_core()
+        original_languages = list(core.LANGUAGES)
+        original_by_code = dict(original_languages)
+
+        self.wrapper.install_language_labels(core)
+
+        self.assertEqual(len(core.LANGUAGES), len(original_languages))
+        self.assertEqual(
+            [code for code, _label in core.LANGUAGES].count("pt"),
+            1,
+        )
+        self.assertEqual(
+            dict(core.LANGUAGES)["pt"],
+            self.wrapper.BRAZILIAN_PORTUGUESE_LABEL,
+        )
+        self.assertEqual(
+            self.wrapper.BRAZILIAN_PORTUGUESE_LABEL,
+            "Português (Brasil)",
+        )
+        for code, label in core.LANGUAGES:
+            if code != "pt":
+                with self.subTest(code=code):
+                    self.assertEqual(label, original_by_code[code])
+        self.assertIn(
+            "install_language_labels(core)\n    install_final_override_loader(core)",
+            self.wrapper_text,
+        )
+
     def test_localization_workflow_uses_wrapper_and_runs_override_regressions(self):
         self.assertIn(
             "python3 localization-overlay/apply_localization_overlay_reviewed.py",
