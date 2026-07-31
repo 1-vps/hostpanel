@@ -36,7 +36,15 @@ The semantic layer corrects meaning-changing errors in destructive confirmations
 
 ## Trust model
 
-The original source archive and its signature are not modified. `bootstrap-install.sh` first verifies that signed archive, then verifies every localization overlay file against the operator-supplied full Git commit before applying it to the extracted source tree. The compressed bundle still requires exactly 63,168 Base64 bytes and its existing SHA-256. The wrapper rejects missing, extra, unsafe, malformed, or duplicate final-override files before applying their reviewed values.
+The original source archive and its signature are not modified. `bootstrap-install.sh` first verifies that signed archive, then verifies every localization overlay file against the operator-supplied full Git commit before applying it to the extracted source tree. The compressed bundle still requires exactly 63,168 Base64 bytes and its existing SHA-256.
+
+The runtime wrapper independently enforces all source-visible review contracts before writing any catalog:
+
+- initial layer counts `19/21/15` and SHA-256 `98e88a7c679eb3b4342a268deac8b0548c4e9509a1769b3ffc5626411a388604`
+- semantic final counts `37/31/60` and SHA-256 `bb44356c5ece1b3b767ffe0cd45cdf657c8ce357ed6ad9ef60785b307ac35250`
+- combined counts `56/52/75` and SHA-256 `f74f4268c699fb6359d261bc3cd77869d055b96ab85f01ba54ce2943842867d0`
+
+It also rejects missing, extra, unsafe, malformed, empty, duplicate, or overlapping review files and values. These runtime checks remain effective even when external CI is unavailable.
 
 ## Verification
 
@@ -47,11 +55,11 @@ The localization workflow checks:
 - non-empty UTF-8 values and placeholder multiplicity
 - protected technical tokens, unsafe markup, and mojibake
 - reviewed Swedish interface labels remain translated
-- initial reviewed counts and canonical SHA-256
-- semantic final counts `37/31/60` and canonical SHA-256 `bb44356c5ece1b3b767ffe0cd45cdf657c8ce357ed6ad9ef60785b307ac35250`
-- combined source-visible counts `56/52/75` and canonical SHA-256 `f74f4268c699fb6359d261bc3cd77869d055b96ab85f01ba54ce2943842867d0`
+- all three runtime counts and canonical digests
 - every reviewed key exists in the signed English source and preserves its placeholders
+- the semantic final layer wins after the checksum-locked compressed bundle
 - the reconstructed Brazilian Portuguese catalog contains no known cross-language residue
 - selector, registry, login, Python, JavaScript, Bash, installer, and QEMU integration consistency
+- negative runtime tests reject locale, count, digest, and empty-value drift
 
 The three new catalogs remain release candidates. Specialized legal, billing, tax, contractual, security, and jurisdiction-specific compliance language still requires native-speaking subject-matter review before contractual use.
