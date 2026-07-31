@@ -2,7 +2,7 @@
 
 ## Scope
 
-This overlay retains the ten existing production catalogs and adds Japanese (`ja`), Portuguese (`pt`), and Simplified Chinese (`zh`). All thirteen catalogs contain the same 2,215 stable keys. The single `pt` catalog follows Brazilian Portuguese administrative terminology; generic and regional Portuguese tags currently resolve to it.
+This overlay retains the ten existing production catalogs and adds Japanese (`ja`), Portuguese (`pt`), and Simplified Chinese (`zh`). All thirteen catalogs contain the same 2,215 stable keys. The single `pt` catalog follows Brazilian Portuguese terminology; generic and regional Portuguese tags currently resolve to it.
 
 ## Automated checks
 
@@ -13,9 +13,10 @@ This overlay retains the ten existing production catalogs and adds Japanese (`ja
 - panel and login selector coverage
 - regional locale normalization
 - synchronized server- and client-rendered login messages
-- exact canonical digests for both source-visible review layers
+- exact canonical digests for the explicit reviewed layers
 - reconstruction of the final override state after the checksum-locked bundle
-- reconstruction of the final Brazilian Portuguese catalog and rejection of known Spanish, Italian, French, and European Portuguese residue
+- contamination-marker checks scoped to the explicitly reviewed Brazilian Portuguese values
+- product-name preservation for `cPanel` and `DirectAdmin`
 
 ## Editorial corrections applied across existing languages
 
@@ -27,30 +28,32 @@ This overlay retains the ten existing production catalogs and adds Japanese (`ja
 ## New-language terminology
 
 - Japanese uses `パスキー`, `サーバー`, `復元`, and `バックアップ` consistently in authentication and administrative operations.
-- Brazilian Portuguese uses `chave de acesso`, `senha`, `usuário`, `arquivo`, `backup`, `restauração`, and `servidor` consistently.
+- Brazilian Portuguese uses `chave de acesso`, `senha`, `usuário`, `arquivo`, `backup`, `restauração`, and `servidor` in the reviewed values.
 - Simplified Chinese uses `通行密钥`, `服务器`, `备份`, `恢复`, and `防火墙` consistently.
 
 ## Reviewed correction layers
 
-The locked compressed translation bundle is preserved byte-for-byte. Additional reviewed corrections are source-visible and non-overlapping with each other:
+The locked compressed translation bundle is preserved byte-for-byte. Additional reviewed corrections are explicit and non-overlapping:
 
-| Locale | Initial high-risk / contamination | Semantic final | Total explicit reviewed values | Native sign-off |
-|---|---:|---:|---:|---|
-| Japanese (`ja`) | 19 | 37 | 56 | Pending |
-| Brazilian Portuguese (`pt`) | 21 | 31 | 52 | Pending |
-| Simplified Chinese (`zh`) | 15 | 60 | 75 | Pending |
-| **Total** | **55** | **128** | **183** | **Pending** |
+| Locale | Initial high-risk / contamination | Semantic final | Visible UI | Total explicit reviewed values | Native sign-off |
+|---|---:|---:|---:|---:|---|
+| Japanese (`ja`) | 19 | 91 | 0 | 110 | Pending |
+| Brazilian Portuguese (`pt`) | 21 | 31 | 80 | 132 | Pending |
+| Simplified Chinese (`zh`) | 15 | 60 | 0 | 75 | Pending |
+| **Total** | **55** | **182** | **80** | **317** | **Pending** |
 
-The initial layer covers destructive actions, authentication, credentials, subscriptions, compliance, restore, disaster recovery, firewall, migration, and Portuguese language contamination. The semantic final layer expands the pass to account state, passwords, deletion consequences, database and mail operations, backup and staging, migration and rollback, DNS, firewall, control-plane high availability, and customer-facing explanatory copy.
+The initial layer covers destructive actions, authentication, credentials, subscriptions, compliance, restore, disaster recovery, firewall, migration, and selected Portuguese contamination. The semantic final layer expands the pass to account state, passwords, deletion consequences, database and mail operations, backup and staging, migration and rollback, DNS, firewall, control-plane high availability, dialogs, route labels, status messages, and customer-facing explanatory copy. The embedded Portuguese visible-UI layer corrects 80 dialog, validation, and primary-navigation values.
 
-`tests/test_high_risk_locale_overrides.py` requires:
+The repository regressions require:
 
-- initial counts `19/21/15` and their canonical digest
-- semantic final counts `37/31/60` and SHA-256 `bb44356c5ece1b3b767ffe0cd45cdf657c8ce357ed6ad9ef60785b307ac35250`
-- combined source-visible counts `56/52/75` and SHA-256 `f74f4268c699fb6359d261bc3cd77869d055b96ab85f01ba54ce2943842867d0`
-- every reviewed key to exist in the signed English source and preserve placeholders
-- every semantic final value to win after the locked bundle is loaded
-- the final Brazilian Portuguese catalog to contain no known cross-language residue
+- initial counts `19/21/15` and SHA-256 `98e88a7c679eb3b4342a268deac8b0548c4e9509a1769b3ffc5626411a388604`
+- semantic final counts `91/31/60` and SHA-256 `5bbb02dfacb69ed83157a89348ac2e24da85665ffed8b6eb1866ca69ad232b5f`
+- combined initial and semantic counts `110/52/75` and SHA-256 `6d17c244c021aa08edc4a0a14cb7c49427e9bb5653e7e36725efa82a8fc0afec`
+- Portuguese visible-UI count `80` and SHA-256 `193ef6c9f6b0e3b36f755ace7d685109974ae30aa480bd4db9bdc01eceb2c08c`
+- every explicitly reviewed key to exist in the signed English source and preserve placeholders
+- every reviewed value to win after the locked bundle is loaded
+- reviewed layers to remain non-overlapping
+- tracked contamination markers to be absent from the explicitly reviewed Portuguese subset
 
 ## Native reviewer sign-off
 
@@ -58,4 +61,4 @@ For each release-candidate locale, record the reviewer name, review date, covere
 
 ## Acceptance boundary
 
-The catalogs are structurally complete and receive language-specific machine-assisted translation plus protected-token, terminology, contamination, high-risk, and semantic editorial passes. Japanese, Brazilian Portuguese, and Simplified Chinese remain release candidates. The 183 explicit corrections are editorial/automated review results, not native-language approval. Specialized legal, billing, tax, contractual, security, and jurisdiction-specific compliance wording still requires review by native-speaking subject-matter experts before it is used as binding customer language.
+The catalogs are structurally complete and receive language-specific machine-assisted translation plus protected-token, terminology, contamination, high-risk, semantic, and visible-UI editorial passes. Japanese, Brazilian Portuguese, and Simplified Chinese remain release candidates. The 317 explicit corrections are editorial/automated review results, not native-language approval. The unreviewed portions of the machine-assisted catalogs—especially the Portuguese base catalog—may still contain awkward wording or cross-language residue. Full native-speaking subject-matter review is therefore required before contractual or production-critical use.
