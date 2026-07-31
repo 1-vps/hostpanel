@@ -132,22 +132,37 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         )[0]
         promotion_tree = ast.parse(promotion_script)
 
-        promoted_assignment = next(
+        promotion_try = next(
             node
             for node in ast.walk(promotion_tree)
-            if isinstance(node, ast.Assign)
+            if isinstance(node, ast.Try)
             and any(
-                isinstance(target, ast.Name) and target.id == "promoted"
-                for target in node.targets
+                ast.unparse(statement) == "os.replace(temp_name, path)"
+                for statement in node.body
             )
         )
-        promoted_validation = next(
-            node
-            for node in ast.walk(promotion_tree)
-            if isinstance(node, ast.If)
-            and "QEMU guest input promotion failed" in ast.unparse(node)
+        replace_index = next(
+            index
+            for index, statement in enumerate(promotion_try.body)
+            if ast.unparse(statement) == "os.replace(temp_name, path)"
         )
-        self.assertLess(promoted_assignment.lineno, promoted_validation.lineno)
+        promoted_index = next(
+            index
+            for index, statement in enumerate(promotion_try.body)
+            if index > replace_index
+            and isinstance(statement, ast.Assign)
+            and ast.unparse(statement) == "promoted = path.lstat()"
+        )
+        validation_index = next(
+            index
+            for index, statement in enumerate(promotion_try.body)
+            if index > promoted_index
+            and isinstance(statement, ast.If)
+            and "QEMU guest input promotion failed" in ast.unparse(statement)
+        )
+        self.assertLess(replace_index, promoted_index)
+        self.assertLess(promoted_index, validation_index)
+        promoted_validation = promotion_try.body[validation_index]
         validation_predicates = ast.unparse(promoted_validation.test)
         for predicate in (
             "not stat.S_ISREG(promoted.st_mode)",
