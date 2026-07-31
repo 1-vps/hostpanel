@@ -236,12 +236,23 @@ class QemuEvidenceSealerTests(unittest.TestCase):
         archive_descriptor = archive_assignments[0].targets[0].id
 
         seal_tree_function = next(
-            node
-            for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == "seal_tree"
+            (
+                node
+                for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == "seal_tree"
+            ),
+            None,
         )
+        self.assertIsNotNone(
+            seal_tree_function,
+            "seal_tree function is missing from the sealer",
+        )
+        assert isinstance(seal_tree_function, ast.FunctionDef)
         seal_tree_nodes = list(ast.walk(seal_tree_function))
         calls = [node for node in seal_tree_nodes if isinstance(node, ast.Call)]
+        module_calls = [
+            node for node in ast.walk(tree) if isinstance(node, ast.Call)
+        ]
         self.assertTrue(
             any(
                 _os_call(call, "fchmod")
@@ -313,7 +324,7 @@ class QemuEvidenceSealerTests(unittest.TestCase):
                 for node in ast.walk(tree)
             )
         )
-        self.assertFalse(any(_os_call(call, "link") for call in calls))
+        self.assertFalse(any(_os_call(call, "link") for call in module_calls))
 
     def test_workflow_uploads_only_the_sealed_snapshot(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
