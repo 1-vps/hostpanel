@@ -9,6 +9,8 @@ on:
       - tools/patch_panel_ui.py
       - bootstrap-install.sh
       - tests/test_panel_redesign.py
+      - tests/test_panel_future_locales.py
+      - tests/test_panel_patcher_section_bounds.py
       - tests/test_php_runtime_support.py
       - tests/php-runtime-compat.php
       - tests/browser/panel-redesign.spec.js
@@ -24,6 +26,8 @@ on:
       - tools/patch_panel_ui.py
       - bootstrap-install.sh
       - tests/test_panel_redesign.py
+      - tests/test_panel_future_locales.py
+      - tests/test_panel_patcher_section_bounds.py
       - tests/test_php_runtime_support.py
       - tests/php-runtime-compat.php
       - tests/browser/panel-redesign.spec.js
@@ -47,6 +51,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+
+      - name: Validate repository UI overlay contracts
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_panel_redesign.py' -v
+          python3 -m unittest discover -s tests -p 'test_panel_future_locales.py' -v
+          python3 -m unittest discover -s tests -p 'test_panel_patcher_section_bounds.py' -v
 
       - name: Build reviewed UI source tree
         id: source
