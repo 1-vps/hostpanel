@@ -35,6 +35,7 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
         cls.bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
         cls.localization_workflow = LOCALIZATION_WORKFLOW.read_text(encoding="utf-8")
         cls.qemu_workflow = QEMU_WORKFLOW.read_text(encoding="utf-8")
+        cls.wrapper_text = WRAPPER_PATH.read_text(encoding="utf-8")
         cls.wrapper = load_wrapper()
 
     def test_bootstrap_verifies_and_invokes_reviewed_wrapper(self):
@@ -51,12 +52,18 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.bootstrap.count(path), 1)
 
-    def test_portuguese_ui_file_is_runtime_authenticated(self):
+    def test_reviewed_files_are_git_object_and_digest_authenticated(self):
         self.assertEqual(
             self.wrapper.PORTUGUESE_UI_OVERRIDE_FILES,
             (pathlib.Path(PORTUGUESE_UI_FILE).name,),
         )
-        self.assertIn("catalog-visible-ui-overrides.*.json", WRAPPER_PATH.read_text(encoding="utf-8"))
+        self.assertIn("catalog-visible-ui-overrides.*.json", self.wrapper_text)
+        self.assertIn("def verify_checkout_git_objects(", self.wrapper_text)
+        self.assertIn(
+            "FINAL_OVERRIDE_FILES + PORTUGUESE_UI_OVERRIDE_FILES",
+            self.wrapper_text,
+        )
+        self.assertIn('git_output(repository, "hash-object"', self.wrapper_text)
         self.assertEqual(self.wrapper.EXPECTED_UI_COUNTS, {"pt": 80})
         self.assertEqual(
             self.wrapper.EXPECTED_UI_CANONICAL_SHA256,
