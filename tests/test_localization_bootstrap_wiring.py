@@ -16,9 +16,6 @@ FINAL_OVERRIDE_FILES = (
     "localization-overlay/catalog-final-overrides.zh-01.json",
     "localization-overlay/catalog-final-overrides.zh-02.json",
 )
-UI_OVERRIDE_FILES = (
-    "localization-overlay/catalog-ui-overrides.pt-01.json",
-)
 
 
 def load_wrapper():
@@ -50,9 +47,11 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
             'python3 "$LOCALIZATION_ROOT/apply_localization_overlay.py"',
             self.bootstrap,
         )
-        for path in FINAL_OVERRIDE_FILES + UI_OVERRIDE_FILES:
+        for path in FINAL_OVERRIDE_FILES:
             with self.subTest(path=path):
                 self.assertEqual(self.bootstrap.count(path), 1)
+        self.assertNotIn("catalog-ui-overrides.", self.bootstrap)
+        self.assertEqual(len(self.wrapper.PORTUGUESE_UI_OVERRIDES["pt"]), 80)
 
     def test_localization_workflow_uses_wrapper_and_runs_override_regressions(self):
         self.assertIn(
