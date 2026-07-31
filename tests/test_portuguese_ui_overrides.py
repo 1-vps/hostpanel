@@ -3,6 +3,7 @@ import importlib.util
 import json
 import pathlib
 import re
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -168,6 +169,61 @@ class PortugueseUiOverrideTests(unittest.TestCase):
                 EXPECTED_COUNTS,
                 EXPECTED_SHA256,
             )
+
+    def test_git_object_verification_rejects_worktree_tampering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = pathlib.Path(directory)
+            overlay = repository / "localization-overlay"
+            overlay.mkdir()
+            reviewed = overlay / UI_FILE.name
+            reviewed.write_text(
+                '{"pt":{"route.dashboard":"Painel"}}\n', encoding="utf-8"
+            )
+            subprocess.run(
+                ["git", "-C", str(repository), "init", "-q"], check=True
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "config",
+                    "user.email",
+                    "localization-test@example.invalid",
+                ],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "config",
+                    "user.name",
+                    "Localization test",
+                ],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(repository), "add", reviewed.relative_to(repository)],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(repository), "commit", "-qm", "reviewed payload"],
+                check=True,
+            )
+
+            self.wrapper.verify_checkout_git_objects(
+                overlay, (reviewed.name,)
+            )
+            reviewed.write_text(
+                '{"pt":{"route.dashboard":"Painel alterado"}}\n',
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit):
+                self.wrapper.verify_checkout_git_objects(
+                    overlay, (reviewed.name,)
+                )
 
 
 if __name__ == "__main__":
