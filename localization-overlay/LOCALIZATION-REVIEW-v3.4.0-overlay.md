@@ -2,7 +2,7 @@
 
 ## Scope
 
-This overlay retains the ten existing production catalogs and adds Japanese (`ja`), Portuguese (`pt`), and Simplified Chinese (`zh`). All thirteen catalogs contain the same 2,215 stable keys. The single `pt` catalog follows Brazilian Portuguese terminology; generic and regional Portuguese tags currently resolve to it.
+This overlay retains the ten existing production catalogs and adds Japanese (`ja`), Portuguese (`pt`), and Simplified Chinese (`zh`). All thirteen catalogs contain the same 2,215 stable keys. The single `pt` catalog follows Brazilian Portuguese terminology, is displayed as `Português (Brasil)`, and receives generic and regional Portuguese tags; a separate European Portuguese catalog is not included.
 
 ## Automated checks
 
@@ -17,6 +17,7 @@ This overlay retains the ten existing production catalogs and adds Japanese (`ja
 - reconstruction of the final override state after the checksum-locked bundle
 - contamination-marker checks scoped to the explicitly reviewed Brazilian Portuguese values
 - product-name preservation for `cPanel` and `DirectAdmin`
+- exact Git-object verification for every reviewed JSON file before content validation
 
 ## Editorial corrections applied across existing languages
 
@@ -42,7 +43,7 @@ The locked compressed translation bundle is preserved byte-for-byte. Additional 
 | Simplified Chinese (`zh`) | 15 | 60 | 0 | 75 | Pending |
 | **Total** | **55** | **182** | **80** | **317** | **Pending** |
 
-The initial layer covers destructive actions, authentication, credentials, subscriptions, compliance, restore, disaster recovery, firewall, migration, and selected Portuguese contamination. The semantic final layer expands the pass to account state, passwords, deletion consequences, database and mail operations, backup and staging, migration and rollback, DNS, firewall, control-plane high availability, dialogs, route labels, status messages, and customer-facing explanatory copy. The embedded Portuguese visible-UI layer corrects 80 dialog, validation, and primary-navigation values.
+The initial layer covers destructive actions, authentication, credentials, subscriptions, compliance, restore, disaster recovery, firewall, migration, and selected Portuguese contamination. The semantic final layer expands the pass to account state, passwords, deletion consequences, database and mail operations, backup and staging, migration and rollback, DNS, firewall, control-plane high availability, dialogs, route labels, status messages, and customer-facing explanatory copy. The source-visible Portuguese visible-UI layer is stored in `catalog-visible-ui-overrides.pt.json` and corrects 80 dialog, validation, and primary-navigation values.
 
 The repository regressions require:
 
@@ -54,11 +55,13 @@ The repository regressions require:
 - every reviewed value to win after the locked bundle is loaded
 - reviewed layers to remain non-overlapping
 - tracked contamination markers to be absent from the explicitly reviewed Portuguese subset
+- all five semantic final-override files and the Portuguese visible-UI file to match the selected checkout's exact Git objects before JSON is read
+- exactly one `pt` language entry with the display label `Português (Brasil)`, with all other language labels unchanged
 
 ## Native reviewer sign-off
 
-For each release-candidate locale, record the reviewer name, review date, covered domains, requested changes, and final decision in the pull-request discussion. Approval must explicitly cover legal, billing, tax, contractual, security, compliance, backup, restore, migration, destructive actions, and jurisdiction-specific customer-facing language.
+Native-speaking subject-matter review is tracked in issue #14. For each release-candidate locale, record the reviewer name, review date, covered domains, requested changes, and final decision. Approval must explicitly cover legal, billing, tax, contractual, security, compliance, backup, restore, migration, destructive actions, and jurisdiction-specific customer-facing language.
 
 ## Acceptance boundary
 
-The catalogs are structurally complete and receive language-specific machine-assisted translation plus protected-token, terminology, contamination, high-risk, semantic, and visible-UI editorial passes. Japanese, Brazilian Portuguese, and Simplified Chinese remain release candidates. The 317 explicit corrections are editorial/automated review results, not native-language approval. The unreviewed portions of the machine-assisted catalogs—especially the Portuguese base catalog—may still contain awkward wording or cross-language residue. Full native-speaking subject-matter review is therefore required before contractual or production-critical use.
+The catalogs are structurally complete and receive language-specific machine-assisted translation plus protected-token, terminology, contamination, high-risk, semantic, and visible-UI editorial passes. Japanese, Brazilian Portuguese, and Simplified Chinese remain release candidates. The 317 explicit corrections are editorial/automated review results, not native-language approval. The unreviewed portions of the machine-assisted catalogs—especially the Portuguese base catalog—may still contain awkward wording or cross-language residue. Full native-speaking subject-matter review is therefore required before contractual or production-critical use. GitHub Actions verification remains separately blocked by issue #13.
