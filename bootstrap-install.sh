@@ -275,6 +275,7 @@ LOCALIZATION_FILES=(
   localization-overlay/login-messages.json
   localization-overlay/catalog-overrides.json
   localization-overlay/catalog-final-overrides.ja-01.json
+  localization-overlay/catalog-final-overrides.ja-02.json
   localization-overlay/catalog-final-overrides.pt-01.json
   localization-overlay/catalog-final-overrides.zh-01.json
   localization-overlay/catalog-final-overrides.zh-02.json
