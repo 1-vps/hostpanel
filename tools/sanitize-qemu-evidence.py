@@ -47,7 +47,7 @@ _RULES: tuple[tuple[re.Pattern[bytes], bytes], ...] = (
             + _JSON_VALUE,
             re.IGNORECASE,
         ),
-        rb"\1\"[REDACTED]\"",
+        rb'\1"[REDACTED]"',
     ),
     (
         re.compile(
