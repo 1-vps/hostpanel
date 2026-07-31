@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import pathlib
 import stat
 import subprocess
@@ -78,6 +79,23 @@ class QemuEvidenceSanitizerTests(unittest.TestCase):
             self.assertIn(b"[REDACTED_PRIVATE_KEY]", sanitized)
             self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
 
+    def test_escaped_json_secret_is_fully_redacted_and_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            evidence = pathlib.Path(temporary_directory)
+            output = evidence / "structured.json"
+            original = {"password": 'prefix"suffix-secret', "mode": "test"}
+            output.write_text(json.dumps(original), encoding="utf-8")
+
+            result = self.run_sanitizer(evidence)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            sanitized = output.read_text(encoding="utf-8")
+            self.assertNotIn("suffix-secret", sanitized)
+            self.assertEqual(
+                json.loads(sanitized),
+                {"password": "[REDACTED]", "mode": "test"},
+            )
+
     def test_clean_evidence_is_not_rewritten(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             evidence = pathlib.Path(temporary_directory)
@@ -147,6 +165,36 @@ class QemuEvidenceSanitizerTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("evidence entry name contains secret-shaped content", result.stderr)
             self.assertNotIn(secret_name, result.stderr)
+
+    def test_control_character_filename_fails_without_log_injection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            evidence = pathlib.Path(temporary_directory)
+            malicious_name = "evidence\n::error::forged\x1b[31m.txt"
+            (evidence / malicious_name).write_text("non-secret content\n", encoding="utf-8")
+
+            result = self.run_sanitizer(evidence)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("evidence entry name contains control characters", result.stderr)
+            self.assertNotIn("::error::forged", result.stderr)
+            self.assertNotIn("\x1b", result.stderr)
+
+    def test_walk_errors_fail_closed_without_echoing_oserror_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            evidence = pathlib.Path(temporary_directory)
+
+            def failing_walk(*args: object, **kwargs: object):
+                onerror = kwargs["onerror"]
+                onerror(PermissionError(13, "denied\n::error::forged", "bad\nname"))
+                yield from ()
+
+            with mock.patch.object(SANITIZER_MODULE.os, "walk", side_effect=failing_walk):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "could not traverse evidence directory",
+                ) as captured:
+                    list(SANITIZER_MODULE._regular_files(evidence))
+            self.assertNotIn("::error::forged", str(captured.exception))
 
     def test_workflow_sanitizes_before_conditional_upload(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
