@@ -5,6 +5,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BOOTSTRAP = ROOT / "bootstrap-install.sh"
 LOCALIZATION_WORKFLOW = ROOT / ".github" / "workflows" / "localization-overlay.yml"
+INSTALLER_WORKFLOW = ROOT / ".github" / "workflows" / "installer-hardening.yml"
 QEMU_WORKFLOW = ROOT / ".github" / "workflows" / "qemu-vm-acceptance.yml"
 CORE_PATH = ROOT / "localization-overlay" / "apply_localization_overlay.py"
 WRAPPER_PATH = ROOT / "localization-overlay" / "apply_localization_overlay_reviewed.py"
@@ -35,6 +36,7 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
     def setUpClass(cls):
         cls.bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
         cls.localization_workflow = LOCALIZATION_WORKFLOW.read_text(encoding="utf-8")
+        cls.installer_workflow = INSTALLER_WORKFLOW.read_text(encoding="utf-8")
         cls.qemu_workflow = QEMU_WORKFLOW.read_text(encoding="utf-8")
         cls.core_text = CORE_PATH.read_text(encoding="utf-8")
         cls.wrapper_text = WRAPPER_PATH.read_text(encoding="utf-8")
@@ -151,6 +153,10 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
             (
                 self.localization_workflow,
                 "group: localization-overlay-${{ github.event.pull_request.number || github.ref }}",
+            ),
+            (
+                self.installer_workflow,
+                "group: installer-hardening-${{ github.event.pull_request.number || github.ref }}",
             ),
             (
                 self.qemu_workflow,
