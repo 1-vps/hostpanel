@@ -37,11 +37,11 @@ The reviewed layers correct meaning-changing errors in destructive confirmations
 
 ## Trust model
 
-The original source archive and its signature are not modified. `bootstrap-install.sh` first verifies that signed archive and verifies the core overlay plus all five semantic final-override files against the operator-supplied full Git commit before applying them to the extracted source tree. The compressed bundle still requires exactly 63,168 Base64 bytes and its existing SHA-256.
+The original source archive and its signature are not modified. `bootstrap-install.sh` first verifies that signed archive and verifies the core overlay, the reviewed wrapper, and all five semantic final-override files against the operator-supplied full Git commit before applying them to the extracted source tree. The compressed bundle still requires exactly 63,168 Base64 bytes and its existing SHA-256.
 
-The Portuguese visible-UI file is read from that selected checkout and independently authenticated by the runtime wrapper through an exact filename, non-symlink requirement, locale/count contract, and canonical SHA-256. This avoids hiding review data inside Python while retaining a deterministic fail-closed content check.
+As a defense-in-depth check, the already commit-verified runtime wrapper resolves the selected checkout's `HEAD` commit and compares every one of the five semantic final-override files plus `catalog-visible-ui-overrides.pt.json` with its exact Git blob before reading JSON. A missing file, symlink, worktree modification, uncommitted replacement, or file absent from the selected commit is rejected.
 
-The runtime wrapper enforces the reviewed contracts before writing any catalog:
+The runtime wrapper then enforces the reviewed content contracts before writing any catalog:
 
 - initial layer counts `19/21/15` and SHA-256 `98e88a7c679eb3b4342a268deac8b0548c4e9509a1769b3ffc5626411a388604`
 - semantic final counts `91/31/60` and SHA-256 `5bbb02dfacb69ed83157a89348ac2e24da85665ffed8b6eb1866ca69ad232b5f`
@@ -66,7 +66,8 @@ The localization workflow checks:
 - `cPanel` and `DirectAdmin` remain intact in Portuguese navigation
 - selector, registry, login, Python, JavaScript, Bash, installer, and QEMU integration consistency
 - bootstrap verifies every one of the five semantic final-override files against its Git object
+- the wrapper verifies all six reviewed JSON files against the selected checkout's Git objects before content validation
 - the visible-UI file has the exact expected name, is not a symlink, and matches the locked digest
-- negative runtime tests reject locale, count, digest, empty-value, layout, and wiring drift
+- negative runtime tests reject locale, count, digest, empty-value, layout, worktree-tampering, and wiring drift
 
 The three new catalogs remain release candidates. The 317 corrected values are not equivalent to full-catalog native approval. In particular, the remaining machine-assisted Portuguese base catalog may still contain unreviewed wording or cross-language residue outside the explicitly reviewed subset. Japanese, Brazilian Portuguese, and Simplified Chinese therefore require complete native-speaking subject-matter review before contractual or production-critical use.
