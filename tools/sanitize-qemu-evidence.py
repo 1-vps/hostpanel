@@ -10,6 +10,7 @@ import stat
 import sys
 import tempfile
 from collections.abc import Iterator
+from typing import Any
 
 MAX_FILE_BYTES = 128 * 1024 * 1024
 MAX_TOTAL_BYTES = 256 * 1024 * 1024
@@ -22,7 +23,7 @@ _TOKEN_VALUE = rb"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^@\s/\"']+)"
 _RULES: tuple[tuple[re.Pattern[bytes], bytes], ...] = (
     (
         re.compile(
-            rb"\b([a-z][a-z0-9+.-]*://[^/\s:@]+:)[^@\s/]+@",
+            rb"\b([a-z][a-z0-9+.-]*://[^/\s:@]*:)[^@\s/]+@",
             re.IGNORECASE,
         ),
         rb"\1[REDACTED]@",
@@ -74,7 +75,7 @@ _RULES: tuple[tuple[re.Pattern[bytes], bytes], ...] = (
 
 _LEAK_PATTERNS: tuple[re.Pattern[bytes], ...] = (
     re.compile(
-        rb"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:(?!\[REDACTED\]@)[^@\s/]+@",
+        rb"\b[a-z][a-z0-9+.-]*://[^/\s:@]*:(?!\[REDACTED\]@)[^@\s/]+@",
         re.IGNORECASE,
     ),
     re.compile(
@@ -154,24 +155,51 @@ def _regular_files(root: pathlib.Path) -> Iterator[pathlib.Path]:
             yield candidate
 
 
+def _metadata_signature(metadata: Any) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _read_pass(handle: Any, size: int, path: pathlib.Path) -> bytes:
+    data = handle.read(size)
+    if len(data) != size:
+        raise RuntimeError(f"evidence file shrank while reading: {path}")
+    if handle.read(1):
+        raise RuntimeError(f"evidence file grew while reading: {path}")
+    return data
+
+
 def _read_stable(path: pathlib.Path) -> bytes:
     descriptor = os.open(
         path,
         os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
     )
     try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        initial = os.fstat(descriptor)
+        if not stat.S_ISREG(initial.st_mode) or initial.st_nlink != 1:
             raise RuntimeError(f"evidence file changed before reading: {path}")
-        if metadata.st_size > MAX_FILE_BYTES:
+        if initial.st_size > MAX_FILE_BYTES:
             raise RuntimeError(f"evidence file exceeds size limit: {path}")
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
-            data = handle.read(metadata.st_size)
-            if len(data) != metadata.st_size:
-                raise RuntimeError(f"evidence file shrank while reading: {path}")
-            if handle.read(1):
-                raise RuntimeError(f"evidence file grew while reading: {path}")
-        return data
+            first_pass = _read_pass(handle, initial.st_size, path)
+            handle.seek(0)
+            second_pass = _read_pass(handle, initial.st_size, path)
+        final = os.fstat(descriptor)
+        if first_pass != second_pass or _metadata_signature(initial) != _metadata_signature(final):
+            raise RuntimeError(f"evidence file changed while reading: {path}")
+        current_path = path.lstat()
+        if _metadata_signature(initial) != _metadata_signature(current_path):
+            raise RuntimeError(f"evidence file was replaced while reading: {path}")
+        return first_pass
     finally:
         os.close(descriptor)
 
