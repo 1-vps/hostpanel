@@ -47,7 +47,7 @@ _RULES: tuple[tuple[re.Pattern[bytes], bytes], ...] = (
             + _JSON_VALUE,
             re.IGNORECASE,
         ),
-        rb"\1[REDACTED]",
+        rb"\1\"[REDACTED]\"",
     ),
     (
         re.compile(
@@ -92,7 +92,7 @@ _LEAK_PATTERNS: tuple[re.Pattern[bytes], ...] = (
     ),
     re.compile(
         rb"(?:\"" + _SECRET_FIELD + rb"\"|'" + _SECRET_FIELD + rb"')\s*:\s*"
-        rb"(?!\[REDACTED\])"
+        rb"(?!\"\[REDACTED\]\")"
         + _JSON_VALUE,
         re.IGNORECASE,
     ),
