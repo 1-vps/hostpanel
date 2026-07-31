@@ -9,16 +9,23 @@ import re
 import stat
 import sys
 import tempfile
+import unicodedata
 from collections.abc import Iterator
 from typing import Any
 
 MAX_FILE_BYTES = 128 * 1024 * 1024
 MAX_TOTAL_BYTES = 256 * 1024 * 1024
 _SECRET_FIELD = rb"(?:access[_-]?token|token|password|passwd|secret|api[_-]?key)"
-_SECRET_VALUE = rb"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s\"']+)"
-_ASSIGNMENT_VALUE = rb"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s&#;]+)"
-_JSON_VALUE = rb"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^,\s}]+)"
-_TOKEN_VALUE = rb"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^@\s/\"']+)"
+_DOUBLE_QUOTED = rb'"(?:\\.|[^"\\\r\n])*"'
+_SINGLE_QUOTED = rb"'(?:\\.|[^'\\\r\n])*'"
+_SECRET_VALUE = rb"(?:" + _DOUBLE_QUOTED + rb"|" + _SINGLE_QUOTED + rb"|[^\s\"']+)"
+_ASSIGNMENT_VALUE = (
+    rb"(?:" + _DOUBLE_QUOTED + rb"|" + _SINGLE_QUOTED + rb"|[^\s&#;]+)"
+)
+_JSON_VALUE = rb"(?:" + _DOUBLE_QUOTED + rb"|" + _SINGLE_QUOTED + rb"|[^,\s}]+)"
+_TOKEN_VALUE = (
+    rb"(?:" + _DOUBLE_QUOTED + rb"|" + _SINGLE_QUOTED + rb"|[^@\s/\"']+)"
+)
 
 _RULES: tuple[tuple[re.Pattern[bytes], bytes], ...] = (
     (
@@ -109,6 +116,11 @@ _LEAK_PATTERNS: tuple[re.Pattern[bytes], ...] = (
 )
 
 
+def _safe_path(path: pathlib.Path) -> str:
+    """Return a single-line ASCII representation safe for CI logs."""
+    return ascii(str(path))
+
+
 def _sanitize(data: bytes) -> bytes:
     sanitized = data
     for pattern, replacement in _RULES:
@@ -120,6 +132,9 @@ def _sanitize(data: bytes) -> bytes:
 
 
 def _require_safe_name(path: pathlib.Path) -> None:
+    if any(unicodedata.category(character) in {"Cc", "Cf"} for character in path.name):
+        raise RuntimeError("evidence entry name contains control characters")
+
     encoded_name = os.fsencode(path.name)
     try:
         sanitized_name = _sanitize(encoded_name)
@@ -131,11 +146,16 @@ def _require_safe_name(path: pathlib.Path) -> None:
         raise RuntimeError("evidence entry name contains secret-shaped content")
 
 
+def _walk_error(error: OSError) -> None:
+    raise RuntimeError("could not traverse evidence directory") from error
+
+
 def _regular_files(root: pathlib.Path) -> Iterator[pathlib.Path]:
     for current, directory_names, file_names in os.walk(
         root,
         topdown=True,
         followlinks=False,
+        onerror=_walk_error,
     ):
         directory = pathlib.Path(current)
         for name in directory_names:
@@ -143,15 +163,19 @@ def _regular_files(root: pathlib.Path) -> Iterator[pathlib.Path]:
             _require_safe_name(candidate)
             metadata = candidate.lstat()
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-                raise RuntimeError(f"unsafe evidence directory: {candidate}")
+                raise RuntimeError(
+                    f"unsafe evidence directory: {_safe_path(candidate)}"
+                )
         for name in file_names:
             candidate = directory / name
             _require_safe_name(candidate)
             metadata = candidate.lstat()
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-                raise RuntimeError(f"unsafe evidence file: {candidate}")
+                raise RuntimeError(f"unsafe evidence file: {_safe_path(candidate)}")
             if metadata.st_nlink != 1:
-                raise RuntimeError(f"evidence file has multiple links: {candidate}")
+                raise RuntimeError(
+                    f"evidence file has multiple links: {_safe_path(candidate)}"
+                )
             yield candidate
 
 
@@ -172,9 +196,11 @@ def _metadata_signature(metadata: Any) -> tuple[int, ...]:
 def _read_pass(handle: Any, size: int, path: pathlib.Path) -> bytes:
     data = handle.read(size)
     if len(data) != size:
-        raise RuntimeError(f"evidence file shrank while reading: {path}")
+        raise RuntimeError(
+            f"evidence file shrank while reading: {_safe_path(path)}"
+        )
     if handle.read(1):
-        raise RuntimeError(f"evidence file grew while reading: {path}")
+        raise RuntimeError(f"evidence file grew while reading: {_safe_path(path)}")
     return data
 
 
@@ -186,19 +212,30 @@ def _read_stable(path: pathlib.Path) -> bytes:
     try:
         initial = os.fstat(descriptor)
         if not stat.S_ISREG(initial.st_mode) or initial.st_nlink != 1:
-            raise RuntimeError(f"evidence file changed before reading: {path}")
+            raise RuntimeError(
+                f"evidence file changed before reading: {_safe_path(path)}"
+            )
         if initial.st_size > MAX_FILE_BYTES:
-            raise RuntimeError(f"evidence file exceeds size limit: {path}")
+            raise RuntimeError(
+                f"evidence file exceeds size limit: {_safe_path(path)}"
+            )
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             first_pass = _read_pass(handle, initial.st_size, path)
             handle.seek(0)
             second_pass = _read_pass(handle, initial.st_size, path)
         final = os.fstat(descriptor)
-        if first_pass != second_pass or _metadata_signature(initial) != _metadata_signature(final):
-            raise RuntimeError(f"evidence file changed while reading: {path}")
+        if (
+            first_pass != second_pass
+            or _metadata_signature(initial) != _metadata_signature(final)
+        ):
+            raise RuntimeError(
+                f"evidence file changed while reading: {_safe_path(path)}"
+            )
         current_path = path.lstat()
         if _metadata_signature(initial) != _metadata_signature(current_path):
-            raise RuntimeError(f"evidence file was replaced while reading: {path}")
+            raise RuntimeError(
+                f"evidence file was replaced while reading: {_safe_path(path)}"
+            )
         return first_pass
     finally:
         os.close(descriptor)
@@ -223,7 +260,9 @@ def _replace_atomically(path: pathlib.Path, content: bytes) -> None:
             or metadata.st_nlink != 1
             or stat.S_IMODE(metadata.st_mode) != 0o600
         ):
-            raise RuntimeError(f"sanitized evidence replacement is unsafe: {path}")
+            raise RuntimeError(
+                f"sanitized evidence replacement is unsafe: {_safe_path(path)}"
+            )
     finally:
         temporary_path.unlink(missing_ok=True)
 
@@ -231,7 +270,7 @@ def _replace_atomically(path: pathlib.Path, content: bytes) -> None:
 def sanitize_tree(root: pathlib.Path) -> tuple[int, int]:
     metadata = root.lstat()
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-        raise RuntimeError(f"unsafe evidence root: {root}")
+        raise RuntimeError(f"unsafe evidence root: {_safe_path(root)}")
 
     file_count = 0
     changed_count = 0
@@ -256,7 +295,14 @@ def main(argv: list[str]) -> int:
     root = pathlib.Path(argv[1])
     try:
         file_count, changed_count = sanitize_tree(root)
-    except (OSError, RuntimeError) as error:
+    except OSError as error:
+        error_number = error.errno if error.errno is not None else "unknown"
+        print(
+            f"QEMU evidence sanitization failed: filesystem error ({error_number})",
+            file=sys.stderr,
+        )
+        return 1
+    except RuntimeError as error:
         print(f"QEMU evidence sanitization failed: {error}", file=sys.stderr)
         return 1
     print(
