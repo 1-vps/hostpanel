@@ -36,6 +36,7 @@ on:
       - tests/test_high_risk_locale_overrides.py
       - tests/test_portuguese_ui_overrides.py
       - tests/test_localization_bootstrap_wiring.py
+      - tests/test_localization_workflow_security.py
       - tests/test_qemu_vm_acceptance.py
       - tests/test_qemu_token_scope.py
       - tests/test_qemu_default_version.py
@@ -90,6 +91,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_high_risk_locale_overrides.py' -v
           python3 -m unittest discover -s tests -p 'test_portuguese_ui_overrides.py' -v
           python3 -m unittest discover -s tests -p 'test_localization_bootstrap_wiring.py' -v
+          python3 -m unittest discover -s tests -p 'test_localization_workflow_security.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_token_scope.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_default_version.py' -v
