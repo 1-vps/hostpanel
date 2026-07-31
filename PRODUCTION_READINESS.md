@@ -7,8 +7,11 @@ kernel, firewall, storage, DNS, and mail environment.
 Validated installer and VM-harness commit:
 
 ```text
-01f171b489bc9971eab4e3ebe7aad58f10255124
+9c38d0095563ea33efd14124babfd29556c0da46
 ```
+
+The release label is `3.4.0-hardened-r6`; the installed application version
+validated by `/opt/hostpanel/VERSION` is `3.4.0`.
 
 ## Prepare a disposable VM
 
@@ -23,7 +26,7 @@ selected HostPanel roles.
 ## Install from the pinned commit
 
 ```bash
-REVIEWED_COMMIT_SHA=01f171b489bc9971eab4e3ebe7aad58f10255124
+REVIEWED_COMMIT_SHA=9c38d0095563ea33efd14124babfd29556c0da46
 
 sudo curl -fsSL \
   "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
@@ -71,7 +74,7 @@ resolution, and certificate validity.
 
 ```bash
 sudo env \
-  HP_EXPECTED_VERSION=3.4.0-hardened-r6 \
+  HP_EXPECTED_VERSION=3.4.0 \
   HP_PANEL_HOST=panel.example.com \
   HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
   bash /root/validate-production-vm.sh --check
@@ -86,7 +89,7 @@ Record the current boot ID only after the initial checks pass:
 
 ```bash
 sudo env \
-  HP_EXPECTED_VERSION=3.4.0-hardened-r6 \
+  HP_EXPECTED_VERSION=3.4.0 \
   HP_PANEL_HOST=panel.example.com \
   HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
   bash /root/validate-production-vm.sh --prepare-reboot
@@ -98,7 +101,7 @@ Reconnect over the configured SSH port and run:
 
 ```bash
 sudo env \
-  HP_EXPECTED_VERSION=3.4.0-hardened-r6 \
+  HP_EXPECTED_VERSION=3.4.0 \
   HP_PANEL_HOST=panel.example.com \
   HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
   bash /root/validate-production-vm.sh --post-reboot
