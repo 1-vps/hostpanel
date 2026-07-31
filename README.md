@@ -7,34 +7,28 @@ operations.
 **Current working release label:** `3.4.0-hardened-r6`  
 **Signed base release:** `3.4.0-hardened-r5`  
 **Installed `/opt/hostpanel/VERSION`:** `3.4.0`  
-**QEMU-validated installer overlay:** `9c38d0095563ea33efd14124babfd29556c0da46`  
+**Reviewed installer overlay:** `9c38d0095563ea33efd14124babfd29556c0da46`  
 **Merged implementation:** `6a2b8f76ece798408ef7b04586e73be8c3041750`  
 **License:** MIT
 
 > HostPanel changes operating-system packages, service configuration, firewall
-> rules, databases, mail, DNS, scheduled jobs, and customer data paths. Use a
-> fresh disposable server for initial validation and keep provider-console access
-> available.
+> rules, databases, mail, DNS, scheduled jobs, and customer data paths. Validate
+> it on a fresh disposable server and keep provider-console access available.
 
-## Installation trust model
+## Trust model
 
-Do not execute an unpinned `main` branch script as root.
+Do not execute an unpinned branch script as root.
 
-The bootstrap has two independent verification layers:
+The installer uses two independent verification layers:
 
 1. an embedded long-lived release public key verifies the signed
    `3.4.0-hardened-r5` source archive;
-2. the operator-supplied full Git commit SHA authenticates the installer overlay
-   that derives the `3.4.0-hardened-r6` working release.
+2. the operator-supplied full Git commit SHA authenticates every installer
+   overlay object that derives the `3.4.0-hardened-r6` working release.
 
-The signed source archive contains the installed application version `3.4.0`.
-The `hardened-r5` and `hardened-r6` identifiers describe the signed packaging
-and reviewed installer-overlay revisions; they are not the value written to
-`/opt/hostpanel/VERSION`.
-
-Every overlay file is checked against its Git object before use. The preserved
-base installer is also checked by its expected Git blob ID before the generated
-root installer can run.
+The signed application writes `3.4.0` to `/opt/hostpanel/VERSION`. The
+`hardened-r5` and `hardened-r6` identifiers are packaging and installer-overlay
+revision labels, not installed application versions.
 
 ## Requirements
 
@@ -45,89 +39,69 @@ root installer can run.
 - a valid panel hostname
 - an administrative IP or CIDR for `HP_PANEL_ADMIN_CIDR` when installation is
   not performed over SSH
+- a short-lived GitHub token with **Contents: Read-only** access to this private repository
 
 Automatic third-party repository bootstrap is disabled. Preconfigure any
-reviewed external repository yourself, then run with `HP_MULTI_PHP_REPO=off`
-and `HP_RSPAMD_REPO=off`. Ubuntu 26.04 uses its distribution PHP 8.5 and Rspamd
-packages.
+reviewed external repository yourself, then use `HP_MULTI_PHP_REPO=off` and
+`HP_RSPAMD_REPO=off`.
 
-## Download the pinned bootstrap
+## Secure private-repository installation
 
-The commands below use the exact installer-overlay commit that passed
-deterministic generation, ShellCheck, all supported-OS preflights,
-signed-archive verification, the Ubuntu 26.04/Python 3.14 locked-runtime test,
-and the QEMU install/reboot acceptance workflow.
+Anonymous `raw.githubusercontent.com` commands do not work for this private
+repository. Do not put a GitHub token in a URL or command-line argument. The full
+root-shell procedure, including token cleanup, is documented in
+[`SETUP.md`](SETUP.md).
 
-```bash
-REVIEWED_COMMIT_SHA=9c38d0095563ea33efd14124babfd29556c0da46
+The procedure:
 
-sudo curl -fsSL \
-  "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
-  -o /root/bootstrap-install.sh
-sudo chmod 700 /root/bootstrap-install.sh
-sudo bash -n /root/bootstrap-install.sh
-```
+1. prompts without echo for a short-lived read-only token;
+2. downloads `bootstrap-install.sh` and `tools/validate-production-vm.sh` through
+   the GitHub Contents API from exactly
+   `9c38d0095563ea33efd14124babfd29556c0da46`;
+3. provides transient Git authentication only while the bootstrap fetches that
+   reviewed commit;
+4. removes the token file, plain token, encoded header, and Git authentication
+   variables after installation.
 
-## Preflight
-
-```bash
-sudo env \
-  HP_REPO_REF="$REVIEWED_COMMIT_SHA" \
-  HP_PANEL_HOST=panel.example.com \
-  HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
-  HP_MULTI_PHP_REPO=off \
-  HP_RSPAMD_REPO=off \
-  bash /root/bootstrap-install.sh --check --mta postfix
-```
-
-The preflight validates inputs and host capacity but does not install packages,
-configure repositories, change the firewall, or start services.
-
-## Fresh installation
+After the pinned files and transient Git authentication are prepared, run:
 
 ```bash
-sudo env \
-  HP_REPO_REF="$REVIEWED_COMMIT_SHA" \
-  HP_PANEL_HOST=panel.example.com \
-  HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
-  HP_MULTI_PHP_REPO=off \
-  HP_RSPAMD_REPO=off \
-  bash /root/bootstrap-install.sh --mta postfix
+HP_REPO_REF=9c38d0095563ea33efd14124babfd29556c0da46 \
+HP_PANEL_HOST=panel.example.com \
+HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
+HP_MULTI_PHP_REPO=off \
+HP_RSPAMD_REPO=off \
+bash /root/bootstrap-install.sh --check --mta postfix
+
+HP_REPO_REF=9c38d0095563ea33efd14124babfd29556c0da46 \
+HP_PANEL_HOST=panel.example.com \
+HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
+HP_MULTI_PHP_REPO=off \
+HP_RSPAMD_REPO=off \
+bash /root/bootstrap-install.sh --mta postfix
 ```
 
 Public panel exposure is fail-closed. When no administrative source can be
-detected, installation stops unless `HP_PANEL_ADMIN_CIDR` is supplied. Setting
-`HP_ALLOW_PUBLIC_PANEL=yes` explicitly accepts public exposure and should be
-reserved for controlled testing.
+detected, installation stops unless `HP_PANEL_ADMIN_CIDR` is supplied.
+`HP_ALLOW_PUBLIC_PANEL=yes` is an explicit override for controlled testing only.
 
-## Safe reinstall
+## Reinstall and rollback
 
-```bash
-sudo env \
-  HP_REPO_REF="$REVIEWED_COMMIT_SHA" \
-  HP_PANEL_HOST=panel.example.com \
-  HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
-  HP_MULTI_PHP_REPO=off \
-  HP_RSPAMD_REPO=off \
-  bash /root/bootstrap-install.sh --reinstall --mta postfix
-```
-
-A mutating run creates a root-owned `0700` snapshot directory at
-`/var/backups/hostpanel-install/`. Snapshot archives and their absence manifests
-remain root-only and are never placed under the panel-owned customer backup tree.
-The installer also tracks newly installed packages, managed paths and a timed
-firewall rollback. Rollback is best-effort; always validate on a disposable VM
-before upgrading a production server.
+Use `--reinstall --check` before a mutating reinstall. Every mutating run creates
+a root-owned `0700` safety snapshot under `/var/backups/hostpanel-install/`.
+Rollback is best-effort because operating-system package scripts and external
+service side effects are not fully transactional. Keep a provider snapshot and
+console access for production changes.
 
 ## Verify
 
 ```bash
 cat /opt/hostpanel/VERSION
 readlink -f /opt/hostpanel/venv
-sudo nginx -t
-sudo systemctl status hostpanel nginx --no-pager --full
-sudo /opt/hostpanel/venv/bin/python \
-  /opt/hostpanel/app/hostpanel-doctor
+nginx -t
+systemctl status hostpanel nginx --no-pager --full
+/opt/hostpanel/venv/bin/python /opt/hostpanel/app/hostpanel-doctor
+bash /root/validate-production-vm.sh --check
 ```
 
 Expected installed application version:
@@ -135,9 +109,6 @@ Expected installed application version:
 ```text
 3.4.0
 ```
-
-The repository working-release label is `3.4.0-hardened-r6`; do not infer the
-installed `VERSION` value from the signed archive filename or overlay label.
 
 Installer log:
 
@@ -147,48 +118,47 @@ Installer log:
 
 ## Least-privilege QEMU acceptance
 
-The repository includes [`.github/workflows/qemu-vm-acceptance.yml`](.github/workflows/qemu-vm-acceptance.yml).
+The repository includes
+[`.github/workflows/qemu-vm-acceptance.yml`](.github/workflows/qemu-vm-acceptance.yml).
 It boots a checksum-pinned Ubuntu 24.04 cloud image with an ephemeral SSH key,
-installs the reviewed commit, runs the production validator and doctor, performs
-a real systemd reboot, waits for stable backend readiness, reruns post-reboot
-validation, and probes forwarded panel, web, mail, DNS, and Redis paths.
+installs the reviewed commit, validates services, performs a real systemd reboot,
+and uploads bounded non-sensitive evidence.
 
-The workflow has read-only repository permissions. For a private repository,
-GitHub's per-run token is exposed only to the installation step, converted to a
-transient Git authentication header, removed from the runner environment before
-QEMU starts, and deleted from the guest environment after the reviewed commit is
-fetched. The token, generated credentials, and full installer log are never
-included in uploaded evidence.
+The workflow has read-only repository permissions. GitHub's per-run token is
+available only to the installation step, converted to a transient Git header,
+removed from runner variables before QEMU starts, and deleted from the guest
+environment after the reviewed commit is fetched. It is never included in an
+artifact. No repository-defined secret is required for QEMU acceptance.
 
-Maintainers can run it from the Actions UI or with GitHub CLI:
+Pull requests from forks do not execute the full VM job because untrusted fork
+code must not receive the same runner trust boundary.
 
-```bash
-gh workflow run qemu-vm-acceptance.yml -f mta=postfix
-gh run watch
-```
+## Provider-backed acceptance
 
-Use `mta=exim` to validate the Exim path. Pull requests from forks do not execute
-the full VM job because untrusted fork code must not receive the same runner
-trust boundary.
+[`.github/workflows/vps-acceptance.yml`](.github/workflows/vps-acceptance.yml) is
+manual, environment-gated, and destructive. It checks out the exact reviewed
+commit, verifies `HEAD` before any VPS connection and before installation,
+requires a confirmed provider snapshot, uses strict SSH host verification, and
+removes transient Git authentication on all exit paths.
 
-This workflow complements, but does not replace, provider-backed testing for
-public IPv4/IPv6, inbound Internet reachability, reverse DNS, and trusted public
-certificate issuance.
+This complements QEMU by testing public networking, trusted TLS, DNS delegation,
+mail deliverability, reverse DNS, backup/restore, quota enforcement, and recovery
+on the intended infrastructure.
 
 ## Production validation required
 
 Before serving customers:
 
 1. complete a full installation on a disposable systemd VM of the target OS;
-2. run the production VM validator before and after a verified reboot;
-3. test every selected role and verify all required services;
+2. run the production validator before and after a verified reboot;
+3. test every selected role and required service externally;
 4. create a backup and perform a restore test;
 5. verify firewall persistence and reconnect over the configured SSH port;
-6. configure real TLS, DNS, reverse DNS, SPF, DKIM, and DMARC as applicable.
+6. configure trusted TLS, DNS, reverse DNS, SPF, DKIM, and DMARC as applicable.
 
 ## Maintained documentation
 
-- [`SETUP.md`](SETUP.md) — installation, reinstall, verification, QEMU acceptance, and recovery
+- [`SETUP.md`](SETUP.md) — authenticated private-repository installation and recovery
 - [`CONFIGURATION.md`](CONFIGURATION.md)
 - [`SECURITY.md`](SECURITY.md)
 - [`FIREWALL.md`](FIREWALL.md)
