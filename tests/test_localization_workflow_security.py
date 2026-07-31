@@ -7,12 +7,14 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "localization-overlay.yml"
+QEMU_WORKFLOW = ROOT / ".github" / "workflows" / "qemu-vm-acceptance.yml"
 
 
 class LocalizationWorkflowSecurityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.text = WORKFLOW.read_text(encoding="utf-8")
+        cls.qemu = QEMU_WORKFLOW.read_text(encoding="utf-8")
         cls.pull_request_block = cls.text.split("  push:\n", 1)[0]
 
     def test_pull_requests_are_not_limited_to_main(self) -> None:
@@ -44,7 +46,7 @@ class LocalizationWorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("find localization-source", self.text)
 
     def test_extracted_root_is_reused_exactly(self) -> None:
-        self.assertIn('/tmp/hostpanel-localization-root', self.text)
+        self.assertIn("/tmp/hostpanel-localization-root", self.text)
         self.assertGreaterEqual(
             self.text.count('SOURCE_ROOT="$(cat /tmp/hostpanel-localization-root)"'),
             2,
@@ -56,6 +58,22 @@ class LocalizationWorkflowSecurityTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", self.text)
         self.assertIn("timeout-minutes: 25", self.text)
         self.assertIn("cancel-in-progress: true", self.text)
+
+    def test_fast_workflow_runs_its_security_and_blob_regressions(self) -> None:
+        for test_name in (
+            "test_existing_catalog_corrections.py",
+            "test_localization_workflow_security.py",
+        ):
+            with self.subTest(test=test_name):
+                self.assertGreaterEqual(self.text.count(test_name), 3)
+
+    def test_qemu_runs_security_and_blob_regressions(self) -> None:
+        for test_name in (
+            "test_existing_catalog_corrections.py",
+            "test_localization_workflow_security.py",
+        ):
+            with self.subTest(test=test_name):
+                self.assertGreaterEqual(self.qemu.count(test_name), 2)
 
 
 if __name__ == "__main__":
