@@ -9,7 +9,6 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OVERLAY = ROOT / "localization-overlay"
-UI_FILE = OVERLAY / "catalog-ui-overrides.pt-01.json"
 FINAL_FILES = (
     "catalog-final-overrides.ja-01.json",
     "catalog-final-overrides.ja-02.json",
@@ -62,7 +61,8 @@ def load_wrapper():
 class PortugueseUiOverrideTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.payload = json.loads(UI_FILE.read_text(encoding="utf-8"))
+        cls.wrapper = load_wrapper()
+        cls.payload = cls.wrapper.PORTUGUESE_UI_OVERRIDES
         cls.english = load_signed_english_catalog()
 
     def test_payload_is_exactly_locked(self):
@@ -71,6 +71,8 @@ class PortugueseUiOverrideTests(unittest.TestCase):
             EXPECTED_COUNTS,
         )
         self.assertEqual(canonical_sha256(self.payload), EXPECTED_SHA256)
+        self.assertEqual(self.wrapper.EXPECTED_UI_COUNTS, EXPECTED_COUNTS)
+        self.assertEqual(self.wrapper.EXPECTED_UI_CANONICAL_SHA256, EXPECTED_SHA256)
 
     def test_keys_are_visible_ui_and_preserve_placeholders(self):
         for key, value in self.payload["pt"].items():
@@ -96,9 +98,8 @@ class PortugueseUiOverrideTests(unittest.TestCase):
         self.assertEqual(reviewed_keys & set(self.payload["pt"]), set())
 
     def test_runtime_loader_applies_every_ui_value(self):
-        wrapper = load_wrapper()
-        core = wrapper.load_core()
-        wrapper.install_final_override_loader(core)
+        core = self.wrapper.load_core()
+        self.wrapper.install_final_override_loader(core)
         overrides = json.loads(
             (OVERLAY / "catalog-overrides.json").read_text(encoding="utf-8")
         )
