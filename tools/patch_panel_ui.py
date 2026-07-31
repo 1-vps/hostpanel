@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import stat
 import sys
 
 STYLE_TAG = '<link href="/static/panel-redesign.css" rel="stylesheet"/>'
 SCRIPT_TAG = '<script defer="" src="/static/panel-redesign.js"></script>'
 DASHBOARD_MARKER = 'class="page hp-dashboard" data-view="dashboard"'
+SECTION_TAG = re.compile(r"</?section\b[^>]*>", re.IGNORECASE)
 
 DASHBOARD = r'''<section class="page hp-dashboard" data-view="dashboard">
 <div class="page-h hp-dashboard-hero">
@@ -59,6 +61,25 @@ def _place_before_once(text: str, anchor: str, insertion: str, label: str) -> st
     return text.replace(anchor, f"{insertion}\n{anchor}", 1)
 
 
+def _balanced_section_end(text: str, start: int) -> int:
+    depth = 0
+    first = True
+    for match in SECTION_TAG.finditer(text, start):
+        if first:
+            first = False
+            if match.start() != start or match.group(0).startswith("</"):
+                raise SystemExit("reviewed dashboard section does not start with an opening section tag")
+        if match.group(0).startswith("</"):
+            depth -= 1
+            if depth == 0:
+                return match.end()
+            if depth < 0:
+                break
+        else:
+            depth += 1
+    raise SystemExit("reviewed dashboard section tags are unbalanced")
+
+
 def patch(text: str) -> str:
     text = _insert_once(
         text,
@@ -78,10 +99,7 @@ def patch(text: str) -> str:
         start = text.find(start_marker)
         if start < 0:
             raise SystemExit("could not locate the reviewed dashboard section")
-        end = text.find('</section>', start)
-        if end < 0:
-            raise SystemExit("could not locate the end of the reviewed dashboard section")
-        end += len('</section>')
+        end = _balanced_section_end(text, start)
         original = text[start:end]
         required_ids = ('id="cpu"', 'id="ram"', 'id="disk"', 'id="loadv"', 'id="svcBody"', 'id="mq"')
         if not all(marker in original for marker in required_ids):
