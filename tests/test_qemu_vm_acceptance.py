@@ -124,6 +124,20 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertIn("hostpanel-qemu-post-reboot.sh", self.guest_installer)
 
     def test_guest_inputs_are_escaped_and_promoted_before_root_use(self):
+        def same_statement(node: ast.stmt, source: str) -> bool:
+            expected = ast.parse(source).body[0]
+            return ast.dump(node, include_attributes=False) == ast.dump(
+                expected,
+                include_attributes=False,
+            )
+
+        def same_expression(node: ast.AST, source: str) -> bool:
+            expected = ast.parse(source, mode="eval").body
+            return ast.dump(node, include_attributes=False) == ast.dump(
+                expected,
+                include_attributes=False,
+            )
+
         self.assertIn("printf 'HP_PANEL_HOST=%q\\n'", self.harness)
         promotion_marker = 'sudo python3 - "$(id -u)" <<PYROOT\n'
         self.assertIn(promotion_marker, self.harness)
@@ -132,38 +146,44 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         )[0]
         promotion_tree = ast.parse(promotion_script)
 
-        promotion_try = next(
-            node
+        replace_candidates = [
+            (node, index)
             for node in ast.walk(promotion_tree)
             if isinstance(node, ast.Try)
-            and any(
-                ast.unparse(statement) == "os.replace(temp_name, path)"
-                for statement in node.body
-            )
-        )
-        replace_index = next(
-            index
-            for index, statement in enumerate(promotion_try.body)
-            if ast.unparse(statement) == "os.replace(temp_name, path)"
-        )
-        promoted_index = next(
+            for index, statement in enumerate(node.body)
+            if same_statement(statement, "os.replace(temp_name, path)")
+        ]
+        self.assertEqual(len(replace_candidates), 1)
+        promotion_try, replace_index = replace_candidates[0]
+
+        promoted_candidates = [
             index
             for index, statement in enumerate(promotion_try.body)
             if index > replace_index
-            and isinstance(statement, ast.Assign)
-            and ast.unparse(statement) == "promoted = path.lstat()"
-        )
-        validation_index = next(
+            and same_statement(statement, "promoted = path.lstat()")
+        ]
+        self.assertEqual(len(promoted_candidates), 1)
+        promoted_index = promoted_candidates[0]
+
+        validation_candidates = [
             index
             for index, statement in enumerate(promotion_try.body)
             if index > promoted_index
             and isinstance(statement, ast.If)
-            and "QEMU guest input promotion failed" in ast.unparse(statement)
-        )
+            and any(
+                isinstance(descendant, ast.Constant)
+                and isinstance(descendant.value, str)
+                and "QEMU guest input promotion failed" in descendant.value
+                for descendant in ast.walk(statement)
+            )
+        ]
+        self.assertEqual(len(validation_candidates), 1)
+        validation_index = validation_candidates[0]
         self.assertLess(replace_index, promoted_index)
         self.assertLess(promoted_index, validation_index)
+
         promoted_validation = promotion_try.body[validation_index]
-        validation_predicates = ast.unparse(promoted_validation.test)
+        validation_nodes = list(ast.walk(promoted_validation.test))
         for predicate in (
             "not stat.S_ISREG(promoted.st_mode)",
             "promoted.st_uid != 0",
@@ -172,7 +192,10 @@ class QemuVmAcceptanceTests(unittest.TestCase):
             "stat.S_IMODE(promoted.st_mode) != mode",
         ):
             with self.subTest(predicate=predicate):
-                self.assertIn(predicate, validation_predicates)
+                self.assertTrue(
+                    any(same_expression(node, predicate) for node in validation_nodes),
+                    predicate,
+                )
 
         promotion = self.harness.index(promotion_marker)
         open_descriptor = self.harness.index("os.open(path,", promotion)
