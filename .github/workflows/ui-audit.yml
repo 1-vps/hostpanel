@@ -11,12 +11,14 @@ on:
       - tests/test_panel_redesign.py
       - tests/test_panel_future_locales.py
       - tests/test_panel_patcher_section_bounds.py
+      - tests/test_playwright_browser_compat.py
+      - tests/test_ui_workflow_security.py
       - tests/test_php_runtime_support.py
       - tests/php-runtime-compat.php
       - tests/browser/panel-redesign.spec.js
       - hostpanel-*-source.tar.gz
       - hostpanel-*-source.tar.gz.sig
-      - requirements.lock
+      - SHA256SUMS
   push:
     branches: [main]
     paths:
@@ -28,12 +30,14 @@ on:
       - tests/test_panel_redesign.py
       - tests/test_panel_future_locales.py
       - tests/test_panel_patcher_section_bounds.py
+      - tests/test_playwright_browser_compat.py
+      - tests/test_ui_workflow_security.py
       - tests/test_php_runtime_support.py
       - tests/php-runtime-compat.php
       - tests/browser/panel-redesign.spec.js
       - hostpanel-*-source.tar.gz
       - hostpanel-*-source.tar.gz.sig
-      - requirements.lock
+      - SHA256SUMS
   workflow_dispatch:
 
 permissions:
@@ -50,7 +54,51 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          fetch-depth: 1
           persist-credentials: false
+
+      - name: Verify signed source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=hostpanel-v3.4.0-hardened-r5-source.tar.gz
+          test -f SHA256SUMS
+          test ! -L SHA256SUMS
+          test -f "$archive"
+          test -f "$archive.sig"
+          test ! -L "$archive"
+          test ! -L "$archive.sig"
+          python3 - "$archive" <<'PY'
+          import hashlib
+          import pathlib
+          import re
+          import sys
+
+          archive = pathlib.Path(sys.argv[1])
+          matches = []
+          for line in pathlib.Path("SHA256SUMS").read_text(encoding="utf-8").splitlines():
+              match = re.fullmatch(r"([0-9a-f]{64})  (.+)", line)
+              if match and match.group(2) == archive.name:
+                  matches.append(match.group(1))
+          if len(matches) != 1:
+              raise SystemExit(
+                  f"expected one checksum for {archive.name}, found {len(matches)}"
+              )
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          if digest != matches[0]:
+              raise SystemExit(
+                  f"source archive checksum mismatch: {digest} != {matches[0]}"
+              )
+          PY
+          cat >/tmp/hostpanel-release.pub <<'KEY'
+          -----BEGIN PUBLIC KEY-----
+          MCowBQYDK2VwAyEAJonL5vK2NRcFkXvKZUs64ISOs+FfhwL8gQVmFO4C0qk=
+          -----END PUBLIC KEY-----
+          KEY
+          trap 'rm -f /tmp/hostpanel-release.pub' EXIT
+          openssl pkeyutl -verify -pubin \
+            -inkey /tmp/hostpanel-release.pub -rawin \
+            -in "$archive" -sigfile "$archive.sig"
 
       - name: Validate repository UI overlay contracts
         run: |
@@ -58,6 +106,8 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_panel_redesign.py' -v
           python3 -m unittest discover -s tests -p 'test_panel_future_locales.py' -v
           python3 -m unittest discover -s tests -p 'test_panel_patcher_section_bounds.py' -v
+          python3 -m unittest discover -s tests -p 'test_playwright_browser_compat.py' -v
+          python3 -m unittest discover -s tests -p 'test_ui_workflow_security.py' -v
 
       - name: Build reviewed UI source tree
         id: source
@@ -165,7 +215,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m venv /tmp/hostpanel-ui-venv
-          /tmp/hostpanel-ui-venv/bin/python -m pip install --disable-pip-version-check --upgrade pip
+          /tmp/hostpanel-ui-venv/bin/python -m pip install --disable-pip-version-check 'pip==25.1.1'
           /tmp/hostpanel-ui-venv/bin/python -m pip install --disable-pip-version-check \
             --require-hashes -r "$UI_ROOT/requirements.lock"
           /tmp/hostpanel-ui-venv/bin/python -m pip install --disable-pip-version-check \
@@ -262,7 +312,7 @@ jobs:
           set -euo pipefail
           cd "$UI_ROOT"
           npm ci --ignore-scripts
-          npx playwright install --with-deps chromium
+          ./node_modules/.bin/playwright install --with-deps chromium
 
       - name: Run Chromium interaction and Axe audit
         env:
