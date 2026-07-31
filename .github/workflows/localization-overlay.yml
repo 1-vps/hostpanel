@@ -8,6 +8,7 @@ on:
       - tests/test_high_risk_locale_overrides.py
       - tests/test_portuguese_ui_overrides.py
       - tests/test_localization_bootstrap_wiring.py
+      - tests/test_localization_workflow_security.py
       - tests/test_panel_future_locales.py
       - LOCALIZATION-OVERLAY.md
       - .github/workflows/localization-overlay.yml
@@ -19,6 +20,7 @@ on:
       - tests/test_high_risk_locale_overrides.py
       - tests/test_portuguese_ui_overrides.py
       - tests/test_localization_bootstrap_wiring.py
+      - tests/test_localization_workflow_security.py
       - tests/test_panel_future_locales.py
       - LOCALIZATION-OVERLAY.md
       - .github/workflows/localization-overlay.yml
@@ -91,10 +93,12 @@ jobs:
             tests/test_high_risk_locale_overrides.py \
             tests/test_portuguese_ui_overrides.py \
             tests/test_localization_bootstrap_wiring.py \
+            tests/test_localization_workflow_security.py \
             tests/test_panel_future_locales.py
           python3 -m unittest discover -s tests -p 'test_high_risk_locale_overrides.py' -v
           python3 -m unittest discover -s tests -p 'test_portuguese_ui_overrides.py' -v
           python3 -m unittest discover -s tests -p 'test_localization_bootstrap_wiring.py' -v
+          python3 -m unittest discover -s tests -p 'test_localization_workflow_security.py' -v
           python3 -m unittest discover -s tests -p 'test_panel_future_locales.py' -v
 
       - name: Safely extract signed source
