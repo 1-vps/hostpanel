@@ -6,6 +6,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 BOOTSTRAP = ROOT / "bootstrap-install.sh"
 LOCALIZATION_WORKFLOW = ROOT / ".github" / "workflows" / "localization-overlay.yml"
 QEMU_WORKFLOW = ROOT / ".github" / "workflows" / "qemu-vm-acceptance.yml"
+CORE_PATH = ROOT / "localization-overlay" / "apply_localization_overlay.py"
 WRAPPER_PATH = ROOT / "localization-overlay" / "apply_localization_overlay_reviewed.py"
 WRAPPER = "localization-overlay/apply_localization_overlay_reviewed.py"
 PORTUGUESE_UI_FILE = "localization-overlay/catalog-visible-ui-overrides.pt.json"
@@ -35,6 +36,7 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
         cls.bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
         cls.localization_workflow = LOCALIZATION_WORKFLOW.read_text(encoding="utf-8")
         cls.qemu_workflow = QEMU_WORKFLOW.read_text(encoding="utf-8")
+        cls.core_text = CORE_PATH.read_text(encoding="utf-8")
         cls.wrapper_text = WRAPPER_PATH.read_text(encoding="utf-8")
         cls.wrapper = load_wrapper()
 
@@ -98,6 +100,32 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
             "install_language_labels(core)\n    install_final_override_loader(core)",
             self.wrapper_text,
         )
+
+    def test_brazilian_portuguese_label_reaches_login_and_panel_selectors(self):
+        core = self.wrapper.load_core()
+        self.wrapper.install_language_labels(core)
+
+        login_options = "\n".join(
+            f'<option value="{code}">{{% if login_language == \'{code}\' %}} selected'
+            f'{{% endif %}}>{label}</option>'
+            for code, label in core.LANGUAGES
+        )
+        panel_options = "".join(
+            f'<option value="{code}">{label}</option>'
+            for code, label in core.LANGUAGES
+        )
+
+        expected_label = self.wrapper.BRAZILIAN_PORTUGUESE_LABEL
+        self.assertIn('value="pt"', login_options)
+        self.assertIn(f">{expected_label}</option>", login_options)
+        self.assertIn(f'<option value="pt">{expected_label}</option>', panel_options)
+        self.assertNotIn('<option value="pt">Português</option>', panel_options)
+        self.assertEqual(
+            self.core_text.count("for code, label in LANGUAGES"),
+            2,
+        )
+        self.assertIn('login_options = "\\n".join(', self.core_text)
+        self.assertIn('panel_options = "".join(', self.core_text)
 
     def test_localization_workflow_uses_wrapper_and_runs_override_regressions(self):
         self.assertIn(
