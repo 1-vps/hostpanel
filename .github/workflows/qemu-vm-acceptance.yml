@@ -40,6 +40,8 @@ on:
       - tests/test_qemu_reboot_wait.py
       - tests/test_systemd_resolved_dns.py
       - tests/test_panel_redesign.py
+      - tests/test_panel_future_locales.py
+      - tests/test_panel_patcher_section_bounds.py
       - tests/test_php_runtime_support.py
       - tests/php-runtime-compat.php
 
@@ -86,6 +88,8 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_qemu_default_version.py' -v
           python3 -m unittest discover -s tests -p 'test_systemd_resolved_dns.py' -v
           python3 -m unittest discover -s tests -p 'test_panel_redesign.py' -v
+          python3 -m unittest discover -s tests -p 'test_panel_future_locales.py' -v
+          python3 -m unittest discover -s tests -p 'test_panel_patcher_section_bounds.py' -v
           python3 -m unittest discover -s tests -p 'test_php_runtime_support.py' -v
 
       - name: Reclaim runner disk
