@@ -115,11 +115,11 @@ def _remove_created_archive(
         return
     try:
         current = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
-    except FileNotFoundError:
+        if _same_file(created, current):
+            os.unlink(name, dir_fd=parent_descriptor)
+            os.fsync(parent_descriptor)
+    except OSError:
         return
-    if _same_file(created, current):
-        os.unlink(name, dir_fd=parent_descriptor)
-        os.fsync(parent_descriptor)
 
 
 def seal_tree(root: pathlib.Path, archive: pathlib.Path) -> tuple[int, int]:
@@ -158,8 +158,8 @@ def seal_tree(root: pathlib.Path, archive: pathlib.Path) -> tuple[int, int]:
             0o600,
             dir_fd=parent_descriptor,
         )
-        os.fchmod(archive_descriptor, 0o600)
         created_metadata = os.fstat(archive_descriptor)
+        os.fchmod(archive_descriptor, 0o600)
         if not stat.S_ISREG(created_metadata.st_mode) or created_metadata.st_nlink != 1:
             raise RuntimeError("sealed evidence archive creation is unsafe")
 
@@ -204,7 +204,12 @@ def seal_tree(root: pathlib.Path, archive: pathlib.Path) -> tuple[int, int]:
             raise RuntimeError("sealed evidence archive metadata is unsafe")
         os.fsync(parent_descriptor)
         return len(paths), total_bytes
-    except Exception:
+    except BaseException:
+        if created_metadata is None and archive_descriptor >= 0:
+            try:
+                created_metadata = os.fstat(archive_descriptor)
+            except OSError:
+                pass
         if parent_descriptor >= 0:
             _remove_created_archive(
                 parent_descriptor,

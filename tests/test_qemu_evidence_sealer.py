@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import hashlib
+import importlib.util
 import pathlib
 import stat
 import subprocess
@@ -9,11 +11,37 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SEALER = ROOT / "tools" / "seal-qemu-evidence.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "qemu-vm-acceptance.yml"
+MODULE_SPEC = importlib.util.spec_from_file_location("qemu_evidence_sealer", SEALER)
+if MODULE_SPEC is None or MODULE_SPEC.loader is None:
+    raise RuntimeError("could not load QEMU evidence sealer")
+SEALER_MODULE = importlib.util.module_from_spec(MODULE_SPEC)
+MODULE_SPEC.loader.exec_module(SEALER_MODULE)
+
+
+def _os_call(node: ast.AST, name: str) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "os"
+        and node.func.attr == name
+    )
+
+
+def _contains_os_attribute(node: ast.AST, name: str) -> bool:
+    return any(
+        isinstance(descendant, ast.Attribute)
+        and isinstance(descendant.value, ast.Name)
+        and descendant.value.id == "os"
+        and descendant.attr == name
+        for descendant in ast.walk(node)
+    )
 
 
 class QemuEvidenceSealerTests(unittest.TestCase):
@@ -129,18 +157,121 @@ class QemuEvidenceSealerTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(archive.read_bytes(), b"sentinel")
 
-    def test_archive_is_created_directly_through_stable_descriptors(self) -> None:
-        sealer = SEALER.read_text(encoding="utf-8")
-        self.assertIn("os.O_EXCL", sealer)
-        self.assertIn("dir_fd=parent_descriptor", sealer)
-        self.assertIn("os.fchmod(archive_descriptor, 0o600)", sealer)
-        self.assertIn("os.fsync(archive_descriptor)", sealer)
-        self.assertIn(
-            "_same_file(final_descriptor_metadata, final_path_metadata)",
-            sealer,
+    def test_fchmod_failure_removes_the_created_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = pathlib.Path(temporary_directory)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            (evidence / "safe.txt").write_text("safe\n", encoding="utf-8")
+            archive = root / "evidence.tar"
+
+            with mock.patch.object(
+                SEALER_MODULE.os,
+                "fchmod",
+                side_effect=PermissionError(1, "denied"),
+            ):
+                with self.assertRaises(PermissionError):
+                    SEALER_MODULE.seal_tree(evidence, archive)
+
+            self.assertFalse(archive.exists())
+
+    def test_cleanup_failure_does_not_mask_the_original_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = pathlib.Path(temporary_directory)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            (evidence / "safe.txt").write_text("safe\n", encoding="utf-8")
+            archive = root / "evidence.tar"
+
+            with (
+                mock.patch.object(
+                    SEALER_MODULE.tarfile,
+                    "open",
+                    side_effect=RuntimeError("primary sealing failure"),
+                ),
+                mock.patch.object(
+                    SEALER_MODULE.os,
+                    "unlink",
+                    side_effect=OSError(5, "cleanup failure"),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "primary sealing failure",
+                ):
+                    SEALER_MODULE.seal_tree(evidence, archive)
+
+    def test_keyboard_interrupt_removes_the_created_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = pathlib.Path(temporary_directory)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            (evidence / "safe.txt").write_text("safe\n", encoding="utf-8")
+            archive = root / "evidence.tar"
+
+            with mock.patch.object(
+                SEALER_MODULE.tarfile,
+                "open",
+                side_effect=KeyboardInterrupt,
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    SEALER_MODULE.seal_tree(evidence, archive)
+
+            self.assertFalse(archive.exists())
+
+    def test_archive_creation_invariants_are_structurally_enforced(self) -> None:
+        tree = ast.parse(SEALER.read_text(encoding="utf-8"))
+
+        archive_assignments = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and _os_call(node.value, "open")
+            and any(keyword.arg == "dir_fd" for keyword in node.value.keywords)
+            and _contains_os_attribute(node.value, "O_EXCL")
+        ]
+        self.assertEqual(len(archive_assignments), 1)
+        archive_descriptor = archive_assignments[0].targets[0].id
+
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+        self.assertTrue(
+            any(
+                _os_call(call, "fchmod")
+                and len(call.args) >= 2
+                and isinstance(call.args[0], ast.Name)
+                and call.args[0].id == archive_descriptor
+                and isinstance(call.args[1], ast.Constant)
+                and call.args[1].value == 0o600
+                for call in calls
+            )
         )
-        self.assertNotIn("tempfile", sealer)
-        self.assertNotIn("os.link(", sealer)
+        self.assertTrue(
+            any(
+                _os_call(call, "fsync")
+                and call.args
+                and isinstance(call.args[0], ast.Name)
+                and call.args[0].id == archive_descriptor
+                for call in calls
+            )
+        )
+        self.assertTrue(
+            any(
+                isinstance(call.func, ast.Name)
+                and call.func.id == "_same_file"
+                and len(call.args) == 2
+                for call in calls
+            )
+        )
+        self.assertFalse(
+            any(
+                isinstance(node, (ast.Import, ast.ImportFrom))
+                and any(alias.name == "tempfile" for alias in node.names)
+                for node in ast.walk(tree)
+            )
+        )
+        self.assertFalse(any(_os_call(call, "link") for call in calls))
 
     def test_workflow_uploads_only_the_sealed_snapshot(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
