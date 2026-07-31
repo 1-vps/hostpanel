@@ -12,15 +12,15 @@ HostPanel exposes thirteen supported interface-language catalogs in both the pan
 - Norwegian Bokmål (`nb`)
 - Dutch (`nl`)
 - Polish (`pl`)
-- Portuguese (`pt`, Brazilian terminology)
+- Portuguese (`pt`, Brazilian terminology; displayed as **Português (Brasil)**)
 - Swedish (`sv`)
 - Simplified Chinese (`zh`)
 
-Every supported catalog contains the complete set of 2,215 stable keys. Regional browser tags are normalized to their base locale, so `ja-JP`, `pt-BR`, `pt-PT`, `zh-CN`, and `zh-Hans` resolve to the supported catalog. The single `pt` catalog currently follows Brazilian Portuguese terminology; a separate European Portuguese catalog is not included in this overlay.
+Every supported catalog contains the complete set of 2,215 stable keys. Regional browser tags are normalized to their base locale, so `ja-JP`, `pt-BR`, `pt-PT`, `zh-CN`, and `zh-Hans` resolve to the supported catalog. The single `pt` catalog currently follows Brazilian Portuguese terminology; a separate European Portuguese catalog is not included in this overlay. The explicit **Português (Brasil)** selector label makes this behavior visible before a user chooses the locale.
 
-The locked compressed bundle establishes complete key coverage for the three new locales. Explicit reviewed layers then provide 317 corrections: 110 Japanese, 132 Brazilian Portuguese, and 75 Simplified Chinese. `apply_localization_overlay_reviewed.py` loads the locked bundle, applies five exact semantic final-override files, and then applies an embedded 80-value Portuguese dialog, validation, and primary-navigation layer.
+The locked compressed bundle establishes complete key coverage for the three new locales. Explicit reviewed layers then provide 317 corrections: 110 Japanese, 132 Brazilian Portuguese, and 75 Simplified Chinese. `apply_localization_overlay_reviewed.py` loads the locked bundle, applies five exact semantic final-override files, and then applies the separate source-visible 80-value Portuguese dialog, validation, and primary-navigation file `catalog-visible-ui-overrides.pt.json`.
 
-The release audit rejects missing or unknown keys, blank values, placeholder mismatches, unsafe markup, and suspicious source-identical English prose. The editorial audit additionally rejects repeated CJK corruption, known Japanese machine-translation errors, tracked Portuguese contamination markers, untranslated natural-language labels in Japanese and Simplified Chinese, and regression of the reviewed Swedish UI translations. Repository regressions lock every explicit reviewed layer, verify reviewed placeholders against the signed English source, confirm reviewed values win after the compressed bundle, and preserve product names such as `cPanel` and `DirectAdmin`.
+The release audit rejects missing or unknown keys, blank values, placeholder mismatches, unsafe markup, and suspicious source-identical English prose. The editorial audit additionally rejects repeated CJK corruption, known Japanese machine-translation errors, tracked Portuguese contamination markers, untranslated natural-language labels in Japanese and Simplified Chinese, and regression of the reviewed Swedish UI translations. Repository regressions lock every explicit reviewed layer, verify reviewed placeholders against the signed English source, confirm reviewed values win after the compressed bundle, preserve product names such as `cPanel` and `DirectAdmin`, and require the unambiguous Brazilian Portuguese selector label.
 
 Run:
 
@@ -29,6 +29,7 @@ python3 tools/audit_locales.py
 python3 tools/review_locales.py
 python3 -m unittest discover -s tests -p 'test_high_risk_locale_overrides.py' -v
 python3 -m unittest discover -s tests -p 'test_portuguese_ui_overrides.py' -v
+python3 -m unittest discover -s tests -p 'test_localization_bootstrap_wiring.py' -v
 ```
 
 ## Editorial policy
@@ -43,6 +44,6 @@ Machine assistance may be used to establish complete key parity, but a catalog i
 4. Use `t()` or `tr()` for dynamically generated browser text.
 5. Update server-rendered and client-rendered login messages together.
 6. Put reviewed release-candidate corrections in the appropriate explicit review layer; do not rewrite the locked bundle casually.
-7. Run both localization audits, both override regressions, and the complete UI/backend test suite.
+7. Run both localization audits, all override/wiring regressions, and the complete UI/backend test suite.
 
 Files are UTF-8 JSON. Translate values only; catalog keys are stable API-like identifiers and must not be renamed.
