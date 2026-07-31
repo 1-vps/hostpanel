@@ -7,6 +7,7 @@ on:
       - bootstrap-install.sh
       - localization-overlay/**
       - tests/test_high_risk_locale_overrides.py
+      - tests/test_portuguese_ui_overrides.py
       - tests/test_localization_bootstrap_wiring.py
       - LOCALIZATION-OVERLAY.md
       - .github/workflows/localization-overlay.yml
@@ -35,8 +36,10 @@ jobs:
             localization-overlay/apply_localization_overlay.py \
             localization-overlay/apply_localization_overlay_reviewed.py \
             tests/test_high_risk_locale_overrides.py \
+            tests/test_portuguese_ui_overrides.py \
             tests/test_localization_bootstrap_wiring.py
           python3 -m unittest discover -s tests -p 'test_high_risk_locale_overrides.py' -v
+          python3 -m unittest discover -s tests -p 'test_portuguese_ui_overrides.py' -v
           python3 -m unittest discover -s tests -p 'test_localization_bootstrap_wiring.py' -v
       - name: Extract signed source
         shell: bash
