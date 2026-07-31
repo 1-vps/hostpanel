@@ -6,9 +6,9 @@ import re
 import tarfile
 import unittest
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OVERLAY = ROOT / "localization-overlay"
+UI_FILE = OVERLAY / "catalog-visible-ui-overrides.pt.json"
 FINAL_FILES = (
     "catalog-final-overrides.ja-01.json",
     "catalog-final-overrides.ja-02.json",
@@ -23,10 +23,7 @@ PLACEHOLDER = re.compile(r"\{[A-Za-z0-9_.-]+\}")
 
 def canonical_sha256(payload: dict[str, dict[str, str]]) -> str:
     encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -62,10 +59,15 @@ class PortugueseUiOverrideTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.wrapper = load_wrapper()
-        cls.payload = cls.wrapper.PORTUGUESE_UI_OVERRIDES
+        cls.payload = json.loads(UI_FILE.read_text(encoding="utf-8"))
         cls.english = load_signed_english_catalog()
 
     def test_payload_is_exactly_locked(self):
+        self.assertFalse(UI_FILE.is_symlink())
+        self.assertEqual(
+            self.wrapper.PORTUGUESE_UI_OVERRIDE_FILES,
+            (UI_FILE.name,),
+        )
         self.assertEqual(
             {locale: len(entries) for locale, entries in self.payload.items()},
             EXPECTED_COUNTS,
