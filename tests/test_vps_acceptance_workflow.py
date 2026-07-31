@@ -35,12 +35,29 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
         self.assertNotIn("UserKnownHostsFile=/dev/null", self.text)
 
     def test_install_is_pinned_and_preserves_evidence(self) -> None:
-        self.assertIn("01f171b489bc9971eab4e3ebe7aad58f10255124", self.text)
-        self.assertIn("3.4.0-hardened-r6", self.text)
+        self.assertIn("9c38d0095563ea33efd14124babfd29556c0da46", self.text)
+        self.assertIn("EXPECTED_VERSION: 3.4.0", self.text)
+        self.assertNotIn("EXPECTED_VERSION: 3.4.0-hardened-r6", self.text)
         self.assertIn("validate-production-vm.sh --prepare-reboot", self.text)
         self.assertIn("validate-production-vm.sh --post-reboot", self.text)
         self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", self.text)
         self.assertNotIn("eval ", self.text)
+
+    def test_private_repository_auth_is_transient(self) -> None:
+        token_lines = [line for line in self.text.splitlines() if "HP_VPS_REPO_TOKEN:" in line]
+        self.assertEqual(token_lines, ["          HP_VPS_REPO_TOKEN: ${{ github.token }}"])
+        self.assertIn("REPO_AUTH_HEADER=", self.text)
+        self.assertIn("export GIT_CONFIG_COUNT=1", self.text)
+        self.assertIn("clear_repo_auth(){", self.text)
+        self.assertIn("sed -i '/^export GIT_/d' /root/hostpanel-acceptance.env", self.text)
+        self.assertIn(
+            "unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT",
+            self.text,
+        )
+        self.assertIn("unset HP_VPS_REPO_TOKEN REPO_AUTH_HEADER", self.text)
+        self.assertNotIn("raw.githubusercontent.com/1-vps/hostpanel", self.text)
+        self.assertIn("bootstrap-install.sh", self.text)
+        self.assertIn("tools/validate-production-vm.sh", self.text)
 
     def test_generated_credentials_stay_on_the_vps(self) -> None:
         self.assertNotIn("/var/log/hostpanel-install.log", self.text)

@@ -40,8 +40,8 @@ jobs:
     timeout-minutes: 180
     environment: vps-acceptance
     env:
-      REVIEWED_COMMIT_SHA: 01f171b489bc9971eab4e3ebe7aad58f10255124
-      EXPECTED_VERSION: 3.4.0-hardened-r6
+      REVIEWED_COMMIT_SHA: 9c38d0095563ea33efd14124babfd29556c0da46
+      EXPECTED_VERSION: 3.4.0
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_IPV6: ${{ secrets.VPS_IPV6 }}
       VPS_SSH_PORT: ${{ secrets.VPS_SSH_PORT }}
@@ -168,6 +168,7 @@ jobs:
       - name: Install HostPanel and prepare reboot validation
         env:
           SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
+          HP_VPS_REPO_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           SSH=(sshpass -e ssh -p "$VPS_PORT"
@@ -185,6 +186,9 @@ jobs:
             -o PubkeyAuthentication=no
             -o ConnectTimeout=20)
 
+          [[ -n "$HP_VPS_REPO_TOKEN" ]]
+          [[ "$HP_VPS_REPO_TOKEN" != *$'\n'* && "$HP_VPS_REPO_TOKEN" != *$'\r'* ]]
+          REPO_AUTH_HEADER="$(printf 'x-access-token:%s' "$HP_VPS_REPO_TOKEN" | base64 | tr -d '\r\n')"
           umask 077
           {
             printf 'HP_PANEL_HOST=%q\n' "$PANEL_HOST"
@@ -194,7 +198,12 @@ jobs:
             printf 'HP_REVIEWED_COMMIT_SHA=%q\n' "$REVIEWED_COMMIT_SHA"
             printf 'HP_MTA=%q\n' "$MTA"
             printf 'HP_REINSTALL=%q\n' "$REINSTALL"
+            printf 'export GIT_CONFIG_COUNT=1\n'
+            printf 'export GIT_CONFIG_KEY_0=%q\n' 'http.https://github.com/.extraheader'
+            printf 'export GIT_CONFIG_VALUE_0=%q\n' "AUTHORIZATION: basic $REPO_AUTH_HEADER"
+            printf 'export GIT_TERMINAL_PROMPT=0\n'
           } > /tmp/hostpanel-acceptance.env
+          unset HP_VPS_REPO_TOKEN REPO_AUTH_HEADER
 
           cat > /tmp/hostpanel-acceptance-remote.sh <<'REMOTE'
           #!/usr/bin/env bash
@@ -207,6 +216,15 @@ jobs:
           install -d -o root -g root -m 700 "$EVIDENCE"
           : > "$PRIVATE_LOG"
           chmod 600 "$PRIVATE_LOG"
+
+          clear_repo_auth(){
+            if [[ -f /root/hostpanel-acceptance.env && ! -L /root/hostpanel-acceptance.env ]]; then
+              sed -i '/^export GIT_/d' /root/hostpanel-acceptance.env || true
+              chmod 600 /root/hostpanel-acceptance.env || true
+            fi
+            unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
+          }
+          trap clear_repo_auth EXIT
           trap 'status=$?; echo "Acceptance setup failed at line $LINENO. Inspect the root-only private log on the VPS." >&2; exit "$status"' ERR
 
           [[ "$(cat /proc/1/comm 2>/dev/null || true)" == systemd ]] || {
@@ -217,6 +235,14 @@ jobs:
             echo '/opt/hostpanel already exists; rerun with reinstall enabled only after reviewing the host.' >&2
             exit 1
           fi
+          for input in /root/bootstrap-install.sh /root/validate-production-vm.sh; do
+            [[ -f "$input" && ! -L "$input" ]] || {
+              echo "Unsafe or missing acceptance input: $input" >&2
+              exit 1
+            }
+            chown root:root "$input"
+            chmod 700 "$input"
+          done
 
           echo 'Installing bootstrap prerequisites; detailed output remains root-only on the VPS.'
           if command -v apt-get >/dev/null 2>&1; then
@@ -230,11 +256,8 @@ jobs:
             exit 1
           fi
 
-          curl -fsSL --retry 4 --connect-timeout 15 \
-            "https://raw.githubusercontent.com/1-vps/hostpanel/${HP_REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
-            -o /root/bootstrap-install.sh >> "$PRIVATE_LOG" 2>&1
-          chmod 700 /root/bootstrap-install.sh
           bash -n /root/bootstrap-install.sh
+          bash -n /root/validate-production-vm.sh
 
           install_args=(--mta "$HP_MTA")
           if [[ "$HP_REINSTALL" == true ]]; then
@@ -252,13 +275,10 @@ jobs:
           env "${common_env[@]}" bash /root/bootstrap-install.sh --check "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
           echo 'Running full installation; generated credentials remain root-only on the VPS.'
           env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}" >> "$PRIVATE_LOG" 2>&1
+          clear_repo_auth
+          trap - EXIT
 
           test "$(cat /opt/hostpanel/VERSION)" = "$HP_EXPECTED_VERSION"
-          curl -fsSL --retry 4 --connect-timeout 15 \
-            "https://raw.githubusercontent.com/1-vps/hostpanel/${HP_REVIEWED_COMMIT_SHA}/tools/validate-production-vm.sh" \
-            -o /root/validate-production-vm.sh
-          chmod 700 /root/validate-production-vm.sh
-          bash -n /root/validate-production-vm.sh
 
           echo 'Running non-sensitive VM validation.'
           env \
@@ -281,7 +301,12 @@ jobs:
           REMOTE
 
           chmod 700 /tmp/hostpanel-acceptance-remote.sh
-          "${SCP[@]}" /tmp/hostpanel-acceptance.env /tmp/hostpanel-acceptance-remote.sh root@"$VPS_HOST":/root/
+          "${SCP[@]}" \
+            bootstrap-install.sh \
+            tools/validate-production-vm.sh \
+            /tmp/hostpanel-acceptance.env \
+            /tmp/hostpanel-acceptance-remote.sh \
+            root@"$VPS_HOST":/root/
           "${SSH[@]}" root@"$VPS_HOST" 'chmod 600 /root/hostpanel-acceptance.env && chmod 700 /root/hostpanel-acceptance-remote.sh && /root/hostpanel-acceptance-remote.sh'
           rm -f /tmp/hostpanel-acceptance.env
 

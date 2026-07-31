@@ -56,7 +56,7 @@ packages.
 The commands below use the exact installer-overlay commit that passed
 deterministic generation, ShellCheck, all supported-OS preflights,
 signed-archive verification, the Ubuntu 26.04/Python 3.14 locked-runtime test,
-and the secretless QEMU install/reboot acceptance workflow.
+and the QEMU install/reboot acceptance workflow.
 
 ```bash
 REVIEWED_COMMIT_SHA=9c38d0095563ea33efd14124babfd29556c0da46
@@ -145,7 +145,7 @@ Installer log:
 /var/log/hostpanel-install.log
 ```
 
-## Secretless QEMU acceptance
+## Least-privilege QEMU acceptance
 
 The repository includes [`.github/workflows/qemu-vm-acceptance.yml`](.github/workflows/qemu-vm-acceptance.yml).
 It boots a checksum-pinned Ubuntu 24.04 cloud image with an ephemeral SSH key,
@@ -153,9 +153,12 @@ installs the reviewed commit, runs the production validator and doctor, performs
 a real systemd reboot, waits for stable backend readiness, reruns post-reboot
 validation, and probes forwarded panel, web, mail, DNS, and Redis paths.
 
-The workflow uses read-only repository permissions and no GitHub secrets. Its
-uploaded artifact is restricted to validated, non-sensitive evidence; generated
-credentials and the full installer log remain inside the guest.
+The workflow has read-only repository permissions. For a private repository,
+GitHub's per-run token is exposed only to the installation step, converted to a
+transient Git authentication header, removed from the runner environment before
+QEMU starts, and deleted from the guest environment after the reviewed commit is
+fetched. The token, generated credentials, and full installer log are never
+included in uploaded evidence.
 
 Maintainers can run it from the Actions UI or with GitHub CLI:
 
