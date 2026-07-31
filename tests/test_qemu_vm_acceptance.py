@@ -125,19 +125,45 @@ class QemuVmAcceptanceTests(unittest.TestCase):
     def test_guest_inputs_are_escaped_and_promoted_before_root_use(self):
         self.assertIn("printf 'HP_PANEL_HOST=%q\\n'", self.harness)
         promotion = self.harness.index('sudo python3 - "$(id -u)" <<PYROOT')
-        guest_start = self.harness.index("sudo /tmp/qemu-guest-install.sh", promotion)
-        for marker in (
-            "os.O_NOFOLLOW",
-            "metadata = os.fstat(source_fd)",
+        open_descriptor = self.harness.index("os.open(path,", promotion)
+        no_follow = self.harness.index("os.O_NOFOLLOW", open_descriptor)
+        descriptor_check = self.harness.index("metadata = os.fstat(source_fd)", no_follow)
+        ownership_check = self.harness.index(
             "metadata.st_uid != expected_uid or metadata.st_nlink != 1",
-            "os.dup(source_fd)",
-            "os.replace(temp_name, path)",
-            "promoted.st_uid != 0",
+            descriptor_check,
+        )
+        size_limit = self.harness.index(
+            "metadata.st_size > MAX_INPUT_BYTES",
+            ownership_check,
+        )
+        descriptor_copy = self.harness.index("os.dup(source_fd)", size_limit)
+        observed_size = self.harness.index("remaining = metadata.st_size", descriptor_copy)
+        bounded_read = self.harness.index(
+            "source.read(min(1024 * 1024, remaining))",
+            observed_size,
+        )
+        extra_byte_check = self.harness.index("if source.read(1):", bounded_read)
+        atomic_replace = self.harness.index("os.replace(temp_name, path)", extra_byte_check)
+        root_check = self.harness.index("promoted.st_uid != 0", atomic_replace)
+        mode_check = self.harness.index(
             "stat.S_IMODE(promoted.st_mode) != mode",
-        ):
-            with self.subTest(marker=marker):
-                position = self.harness.index(marker, promotion)
-                self.assertLess(position, guest_start)
+            root_check,
+        )
+        guest_start = self.harness.index("sudo /tmp/qemu-guest-install.sh", mode_check)
+        self.assertLess(promotion, open_descriptor)
+        self.assertLess(open_descriptor, no_follow)
+        self.assertLess(no_follow, descriptor_check)
+        self.assertLess(descriptor_check, ownership_check)
+        self.assertLess(ownership_check, size_limit)
+        self.assertLess(size_limit, descriptor_copy)
+        self.assertLess(descriptor_copy, observed_size)
+        self.assertLess(observed_size, bounded_read)
+        self.assertLess(bounded_read, extra_byte_check)
+        self.assertLess(extra_byte_check, atomic_replace)
+        self.assertLess(atomic_replace, root_check)
+        self.assertLess(root_check, mode_check)
+        self.assertLess(mode_check, guest_start)
+        self.assertNotIn("shutil.copyfileobj(source, target)", self.harness)
         self.assertNotIn("sudo chown root:root /tmp/bootstrap-install.sh", self.harness)
         self.assertNotIn("sudo chmod 700 /tmp/bootstrap-install.sh", self.harness)
         self.assertIn('[[ -f "$input" && ! -L "$input" ]]', self.guest_installer)
