@@ -31,10 +31,12 @@ async function expectNoViewportOverflow(page) {
 
 async function expectTouchTargets(page, selectors) {
   for (const selector of selectors) {
-    const elements = page.locator(selector).filter({ visible: true });
+    const elements = page.locator(selector);
     const count = await elements.count();
     for (let index = 0; index < count; index += 1) {
-      const box = await elements.nth(index).boundingBox();
+      const element = elements.nth(index);
+      if (!(await element.isVisible())) continue;
+      const box = await element.boundingBox();
       expect(box, `${selector}[${index}] should have a box`).not.toBeNull();
       expect(box.width, `${selector}[${index}] width`).toBeGreaterThanOrEqual(44);
       expect(box.height, `${selector}[${index}] height`).toBeGreaterThanOrEqual(44);
