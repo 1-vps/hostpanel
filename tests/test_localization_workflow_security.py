@@ -59,6 +59,18 @@ class LocalizationWorkflowSecurityTests(unittest.TestCase):
         self.assertIn("timeout-minutes: 25", self.text)
         self.assertIn("cancel-in-progress: true", self.text)
 
+    def test_audit_dependencies_are_isolated_in_a_venv(self) -> None:
+        self.assertIn("python3 -m venv /tmp/hostpanel-localization-venv", self.text)
+        self.assertIn(
+            "/tmp/hostpanel-localization-venv/bin/python -m pip install",
+            self.text,
+        )
+        self.assertIn(
+            "TERM=xterm /tmp/hostpanel-localization-venv/bin/python",
+            self.text,
+        )
+        self.assertNotIn("\n          python3 -m pip install", self.text)
+
     def test_fast_workflow_runs_its_security_and_blob_regressions(self) -> None:
         for test_name in (
             "test_existing_catalog_corrections.py",
