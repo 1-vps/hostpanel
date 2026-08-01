@@ -152,8 +152,10 @@ class PanelRedesignTests(unittest.TestCase):
         self.assertIn('role="region" tabindex="0"', dashboard)
         self.assertNotRegex(dashboard, r"\sstyle=")
         self.assertNotRegex(dashboard, r"\son(?:click|change|input|submit|keydown)=")
-        self.assertIn("if(!page || !navLink || navLink.hidden)", self.js)
-        self.assertIn("control.hidden = true", self.js)
+        self.assertIn("function syncPageLinkVisibility()", self.js)
+        self.assertIn("control.hidden=!allowed", self.js)
+        self.assertIn("if(!page||!pageLinkAllowed(navLink))", self.js)
+        self.assertIn("attributeFilter:['hidden','aria-hidden','class','style']", self.js)
 
     def test_visual_system_covers_responsive_dark_and_accessibility_modes(self):
         for token in (
