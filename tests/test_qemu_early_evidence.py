@@ -165,6 +165,9 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
             self.assertIn("filesystem error", result.stderr)
             self.assertFalse((outside / "qemu-vm-acceptance").exists())
 
+    def test_intentional_validation_only_pre_vm_failure(self) -> None:
+        self.fail("intentional validation-only pre-VM failure")
+
 
 if __name__ == "__main__":
     unittest.main()
