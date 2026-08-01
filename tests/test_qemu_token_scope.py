@@ -16,13 +16,14 @@ class QemuTokenScopeTests(unittest.TestCase):
         cls.guest_installer = GUEST_INSTALLER.read_text(encoding="utf-8")
 
     def test_repository_token_is_scoped_to_the_install_step(self):
+        token_line = "          HP_QEMU_REPO_TOKEN: ${{ github.token }}"
         token_lines = [
             line for line in self.workflow.splitlines()
             if "HP_QEMU_REPO_TOKEN:" in line
         ]
-        self.assertEqual(token_lines, ["      HP_QEMU_REPO_TOKEN: ${{ github.token }}"])
+        self.assertEqual(token_lines, [token_line])
         boot_step = self.workflow.index("  - name: Boot, install, reboot, and validate")
-        token_reference = self.workflow.index("      HP_QEMU_REPO_TOKEN: ${{ github.token }}")
+        token_reference = self.workflow.index(token_line)
         harness_call = self.workflow.index("      bash tools/run-qemu-vm-acceptance.sh")
         self.assertLess(boot_step, token_reference)
         self.assertLess(token_reference, harness_call)
