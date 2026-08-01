@@ -60,7 +60,13 @@ jobs:
       - name: Inspect signed release state bootstrap
         run: |
           set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "${{ github.event.pull_request.head.sha || github.sha }}" ]]
+          EXPECTED_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          [[ "$ACTUAL_SHA" == "$EXPECTED_SHA" ]] || {
+            printf 'QEMU release-state checkout mismatch: expected %s, got %s\n' \
+              "$EXPECTED_SHA" "$ACTUAL_SHA" >&2
+            exit 1
+          }
           python3 tools/inspect-release-state.py
 
   qemu-vm:
@@ -82,7 +88,12 @@ jobs:
       - name: Validate QEMU acceptance harness
         run: |
           set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "$HP_QEMU_REVIEWED_COMMIT_SHA" ]]
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          [[ "$ACTUAL_SHA" == "$HP_QEMU_REVIEWED_COMMIT_SHA" ]] || {
+            printf 'QEMU reviewed checkout mismatch: expected %s, got %s\n' \
+              "$HP_QEMU_REVIEWED_COMMIT_SHA" "$ACTUAL_SHA" >&2
+            exit 1
+          }
           bash -n tools/run-qemu-vm-acceptance.sh
           bash -n tools/qemu-guest-install.sh
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
