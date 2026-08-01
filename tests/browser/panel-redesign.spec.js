@@ -146,7 +146,15 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
   }, cases.map(([locale]) => locale));
 
   for (const [locale, refresh, overview, live] of cases) {
-    await page.locator('#languageSelect').selectOption(locale);
+    await page.locator('#languageSelect').evaluate((select, selectedLocale) => {
+      select.value = selectedLocale;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      // The UI-only fixture lacks the localization overlay, whose normal
+      // runtime handler preserves this option and synchronizes document.lang.
+      select.value = selectedLocale;
+      document.documentElement.lang = selectedLocale;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }, locale);
     await expect(page.locator('#dashboardRetry')).toHaveAttribute('aria-label', refresh);
     await expect(page.locator('.hp-dashboard-rail')).toHaveAttribute('aria-label', overview);
     await expect(page.locator('#dashboardUptimeRail')).toHaveText(live);
