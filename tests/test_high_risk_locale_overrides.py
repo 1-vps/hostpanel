@@ -6,6 +6,8 @@ import re
 import tarfile
 import unittest
 
+from localization_invariants import PORTUGUESE_LANGUAGE_INVARIANT_KEYS
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OVERLAY = ROOT / "localization-overlay"
@@ -24,15 +26,6 @@ EXPECTED_FINAL_CANONICAL_SHA256 = "5bbb02dfacb69ed83157a89348ac2e24da85665ffed8b
 EXPECTED_VISIBLE_COUNTS = {"ja": 110, "pt": 52, "zh": 75}
 EXPECTED_VISIBLE_CANONICAL_SHA256 = "6d17c244c021aa08edc4a0a14cb7c49427e9bb5653e7e36725efa82a8fc0afec"
 PLACEHOLDER = re.compile(r"\{[A-Za-z0-9_.-]+\}")
-PORTUGUESE_LANGUAGE_INVARIANT_KEYS = frozenset(
-    {
-        "errors.validation_field",
-        "route.backups",
-        "route.firewall",
-        "route.postgres",
-        "route.staging",
-    }
-)
 PORTUGUESE_CONTAMINATION = re.compile(
     r"(?i)(?<![\w])(?:permanecen|hasta|contraseña|archivos|datos|correo|"
     r"seleccione|ninguna|ninguno|nodos|tabla|mensaje|mensajes|proveedor|"
