@@ -33,7 +33,7 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
   const localizedLiveValues=new Set(Object.values(ALL_REDESIGN_TRANSLATIONS).map(messages=>messages.live));
   const currentLanguage=()=>{
     const picker=byId('languageSelect');
-    const candidate=String(document.documentElement.lang||picker?.value||'en').toLowerCase().split('-')[0];
+    const candidate=String(picker?.value||document.documentElement.lang||'en').toLowerCase().split('-')[0];
     return Object.hasOwn(ALL_REDESIGN_TRANSLATIONS,candidate)?candidate:'en';
   };
   const copy=(key,vars={})=>{
@@ -122,21 +122,49 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     setTimeout(syncRouteLabel,0);
   }
 
+  function pageLinkFor(control){
+    const page=control.getAttribute('data-hp-page');
+    return page?document.querySelector(`#nav a[data-page="${CSS.escape(page)}"]`):null;
+  }
+
+  function pageLinkAllowed(navLink){
+    return Boolean(navLink&&!navLink.hidden&&navLink.getAttribute('aria-hidden')!=='true');
+  }
+
+  function syncPageLinkVisibility(){
+    document.querySelectorAll('[data-hp-page]').forEach(control=>{
+      const allowed=pageLinkAllowed(pageLinkFor(control));
+      control.hidden=!allowed;
+      if(allowed)control.removeAttribute('aria-disabled');
+      else control.setAttribute('aria-disabled','true');
+    });
+  }
+
   function bindPageLinks(){
     document.querySelectorAll('[data-hp-page]').forEach(control=>{
       const page=control.getAttribute('data-hp-page');
-      const navLink=page?document.querySelector(`#nav a[data-page="${CSS.escape(page)}"]`):null;
-      if(!page || !navLink || navLink.hidden){
-        control.hidden = true;
-        return;
-      }
       control.addEventListener('click',event=>{
+        const navLink=pageLinkFor(control);
+        if(!page||!pageLinkAllowed(navLink)){
+          event.preventDefault();
+          return;
+        }
         event.preventDefault();
         navLink.click();
         if(location.hash!==`#/panel/${page}`)location.hash = `#/panel/${page}`;
         scheduleRouteLabel();
       });
     });
+    const nav=byId('nav');
+    if(nav){
+      new MutationObserver(syncPageLinkVisibility).observe(nav,{
+        subtree:true,
+        childList:true,
+        attributes:true,
+        attributeFilter:['hidden','aria-hidden','class','style']
+      });
+    }
+    syncPageLinkVisibility();
     const crumb=byId('crumb');
     if(crumb){
       new MutationObserver(()=>{
@@ -178,14 +206,17 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     let activeLanguage=currentLanguage();
     if(picker){
       picker.value=activeLanguage;
-      picker.addEventListener('change',()=>queueMicrotask(applyLocalizedCopy));
+      picker.addEventListener('change',()=>{
+        activeLanguage=currentLanguage();
+        queueMicrotask(applyLocalizedCopy);
+      });
     }
     new MutationObserver(()=>{
       const nextLanguage=currentLanguage();
       if(nextLanguage===activeLanguage)return;
       activeLanguage=nextLanguage;
       queueMicrotask(()=>{
-        if(picker)picker.value=activeLanguage;
+        if(picker&&picker.value!==activeLanguage)picker.value=activeLanguage;
         applyLocalizedCopy();
         syncRouteLabel();
       });
