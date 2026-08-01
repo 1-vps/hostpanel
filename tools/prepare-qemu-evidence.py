@@ -80,9 +80,14 @@ def _validate_marker(descriptor: int) -> None:
 
 
 def _validate_existing_marker(evidence_fd: int) -> None:
+    marker_flags = (
+        os.O_RDONLY
+        | _required_open_flag("O_NOFOLLOW")
+        | _required_open_flag("O_NONBLOCK")
+    )
     marker_fd = os.open(
         MARKER_NAME,
-        os.O_RDONLY | _required_open_flag("O_NOFOLLOW"),
+        marker_flags,
         dir_fd=evidence_fd,
     )
     try:
