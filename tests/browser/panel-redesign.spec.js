@@ -65,6 +65,11 @@ test('desktop dashboard has a stable information hierarchy', async ({ page }, te
   expect(layout).toBeGreaterThanOrEqual(2);
   await expectNoViewportOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('desktop-dashboard.png'), fullPage: true });
+
+  const content = page.locator('#content');
+  await content.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await expect(page.locator('.hp-services-card')).toBeInViewport();
+  await page.screenshot({ path: testInfo.outputPath('desktop-dashboard-bottom.png') });
 });
 
 test('desktop keyboard, routing, dark mode and accessibility remain intact', async ({ page }) => {
@@ -87,6 +92,45 @@ test('desktop keyboard, routing, dark mode and accessibility remain intact', asy
   await expect(page.locator('body')).toHaveClass(/dark/);
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations.filter(item => ['critical', 'serious'].includes(item.impact))).toEqual([]);
+});
+
+test('dashboard actions follow asynchronous permission changes', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+
+  const navLink = page.locator('#nav a[data-page="security"]');
+  const quickAction = page.locator('.hp-quick-action[data-hp-page="security"]');
+  const railLinks = page.locator('.hp-security-link[data-hp-page="security"]');
+  await expect(navLink).toBeVisible();
+  await expect(quickAction).toBeVisible();
+  await expect(railLinks).toBeVisible();
+
+  await navLink.evaluate(element => { element.hidden = true; });
+  await expect(quickAction).toBeHidden();
+  await expect(railLinks).toBeHidden();
+  await expect(quickAction).toHaveAttribute('aria-disabled', 'true');
+
+  await navLink.evaluate(element => { element.hidden = false; });
+  await expect(quickAction).toBeVisible();
+  await expect(railLinks).toBeVisible();
+  await expect(quickAction).not.toHaveAttribute('aria-disabled', 'true');
+});
+
+test('release-candidate locales update dynamic dashboard copy', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+
+  const cases = [
+    ['ja', 'ダッシュボードのデータを更新', 'ダッシュボードの概要', 'リアルタイム'],
+    ['pt', 'Atualizar os dados do painel', 'Visão geral do painel', 'Em tempo real'],
+    ['zh', '刷新仪表板数据', '仪表板概览', '实时'],
+  ];
+  for (const [locale, refresh, overview, live] of cases) {
+    await page.locator('#languageSelect').selectOption(locale);
+    await expect(page.locator('#dashboardRetry')).toHaveAttribute('aria-label', refresh);
+    await expect(page.locator('.hp-dashboard-rail')).toHaveAttribute('aria-label', overview);
+    await expect(page.locator('#dashboardUptimeRail')).toHaveText(live);
+  }
 });
 
 test('phone layout is touch-safe, drawer-safe and free of viewport overflow', async ({ page }, testInfo) => {
@@ -146,6 +190,11 @@ test('phone layout is touch-safe, drawer-safe and free of viewport overflow', as
   expect(['auto', 'scroll']).toContain(tableOverflow.overflowX);
   await expectNoViewportOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('phone-dashboard.png'), fullPage: true });
+
+  const content = page.locator('#content');
+  await content.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await expect(page.locator('.hp-services-card')).toBeInViewport();
+  await page.screenshot({ path: testInfo.outputPath('phone-dashboard-bottom.png') });
 });
 
 test('tablet transition keeps cards, rail and controls usable', async ({ page }) => {
