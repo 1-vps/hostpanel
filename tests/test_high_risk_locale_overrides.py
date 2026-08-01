@@ -24,6 +24,15 @@ EXPECTED_FINAL_CANONICAL_SHA256 = "5bbb02dfacb69ed83157a89348ac2e24da85665ffed8b
 EXPECTED_VISIBLE_COUNTS = {"ja": 110, "pt": 52, "zh": 75}
 EXPECTED_VISIBLE_CANONICAL_SHA256 = "6d17c244c021aa08edc4a0a14cb7c49427e9bb5653e7e36725efa82a8fc0afec"
 PLACEHOLDER = re.compile(r"\{[A-Za-z0-9_.-]+\}")
+PORTUGUESE_LANGUAGE_INVARIANT_KEYS = frozenset(
+    {
+        "errors.validation_field",
+        "route.backups",
+        "route.firewall",
+        "route.postgres",
+        "route.staging",
+    }
+)
 PORTUGUESE_CONTAMINATION = re.compile(
     r"(?i)(?<![\w])(?:permanecen|hasta|contraseña|archivos|datos|correo|"
     r"seleccione|ninguna|ninguno|nodos|tabla|mensaje|mensajes|proveedor|"
@@ -167,6 +176,7 @@ class HighRiskLocaleOverrideTests(unittest.TestCase):
         self.assertEqual(canonical_sha256(visible), EXPECTED_VISIBLE_CANONICAL_SHA256)
 
     def test_every_reviewed_key_exists_and_preserves_placeholders(self):
+        equal_to_english: set[str] = set()
         for source_name, payload in (
             ("base", self.base),
             ("final", self.final),
@@ -177,11 +187,15 @@ class HighRiskLocaleOverrideTests(unittest.TestCase):
                     with self.subTest(source=source_name, locale=locale, key=key):
                         self.assertIn(key, self.english)
                         self.assertTrue(value.strip())
-                        self.assertNotEqual(value, self.english[key])
+                        if value == self.english[key]:
+                            self.assertEqual(locale, "pt")
+                            self.assertEqual(source_name, "Portuguese UI")
+                            equal_to_english.add(key)
                         self.assertEqual(
                             sorted(PLACEHOLDER.findall(value)),
                             sorted(PLACEHOLDER.findall(self.english[key])),
                         )
+        self.assertEqual(equal_to_english, PORTUGUESE_LANGUAGE_INVARIANT_KEYS)
 
     def test_reviewed_overrides_land_after_the_locked_bundle(self):
         complete = load_complete_overrides()
