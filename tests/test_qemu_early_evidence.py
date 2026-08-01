@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import importlib.util
 import pathlib
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -16,6 +18,16 @@ SANITIZER = ROOT / "tools" / "sanitize-qemu-evidence.py"
 SEALER = ROOT / "tools" / "seal-qemu-evidence.py"
 MARKER_NAME = "runner-evidence-state.txt"
 MARKER_TEXT = "No VM evidence was produced before the always-run sealing step.\n"
+INVALID_FLAG_VALUES = (None, 0, True, -1)
+
+
+def load_preparer_module():
+    spec = importlib.util.spec_from_file_location("hostpanel_qemu_evidence_preparer", PREPARER)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load QEMU evidence preparer")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class QemuEarlyEvidenceTests(unittest.TestCase):
@@ -49,6 +61,46 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
         self.assertLess(sanitize, seal)
         self.assertIn("      - tools/prepare-qemu-evidence.py", workflow)
         self.assertGreaterEqual(workflow.count("test_qemu_early_evidence.py"), 2)
+
+    def test_unavailable_directory_open_flag_fails_closed(self) -> None:
+        module = load_preparer_module()
+        for unavailable_value in INVALID_FLAG_VALUES:
+            with self.subTest(value=unavailable_value):
+                with mock.patch.object(module.os, "O_DIRECTORY", unavailable_value):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "requires O_DIRECTORY; unsupported platform",
+                    ):
+                        module._open_directory(".")
+
+    def test_unavailable_no_follow_flag_fails_closed_for_directories(self) -> None:
+        module = load_preparer_module()
+        for unavailable_value in INVALID_FLAG_VALUES:
+            with self.subTest(value=unavailable_value):
+                with mock.patch.object(module.os, "O_NOFOLLOW", unavailable_value):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "requires O_NOFOLLOW; unsupported platform",
+                    ):
+                        module._open_directory(".")
+
+    def test_unavailable_no_follow_flag_cannot_create_a_marker(self) -> None:
+        module = load_preparer_module()
+        for unavailable_value in INVALID_FLAG_VALUES:
+            with self.subTest(value=unavailable_value):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    evidence = pathlib.Path(temporary_directory)
+                    evidence_fd = module._open_directory(str(evidence))
+                    try:
+                        with mock.patch.object(module.os, "O_NOFOLLOW", unavailable_value):
+                            with self.assertRaisesRegex(
+                                RuntimeError,
+                                "requires O_NOFOLLOW; unsupported platform",
+                            ):
+                                module._create_marker(evidence_fd)
+                    finally:
+                        module.os.close(evidence_fd)
+                    self.assertFalse((evidence / MARKER_NAME).exists())
 
     def test_empty_private_evidence_directory_gets_a_sealable_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
