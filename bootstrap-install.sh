@@ -8,6 +8,7 @@ REPO="${HP_REPO:-https://github.com/1-vps/hostpanel.git}"
 REF="${HP_REPO_REF:-}"
 WORK_DIR=""
 PG_URL_FILE=""
+INSTALLER_PID=""
 
 # Long-lived release verification key. The adjacent key file in a fetched
 # commit is deliberately not trusted to verify the archive from that commit.
@@ -23,7 +24,21 @@ cleanup(){
   [[ -z "$PG_URL_FILE" ]] || rm -f -- "$PG_URL_FILE"
   [[ -z "$WORK_DIR" ]] || rm -rf -- "$WORK_DIR"
 }
-trap cleanup EXIT HUP INT TERM
+signal_exit(){
+  local status="$1"
+  trap - EXIT HUP INT TERM
+  if [[ "$INSTALLER_PID" =~ ^[0-9]+$ ]]; then
+    kill -TERM "$INSTALLER_PID" 2>/dev/null || true
+    wait "$INSTALLER_PID" 2>/dev/null || true
+    INSTALLER_PID=""
+  fi
+  cleanup
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'signal_exit 129' HUP
+trap 'signal_exit 130' INT
+trap 'signal_exit 143' TERM
 
 postgres_diagnostics(){
   printf '\n--- PostgreSQL diagnostics ---\n' >&2
@@ -342,8 +357,11 @@ fi
 
 say "Starting the verified hardened HostPanel installer"
 set +e
-bash "$SOURCE_ROOT/install.sh" "$@"
+bash "$SOURCE_ROOT/install.sh" "$@" &
+INSTALLER_PID=$!
+wait "$INSTALLER_PID"
 status=$?
+INSTALLER_PID=""
 set -e
 if ((status != 0)) && [[ -r /var/log/hostpanel-install.log ]]; then
   printf '\n--- Final HostPanel installer log lines ---\n' >&2
