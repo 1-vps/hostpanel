@@ -21,6 +21,15 @@ FINAL_FILES = (
 EXPECTED_COUNTS = {"pt": 80}
 EXPECTED_SHA256 = "193ef6c9f6b0e3b36f755ace7d685109974ae30aa480bd4db9bdc01eceb2c08c"
 PLACEHOLDER = re.compile(r"\{[A-Za-z0-9_.-]+\}")
+PORTUGUESE_LANGUAGE_INVARIANT_KEYS = frozenset(
+    {
+        "errors.validation_field",
+        "route.backups",
+        "route.firewall",
+        "route.postgres",
+        "route.staging",
+    }
+)
 
 
 def canonical_sha256(payload: dict[str, dict[str, str]]) -> str:
@@ -88,15 +97,18 @@ class PortugueseUiOverrideTests(unittest.TestCase):
         self.assertEqual(self.wrapper.EXPECTED_UI_CANONICAL_SHA256, EXPECTED_SHA256)
 
     def test_keys_are_visible_ui_and_preserve_placeholders(self):
+        equal_to_english: set[str] = set()
         for key, value in self.payload["pt"].items():
             with self.subTest(key=key):
                 self.assertTrue(key.startswith(("dialog.", "errors.", "route.")))
                 self.assertIn(key, self.english)
-                self.assertNotEqual(value, self.english[key])
+                if value == self.english[key]:
+                    equal_to_english.add(key)
                 self.assertEqual(
                     sorted(PLACEHOLDER.findall(value)),
                     sorted(PLACEHOLDER.findall(self.english[key])),
                 )
+        self.assertEqual(equal_to_english, PORTUGUESE_LANGUAGE_INVARIANT_KEYS)
         self.assertEqual(self.payload["pt"]["route.cpanel"], "cPanel")
         self.assertEqual(self.payload["pt"]["route.directadmin"], "DirectAdmin")
 
