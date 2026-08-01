@@ -29,6 +29,22 @@ class QemuTokenScopeTests(unittest.TestCase):
         self.assertLess(boot_step, token_reference)
         self.assertLess(token_reference, harness_call)
 
+    def test_both_jobs_checkout_and_verify_the_reviewed_commit(self):
+        reviewed_ref = "          ref: ${{ github.event.pull_request.head.sha || github.sha }}"
+        checkout_action = (
+            "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+        )
+        self.assertEqual(self.workflow.count(checkout_action), 2)
+        self.assertEqual(self.workflow.count(reviewed_ref), 2)
+        self.assertIn(
+            '[[ "$(git rev-parse HEAD)" == "${{ github.event.pull_request.head.sha || github.sha }}" ]]',
+            self.workflow,
+        )
+        self.assertIn(
+            '[[ "$(git rev-parse HEAD)" == "$HP_QEMU_REVIEWED_COMMIT_SHA" ]]',
+            self.workflow,
+        )
+
     def test_runner_keeps_token_out_of_qemu_and_limits_auth_file_lifetime(self):
         unset_exported = self.harness.index("unset HP_QEMU_REPO_TOKEN")
         deexport_local = self.harness.index("export -n REPO_TOKEN")
