@@ -385,6 +385,27 @@ jobs:
             -o ServerAliveCountMax=4)
           "${SSH[@]}" root@"$VPS_HOST" '
             set -euo pipefail
+            cleanup_acceptance_state(){
+              local status=$? cleanup_status=0
+              trap - EXIT
+              if ! rm -f \
+                /root/hostpanel-acceptance.env \
+                /root/bootstrap-install.sh \
+                /root/validate-production-vm.sh \
+                /root/hostpanel-acceptance-remote.sh; then
+                cleanup_status=1
+              fi
+              if ((status == 0)); then
+                if ! rm -f /root/hostpanel-acceptance-private-install.log; then
+                  cleanup_status=1
+                fi
+              fi
+              if ((status != 0)); then
+                exit "$status"
+              fi
+              exit "$cleanup_status"
+            }
+            trap cleanup_acceptance_state EXIT
             source /root/hostpanel-acceptance.env
             EVIDENCE=/root/hostpanel-acceptance-evidence
             env \
@@ -441,6 +462,15 @@ jobs:
             -o PubkeyAuthentication=no \
             -o ConnectTimeout=20 \
             root@"$VPS_HOST":/root/hostpanel-acceptance-evidence/. evidence/remote/ || true
+          sshpass -e ssh -p "${VPS_PORT:-22}" \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
+            -o ConnectTimeout=20 \
+            root@"$VPS_HOST" \
+            'rm -f /root/hostpanel-acceptance.env /root/bootstrap-install.sh /root/validate-production-vm.sh /root/hostpanel-acceptance-remote.sh' \
+            || true
           find evidence -type f -exec chmod 600 {} +
 
       - name: Upload acceptance evidence
