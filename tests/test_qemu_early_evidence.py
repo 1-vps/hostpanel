@@ -64,6 +64,11 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(evidence.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(evidence.parent.stat().st_mode), 0o700)
 
+            repeated = self.run_preparer(root)
+            self.assertEqual(repeated.returncode, 0, repeated.stderr)
+            self.assertEqual(marker.read_text(encoding="utf-8"), MARKER_TEXT)
+            self.assertEqual(stat.S_IMODE(marker.stat().st_mode), 0o600)
+
             sanitized = subprocess.run(
                 [sys.executable, str(SANITIZER), str(evidence)],
                 check=False,
@@ -80,6 +85,21 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
             )
             self.assertEqual(sealed.returncode, 0, sealed.stderr)
             self.assertTrue(archive.is_file())
+
+    def test_corrupted_existing_marker_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = pathlib.Path(temporary_directory)
+            evidence = root / "artifacts" / "qemu-vm-acceptance"
+            evidence.mkdir(parents=True, mode=0o700)
+            marker = evidence / MARKER_NAME
+            marker.write_text("partial\n", encoding="utf-8")
+            marker.chmod(0o600)
+
+            result = self.run_preparer(root)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unexpected size", result.stderr)
+            self.assertEqual(marker.read_text(encoding="utf-8"), "partial\n")
 
     def test_existing_evidence_is_not_replaced_by_a_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
