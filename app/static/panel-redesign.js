@@ -5,7 +5,7 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
   'use strict';
 
   const REDESIGN_TRANSLATIONS=Object.freeze({
-    "da":{"refreshDashboardData":"Opdater dataene i kontrolpanelet","waitingForServices":"Venter på tjenester","runningCount":"{running} kører","runningOf":"{running} af {total} kører","waitingForQueueStatus":"Venter på køstatus","queueRequiresAttention":"Køen kræver opmærksomhed","deliveryQueueHealthy":"Leveringskøen fungerer normalt","open":"Åbn","dashboardOverview":"Oversigt over kontrolpanelet","live":"Live"},
+    "da":{"refreshDashboardData":"Opdater dataene i kontrolpanelet","waitingForServices":"Venter på tjenester","runningCount":"{running} kører","runningOf":"{running} af {total} kører","waitingForQueueStatus":"Venter på køstatus","queueRequiresAttention":"Køen kræver opmærksomhed","deliveryQueueHealthy":"Leveringskøen fungerar normalt","open":"Åbn","dashboardOverview":"Oversigt over kontrolpanelet","live":"Live"},
     "de":{"refreshDashboardData":"Dashboarddaten aktualisieren","waitingForServices":"Warten auf Dienste","runningCount":"{running} aktiv","runningOf":"{running} von {total} aktiv","waitingForQueueStatus":"Warten auf Warteschlangenstatus","queueRequiresAttention":"Die Warteschlange erfordert Aufmerksamkeit","deliveryQueueHealthy":"Die Zustellwarteschlange funktioniert ordnungsgemäß","open":"Öffnen","dashboardOverview":"Dashboardübersicht","live":"Live"},
     "en":{"refreshDashboardData":"Refresh dashboard data","waitingForServices":"Waiting for services","runningCount":"{running} running","runningOf":"{running} of {total} running","waitingForQueueStatus":"Waiting for queue status","queueRequiresAttention":"Queue requires attention","deliveryQueueHealthy":"Delivery queue is healthy","open":"Open","dashboardOverview":"Dashboard overview","live":"Live"},
     "es":{"refreshDashboardData":"Actualizar los datos del panel","waitingForServices":"A la espera de los servicios","runningCount":"{running} en ejecución","runningOf":"{running} de {total} en ejecución","waitingForQueueStatus":"A la espera del estado de la cola","queueRequiresAttention":"La cola requiere atención","deliveryQueueHealthy":"La cola de entrega funciona correctamente","open":"Abrir","dashboardOverview":"Resumen del panel","live":"En vivo"},
@@ -112,7 +112,14 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     if(!label||!crumb)return;
     const key=navLink.querySelector('[data-i18n]')?.getAttribute('data-i18n')||navLink.getAttribute('data-i18n');
     if(key&&crumb.getAttribute('data-i18n')!==key)crumb.setAttribute('data-i18n',key);
-    if(key&&currentLanguage()!=='en')return;
+    if(key&&currentLanguage()!=='en'){
+      const localized=crumb.textContent.trim();
+      if(localized&&localized!==key){
+        const title=`HostPanel — ${localized}`;
+        if(document.title!==title)document.title=title;
+      }
+      return;
+    }
     if(crumb.textContent.trim()!==label)crumb.textContent=label;
     const title=`HostPanel — ${label}`;
     if(document.title!==title)document.title=title;
@@ -173,10 +180,7 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     syncPageLinkVisibility();
     const crumb=byId('crumb');
     if(crumb){
-      new MutationObserver(()=>{
-        const label=routeLink()?.textContent?.trim();
-        if(label&&crumb.textContent.trim()!==label)scheduleRouteLabel();
-      }).observe(crumb,{childList:true,characterData:true,subtree:true});
+      new MutationObserver(scheduleRouteLabel).observe(crumb,{childList:true,characterData:true,subtree:true});
     }
     window.addEventListener('hashchange',scheduleRouteLabel);
     scheduleRouteLabel();
