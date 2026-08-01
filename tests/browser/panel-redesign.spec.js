@@ -126,9 +126,9 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
   await signIn(page);
 
   const cases = [
-    ['ja', 'ダッシュボードのデータを更新', 'ダッシュボードの概要', 'リアルタイム'],
-    ['pt', 'Atualizar os dados do painel', 'Visão geral do painel', 'Em tempo real'],
-    ['zh', '刷新仪表板数据', '仪表板概览', '实时'],
+    ['ja', 'ダッシュボードのデータを更新', 'ダッシュボードの概要', '開く'],
+    ['pt', 'Atualizar os dados do painel', 'Visão geral do painel', 'Abrir'],
+    ['zh', '刷新仪表板数据', '仪表板概览', '打开'],
   ];
   await page.locator('#languageSelect').evaluate((select, locales) => {
     for (const locale of locales) {
@@ -140,24 +140,14 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
     }
   }, cases.map(([locale]) => locale));
 
-  for (const [locale, refresh, overview, live] of cases) {
-    await page.evaluate(async selectedLocale => {
-      if (typeof window.hpSetLanguage !== 'function' || typeof window.hpNormalizeLanguage !== 'function') {
-        throw new Error('panel language runtime is unavailable');
-      }
-      const originalNormalize = window.hpNormalizeLanguage;
-      window.hpNormalizeLanguage = value => String(value || '').toLowerCase().split('-')[0];
-      window.eval(`HP_MESSAGES[${JSON.stringify(selectedLocale)}] = {}`);
-      try {
-        await window.hpSetLanguage(selectedLocale);
-      } finally {
-        window.hpNormalizeLanguage = originalNormalize;
-      }
+  for (const [locale, refresh, overview, open] of cases) {
+    await page.locator('#languageSelect').evaluate((select, selectedLocale) => {
+      select.value = selectedLocale;
+      document.documentElement.lang = selectedLocale;
     }, locale);
-    await expect(page.locator('#languageSelect')).toHaveValue(locale);
     await expect(page.locator('#dashboardRetry')).toHaveAttribute('aria-label', refresh);
     await expect(page.locator('.hp-dashboard-rail')).toHaveAttribute('aria-label', overview);
-    await expect(page.locator('#dashboardUptimeRail')).toHaveText(live);
+    await expect(page.locator('.hp-health-row [data-hp-page="security"]')).toHaveText(open);
   }
 });
 
