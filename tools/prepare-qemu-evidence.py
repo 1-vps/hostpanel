@@ -16,7 +16,7 @@ FILE_MODE = 0o600
 
 def _required_open_flag(name: str) -> int:
     flag = getattr(os, name, None)
-    if not isinstance(flag, int) or flag == 0:
+    if type(flag) is not int or flag <= 0:
         raise RuntimeError(
             f"QEMU evidence preparation requires {name}; unsupported platform"
         )
