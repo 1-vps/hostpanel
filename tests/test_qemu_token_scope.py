@@ -1,4 +1,5 @@
 import pathlib
+import subprocess
 import unittest
 
 
@@ -16,13 +17,14 @@ class QemuTokenScopeTests(unittest.TestCase):
         cls.guest_installer = GUEST_INSTALLER.read_text(encoding="utf-8")
 
     def test_repository_token_is_scoped_to_the_install_step(self):
+        token_line = "          HP_QEMU_REPO_TOKEN: ${{ github.token }}"
         token_lines = [
             line for line in self.workflow.splitlines()
             if "HP_QEMU_REPO_TOKEN:" in line
         ]
-        self.assertEqual(token_lines, ["      HP_QEMU_REPO_TOKEN: ${{ github.token }}"])
+        self.assertEqual(token_lines, [token_line])
         boot_step = self.workflow.index("  - name: Boot, install, reboot, and validate")
-        token_reference = self.workflow.index("      HP_QEMU_REPO_TOKEN: ${{ github.token }}")
+        token_reference = self.workflow.index(token_line)
         harness_call = self.workflow.index("      bash tools/run-qemu-vm-acceptance.sh")
         self.assertLess(boot_step, token_reference)
         self.assertLess(token_reference, harness_call)
@@ -108,6 +110,84 @@ class QemuTokenScopeTests(unittest.TestCase):
             "unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT",
             self.guest_installer,
         )
+
+    def test_guest_removes_transient_inputs_and_post_reboot_state(self):
+        input_start = self.guest_installer.index("for input in")
+        input_end = self.guest_installer.index("; do", input_start)
+        input_block = self.guest_installer[input_start:input_end]
+        for path in (
+            "/tmp/guest.env",
+            "/tmp/bootstrap-install.sh",
+            "/tmp/validate-production-vm.sh",
+            "/tmp/qemu-guest-install.sh",
+        ):
+            self.assertIn(path, input_block)
+
+        root_copy = self.guest_installer.index(
+            "install -o root -g root -m 700 /tmp/validate-production-vm.sh"
+        )
+        post_reboot = self.guest_installer.index(
+            "cat > /root/hostpanel-qemu-post-reboot.sh <<'POSTREBOOT'",
+            root_copy,
+        )
+        tmp_cleanup_block = self.guest_installer[root_copy:post_reboot]
+        for path in (
+            "/tmp/bootstrap-install.sh",
+            "/tmp/validate-production-vm.sh",
+            "/tmp/qemu-guest-install.sh",
+        ):
+            self.assertIn(path, tmp_cleanup_block)
+
+        cleanup_start = self.guest_installer.index(
+            "cleanup_acceptance_state(){",
+            post_reboot,
+        )
+        trap_marker = "\n}\ntrap cleanup_acceptance_state EXIT"
+        cleanup_end = self.guest_installer.index(trap_marker, cleanup_start) + 2
+        cleanup_function = self.guest_installer[cleanup_start:cleanup_end]
+        install_trap = self.guest_installer.index(
+            "trap cleanup_acceptance_state EXIT",
+            cleanup_end,
+        )
+        source_env = self.guest_installer.index(
+            "source /root/hostpanel-qemu.env",
+            install_trap,
+        )
+        self.assertLess(cleanup_start, install_trap)
+        self.assertLess(install_trap, source_env)
+        self.assertIn("local status=$? cleanup_status=0", cleanup_function)
+        self.assertNotIn("|| true", cleanup_function)
+        for path in (
+            "/root/hostpanel-qemu.env",
+            "/root/bootstrap-install.sh",
+            "/root/validate-production-vm.sh",
+            "/root/hostpanel-qemu-post-reboot.sh",
+            "/root/hostpanel-qemu-private-install.log",
+        ):
+            self.assertIn(path, cleanup_function)
+
+        for original_status, rm_status, expected_status in (
+            (0, 0, 0),
+            (0, 1, 1),
+            (7, 1, 7),
+        ):
+            shell = (
+                f"rm() {{ return {rm_status}; }}\n"
+                f"{cleanup_function}\n"
+                f"bash -c 'exit {original_status}'\n"
+                "cleanup_acceptance_state\n"
+            )
+            result = subprocess.run(
+                ["bash", "-c", shell],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                result.returncode,
+                expected_status,
+                result.stderr,
+            )
 
     def test_guest_sanitizes_auth_on_preflight_and_install_failure(self):
         self.assertIn("PREFLIGHT_STATUS=$?", self.guest_installer)
