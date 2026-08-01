@@ -68,7 +68,7 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     const healthy=total?Math.round((running/total)*100):0;
     count.textContent=total?`${running} / ${total}`:'—';
     percent.textContent=total?`${healthy}%`:'—';
-    ring.style.setProperty('--hp-health-angle',`${healthy*3.6}deg`);
+    ring.style.setProperty('--hp-health-angle',`${healthy*3.6}deg);
     summary.textContent=!total?copy('waitingForServices'):running===total?copy('runningCount',{running}):copy('runningOf',{running,total});
     summary.dataset.state=total&&running===total?'ok':'warn';
   }
@@ -135,8 +135,13 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     document.querySelectorAll('[data-hp-page]').forEach(control=>{
       const allowed=pageLinkAllowed(pageLinkFor(control));
       control.hidden=!allowed;
-      if(allowed)control.removeAttribute('aria-disabled');
-      else control.setAttribute('aria-disabled','true');
+      if(allowed){
+        control.style.removeProperty('display');
+        control.removeAttribute('aria-disabled');
+      }else{
+        control.style.setProperty('display','none','important');
+        control.setAttribute('aria-disabled','true');
+      }
     });
   }
 
