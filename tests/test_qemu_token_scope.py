@@ -143,7 +143,15 @@ class QemuTokenScopeTests(unittest.TestCase):
             post_reboot,
         )
         disable_trap = self.guest_installer.index("trap - EXIT", cleanup)
-        always_remove = self.guest_installer.index("rm -f \", disable_trap)
+        first_cleanup_path = self.guest_installer.index(
+            "/root/hostpanel-qemu.env",
+            disable_trap,
+        )
+        always_remove = self.guest_installer.rindex(
+            "rm -f",
+            disable_trap,
+            first_cleanup_path,
+        )
         success_guard = self.guest_installer.index(
             "if ((status == 0)); then",
             always_remove,
