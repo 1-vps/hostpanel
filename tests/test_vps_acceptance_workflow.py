@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import pathlib
 import subprocess
+import tempfile
 import unittest
 
 
@@ -108,6 +109,10 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
         self.assertLess(cleanup_start, trap_install)
         self.assertLess(trap_install, source_env)
         self.assertIn("local status=$? cleanup_status=0", cleanup_function)
+        self.assertIn(
+            "if ((status == 0 && cleanup_status == 0)); then",
+            cleanup_function,
+        )
         self.assertNotIn("|| true", cleanup_function)
         for path in (
             "/root/hostpanel-acceptance.env",
@@ -137,18 +142,50 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, expected_status, result.stderr)
 
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            trace = pathlib.Path(temporary_directory) / "rm-calls.txt"
+            shell = (
+                "TRACE_FILE=$1\n"
+                "RM_CALLS=0\n"
+                "rm() {\n"
+                "  RM_CALLS=$((RM_CALLS + 1))\n"
+                "  printf '%s\\n' \"$*\" >> \"$TRACE_FILE\"\n"
+                "  ((RM_CALLS == 1)) && return 1\n"
+                "  return 0\n"
+                "}\n"
+                f"{cleanup_function}\n"
+                "true\n"
+                "cleanup_acceptance_state\n"
+            )
+            result = subprocess.run(
+                ["bash", "-c", shell, "bash", str(trace)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 1, result.stderr)
+            calls = trace.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(calls), 1)
+            self.assertNotIn(
+                "/root/hostpanel-acceptance-private-install.log",
+                calls[0],
+            )
+
         collect = self.text.index("      - name: Collect root-only validation evidence")
         evidence_copy = self.text.index(
             'root@"$VPS_HOST":/root/hostpanel-acceptance-evidence/.',
             collect,
         )
         fallback_start = self.text.index(
-            "'rm -f /root/hostpanel-acceptance.env",
+            "timeout 90s sshpass -e ssh",
             evidence_copy,
         )
         fallback_end = self.text.index("          find evidence", fallback_start)
         fallback_cleanup = self.text[fallback_start:fallback_end]
         self.assertLess(evidence_copy, fallback_start)
+        self.assertIn("-o ConnectTimeout=20", fallback_cleanup)
+        self.assertIn("-o ServerAliveInterval=15", fallback_cleanup)
+        self.assertIn("-o ServerAliveCountMax=4", fallback_cleanup)
         for path in (
             "/root/hostpanel-acceptance.env",
             "/root/bootstrap-install.sh",
