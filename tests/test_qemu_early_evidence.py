@@ -18,6 +18,7 @@ SANITIZER = ROOT / "tools" / "sanitize-qemu-evidence.py"
 SEALER = ROOT / "tools" / "seal-qemu-evidence.py"
 MARKER_NAME = "runner-evidence-state.txt"
 MARKER_TEXT = "No VM evidence was produced before the always-run sealing step.\n"
+INVALID_FLAG_VALUES = (None, 0, True, -1)
 
 
 def load_preparer_module():
@@ -63,7 +64,7 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
 
     def test_unavailable_directory_open_flag_fails_closed(self) -> None:
         module = load_preparer_module()
-        for unavailable_value in (None, 0):
+        for unavailable_value in INVALID_FLAG_VALUES:
             with self.subTest(value=unavailable_value):
                 with mock.patch.object(module.os, "O_DIRECTORY", unavailable_value):
                     with self.assertRaisesRegex(
@@ -74,7 +75,7 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
 
     def test_unavailable_no_follow_flag_fails_closed_for_directories(self) -> None:
         module = load_preparer_module()
-        for unavailable_value in (None, 0):
+        for unavailable_value in INVALID_FLAG_VALUES:
             with self.subTest(value=unavailable_value):
                 with mock.patch.object(module.os, "O_NOFOLLOW", unavailable_value):
                     with self.assertRaisesRegex(
@@ -85,7 +86,7 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
 
     def test_unavailable_no_follow_flag_cannot_create_a_marker(self) -> None:
         module = load_preparer_module()
-        for unavailable_value in (None, 0):
+        for unavailable_value in INVALID_FLAG_VALUES:
             with self.subTest(value=unavailable_value):
                 with tempfile.TemporaryDirectory() as temporary_directory:
                     evidence = pathlib.Path(temporary_directory)
