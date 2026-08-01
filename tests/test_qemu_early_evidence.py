@@ -61,39 +61,45 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
         self.assertIn("      - tools/prepare-qemu-evidence.py", workflow)
         self.assertGreaterEqual(workflow.count("test_qemu_early_evidence.py"), 2)
 
-    def test_missing_directory_open_flag_fails_closed(self) -> None:
+    def test_unavailable_directory_open_flag_fails_closed(self) -> None:
         module = load_preparer_module()
-        with mock.patch.object(module.os, "O_DIRECTORY", None):
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "requires O_DIRECTORY; unsupported platform",
-            ):
-                module._open_directory(".")
+        for unavailable_value in (None, 0):
+            with self.subTest(value=unavailable_value):
+                with mock.patch.object(module.os, "O_DIRECTORY", unavailable_value):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "requires O_DIRECTORY; unsupported platform",
+                    ):
+                        module._open_directory(".")
 
-    def test_missing_no_follow_flag_fails_closed_for_directories(self) -> None:
+    def test_unavailable_no_follow_flag_fails_closed_for_directories(self) -> None:
         module = load_preparer_module()
-        with mock.patch.object(module.os, "O_NOFOLLOW", None):
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "requires O_NOFOLLOW; unsupported platform",
-            ):
-                module._open_directory(".")
-
-    def test_missing_no_follow_flag_cannot_create_a_marker(self) -> None:
-        module = load_preparer_module()
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            evidence = pathlib.Path(temporary_directory)
-            evidence_fd = module._open_directory(str(evidence))
-            try:
-                with mock.patch.object(module.os, "O_NOFOLLOW", None):
+        for unavailable_value in (None, 0):
+            with self.subTest(value=unavailable_value):
+                with mock.patch.object(module.os, "O_NOFOLLOW", unavailable_value):
                     with self.assertRaisesRegex(
                         RuntimeError,
                         "requires O_NOFOLLOW; unsupported platform",
                     ):
-                        module._create_marker(evidence_fd)
-            finally:
-                module.os.close(evidence_fd)
-            self.assertFalse((evidence / MARKER_NAME).exists())
+                        module._open_directory(".")
+
+    def test_unavailable_no_follow_flag_cannot_create_a_marker(self) -> None:
+        module = load_preparer_module()
+        for unavailable_value in (None, 0):
+            with self.subTest(value=unavailable_value):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    evidence = pathlib.Path(temporary_directory)
+                    evidence_fd = module._open_directory(str(evidence))
+                    try:
+                        with mock.patch.object(module.os, "O_NOFOLLOW", unavailable_value):
+                            with self.assertRaisesRegex(
+                                RuntimeError,
+                                "requires O_NOFOLLOW; unsupported platform",
+                            ):
+                                module._create_marker(evidence_fd)
+                    finally:
+                        module.os.close(evidence_fd)
+                    self.assertFalse((evidence / MARKER_NAME).exists())
 
     def test_empty_private_evidence_directory_gets_a_sealable_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
