@@ -395,7 +395,7 @@ jobs:
                 /root/hostpanel-acceptance-remote.sh; then
                 cleanup_status=1
               fi
-              if ((status == 0)); then
+              if ((status == 0 && cleanup_status == 0)); then
                 if ! rm -f /root/hostpanel-acceptance-private-install.log; then
                   cleanup_status=1
                 fi
@@ -462,12 +462,14 @@ jobs:
             -o PubkeyAuthentication=no \
             -o ConnectTimeout=20 \
             root@"$VPS_HOST":/root/hostpanel-acceptance-evidence/. evidence/remote/ || true
-          sshpass -e ssh -p "${VPS_PORT:-22}" \
+          timeout 90s sshpass -e ssh -p "${VPS_PORT:-22}" \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o PreferredAuthentications=password \
             -o PubkeyAuthentication=no \
             -o ConnectTimeout=20 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=4 \
             root@"$VPS_HOST" \
             'rm -f /root/hostpanel-acceptance.env /root/bootstrap-install.sh /root/validate-production-vm.sh /root/hostpanel-acceptance-remote.sh' \
             || true
