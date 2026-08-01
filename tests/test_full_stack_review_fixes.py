@@ -88,6 +88,9 @@ signal_exit(){
 trap cleanup EXIT
 trap 'signal_exit 143' TERM
 sleep 30 & child=$!
+# Let the background process finish exec before testing the trap so it cannot
+# retain the captured pipes through a launch race in the test harness itself.
+sleep 0.1
 kill -TERM $$
 wait "$child"
 '''
