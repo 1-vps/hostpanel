@@ -16,6 +16,7 @@ on:
       - .github/workflows/qemu-vm-acceptance.yml
       - tools/run-qemu-vm-acceptance.sh
       - tools/qemu-guest-install.sh
+      - tools/prepare-qemu-evidence.py
       - tools/sanitize-qemu-evidence.py
       - tools/seal-qemu-evidence.py
       - tools/inspect-release-state.py
@@ -34,6 +35,7 @@ on:
       - tests/test_qemu_vm_acceptance.py
       - tests/test_qemu_token_scope.py
       - tests/test_qemu_evidence_sanitizer.py
+      - tests/test_qemu_early_evidence.py
       - tests/test_qemu_evidence_sealer.py
       - tests/test_qemu_default_version.py
       - tests/test_post_install_health.py
@@ -96,9 +98,11 @@ jobs:
           }
           bash -n tools/run-qemu-vm-acceptance.sh
           bash -n tools/qemu-guest-install.sh
+          python3 -m py_compile tools/prepare-qemu-evidence.py
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_token_scope.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_evidence_sanitizer.py' -v
+          python3 -m unittest discover -s tests -p 'test_qemu_early_evidence.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_evidence_sealer.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_default_version.py' -v
           python3 -m unittest discover -s tests -p 'test_systemd_resolved_dns.py' -v
@@ -138,6 +142,7 @@ jobs:
         if: ${{ always() }}
         run: |
           set -euo pipefail
+          python3 tools/prepare-qemu-evidence.py
           python3 tools/sanitize-qemu-evidence.py artifacts/qemu-vm-acceptance
           python3 tools/seal-qemu-evidence.py \
             artifacts/qemu-vm-acceptance \
