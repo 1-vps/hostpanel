@@ -132,9 +132,9 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
     ['pt', 'Atualizar os dados do painel', 'Visão geral do painel', 'Em tempo real'],
     ['zh', '刷新仪表板数据', '仪表板概览', '实时'],
   ];
-  // This workflow deliberately builds the signed UI source plus only the UI
-  // overlay. Add the release-candidate options to the browser fixture so this
-  // test covers the redesign runtime independently of the localization workflow.
+  // This workflow builds the signed UI source plus the redesign overlay. Add
+  // the reviewed options, then exercise the real panel language API while
+  // extending only its locale normalizer exactly as the localization overlay does.
   await page.locator('#languageSelect').evaluate((select, locales) => {
     for (const locale of locales) {
       if (select.querySelector(`option[value="${locale}"]`)) continue;
@@ -146,14 +146,19 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
   }, cases.map(([locale]) => locale));
 
   for (const [locale, refresh, overview, live] of cases) {
-    await page.locator('#languageSelect').evaluate((select, selectedLocale) => {
-      // The UI-only fixture lacks the localization overlay. Model its stable
-      // end state directly and trigger the redesign's observed `lang` change,
-      // without invoking the base handler that rejects unknown options.
-      document.documentElement.lang = 'en';
-      select.value = selectedLocale;
-      document.documentElement.lang = selectedLocale;
+    await page.evaluate(async selectedLocale => {
+      if (typeof window.hpSetLanguage !== 'function' || typeof window.hpNormalizeLanguage !== 'function') {
+        throw new Error('panel language runtime is unavailable');
+      }
+      const originalNormalize = window.hpNormalizeLanguage;
+      window.hpNormalizeLanguage = value => String(value || '').toLowerCase().split('-')[0];
+      try {
+        await window.hpSetLanguage(selectedLocale);
+      } finally {
+        window.hpNormalizeLanguage = originalNormalize;
+      }
     }, locale);
+    await expect(page.locator('#languageSelect')).toHaveValue(locale);
     await expect(page.locator('#dashboardRetry')).toHaveAttribute('aria-label', refresh);
     await expect(page.locator('.hp-dashboard-rail')).toHaveAttribute('aria-label', overview);
     await expect(page.locator('#dashboardUptimeRail')).toHaveText(live);
