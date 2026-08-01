@@ -55,12 +55,12 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Inspect signed release state bootstrap
         run: |
           set -euo pipefail
-          EXPECTED_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          EXPECTED_SHA="${{ github.sha }}"
           ACTUAL_SHA="$(git rev-parse HEAD)"
           [[ "$ACTUAL_SHA" == "$EXPECTED_SHA" ]] || {
             printf 'QEMU release-state checkout mismatch: expected %s, got %s\n' \
@@ -74,14 +74,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      HP_QEMU_REVIEWED_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      HP_QEMU_REVIEWED_COMMIT_SHA: ${{ github.sha }}
       HP_QEMU_EXPECTED_VERSION: 3.4.0
       HP_QEMU_MTA: ${{ inputs.mta || 'postfix' }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
