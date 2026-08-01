@@ -1,4 +1,5 @@
 import pathlib
+import subprocess
 import unittest
 
 
@@ -111,83 +112,82 @@ class QemuTokenScopeTests(unittest.TestCase):
         )
 
     def test_guest_removes_transient_inputs_and_post_reboot_state(self):
-        input_validation = self.guest_installer.index(
-            "for input in \\\n  /tmp/guest.env"
-        )
-        self.assertIn(
-            "/tmp/qemu-guest-install.sh; do",
-            self.guest_installer[input_validation:],
-        )
+        input_start = self.guest_installer.index("for input in")
+        input_end = self.guest_installer.index("; do", input_start)
+        input_block = self.guest_installer[input_start:input_end]
+        for path in (
+            "/tmp/guest.env",
+            "/tmp/bootstrap-install.sh",
+            "/tmp/validate-production-vm.sh",
+            "/tmp/qemu-guest-install.sh",
+        ):
+            self.assertIn(path, input_block)
 
         root_copy = self.guest_installer.index(
             "install -o root -g root -m 700 /tmp/validate-production-vm.sh"
         )
-        tmp_cleanup = self.guest_installer.index(
-            "rm -f \\\n  /tmp/bootstrap-install.sh",
-            root_copy,
-        )
         post_reboot = self.guest_installer.index(
             "cat > /root/hostpanel-qemu-post-reboot.sh <<'POSTREBOOT'",
-            tmp_cleanup,
+            root_copy,
         )
-        self.assertLess(root_copy, tmp_cleanup)
-        self.assertLess(tmp_cleanup, post_reboot)
+        tmp_cleanup_block = self.guest_installer[root_copy:post_reboot]
         for path in (
             "/tmp/bootstrap-install.sh",
             "/tmp/validate-production-vm.sh",
             "/tmp/qemu-guest-install.sh",
         ):
-            self.assertIn(path, self.guest_installer[tmp_cleanup:post_reboot])
+            self.assertIn(path, tmp_cleanup_block)
 
-        cleanup = self.guest_installer.index(
+        cleanup_start = self.guest_installer.index(
             "cleanup_acceptance_state(){",
             post_reboot,
         )
-        disable_trap = self.guest_installer.index("trap - EXIT", cleanup)
-        first_cleanup_path = self.guest_installer.index(
-            "/root/hostpanel-qemu.env",
-            disable_trap,
-        )
-        always_remove = self.guest_installer.rindex(
-            "rm -f",
-            disable_trap,
-            first_cleanup_path,
-        )
-        success_guard = self.guest_installer.index(
-            "if ((status == 0)); then",
-            always_remove,
-        )
-        private_log_remove = self.guest_installer.index(
-            "rm -f /root/hostpanel-qemu-private-install.log || true",
-            success_guard,
-        )
-        preserve_status = self.guest_installer.index(
-            'exit "$status"',
-            private_log_remove,
-        )
+        trap_marker = "\n}\ntrap cleanup_acceptance_state EXIT"
+        cleanup_end = self.guest_installer.index(trap_marker, cleanup_start) + 2
+        cleanup_function = self.guest_installer[cleanup_start:cleanup_end]
         install_trap = self.guest_installer.index(
             "trap cleanup_acceptance_state EXIT",
-            preserve_status,
+            cleanup_end,
         )
         source_env = self.guest_installer.index(
             "source /root/hostpanel-qemu.env",
             install_trap,
         )
-        self.assertLess(cleanup, disable_trap)
-        self.assertLess(disable_trap, always_remove)
-        self.assertLess(always_remove, success_guard)
-        self.assertLess(success_guard, private_log_remove)
-        self.assertLess(private_log_remove, preserve_status)
-        self.assertLess(preserve_status, install_trap)
+        self.assertLess(cleanup_start, install_trap)
         self.assertLess(install_trap, source_env)
-        cleanup_block = self.guest_installer[always_remove:success_guard]
+        self.assertIn("local status=$? cleanup_status=0", cleanup_function)
+        self.assertNotIn("|| true", cleanup_function)
         for path in (
             "/root/hostpanel-qemu.env",
             "/root/bootstrap-install.sh",
             "/root/validate-production-vm.sh",
             "/root/hostpanel-qemu-post-reboot.sh",
+            "/root/hostpanel-qemu-private-install.log",
         ):
-            self.assertIn(path, cleanup_block)
+            self.assertIn(path, cleanup_function)
+
+        for original_status, rm_status, expected_status in (
+            (0, 0, 0),
+            (0, 1, 1),
+            (7, 1, 7),
+        ):
+            shell = (
+                f"rm() {{ return {rm_status}; }}\n"
+                f"{cleanup_function}\n"
+                f"bash -c 'exit {original_status}'\n"
+                "cleanup_acceptance_state\n"
+            )
+            result = subprocess.run(
+                ["bash", "-c", shell],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                result.returncode,
+                expected_status,
+                result.stderr,
+            )
 
     def test_guest_sanitizes_auth_on_preflight_and_install_failure(self):
         self.assertIn("PREFLIGHT_STATUS=$?", self.guest_installer)
