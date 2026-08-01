@@ -19,6 +19,7 @@ SEALER = ROOT / "tools" / "seal-qemu-evidence.py"
 MARKER_NAME = "runner-evidence-state.txt"
 MARKER_TEXT = "No VM evidence was produced before the always-run sealing step.\n"
 INVALID_FLAG_VALUES = (None, 0, True, -1)
+VALID_FLAG_VALUE = 1
 
 
 def load_preparer_module():
@@ -84,15 +85,21 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
             with self.subTest(value=unavailable_value):
                 with mock.patch.object(
                     module.os,
-                    "O_NOFOLLOW",
-                    unavailable_value,
+                    "O_DIRECTORY",
+                    VALID_FLAG_VALUE,
                     create=True,
                 ):
-                    with self.assertRaisesRegex(
-                        RuntimeError,
-                        "requires O_NOFOLLOW; unsupported platform",
+                    with mock.patch.object(
+                        module.os,
+                        "O_NOFOLLOW",
+                        unavailable_value,
+                        create=True,
                     ):
-                        module._open_directory(".")
+                        with self.assertRaisesRegex(
+                            RuntimeError,
+                            "requires O_NOFOLLOW; unsupported platform",
+                        ):
+                            module._open_directory(".")
 
     def test_unavailable_no_follow_flag_cannot_create_a_marker(self) -> None:
         module = load_preparer_module()
