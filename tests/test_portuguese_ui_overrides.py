@@ -8,6 +8,9 @@ import tarfile
 import tempfile
 import unittest
 
+from localization_invariants import PORTUGUESE_LANGUAGE_INVARIANT_KEYS
+
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OVERLAY = ROOT / "localization-overlay"
 UI_FILE = OVERLAY / "catalog-visible-ui-overrides.pt.json"
@@ -21,15 +24,6 @@ FINAL_FILES = (
 EXPECTED_COUNTS = {"pt": 80}
 EXPECTED_SHA256 = "193ef6c9f6b0e3b36f755ace7d685109974ae30aa480bd4db9bdc01eceb2c08c"
 PLACEHOLDER = re.compile(r"\{[A-Za-z0-9_.-]+\}")
-PORTUGUESE_LANGUAGE_INVARIANT_KEYS = frozenset(
-    {
-        "errors.validation_field",
-        "route.backups",
-        "route.firewall",
-        "route.postgres",
-        "route.staging",
-    }
-)
 
 
 def canonical_sha256(payload: dict[str, dict[str, str]]) -> str:
