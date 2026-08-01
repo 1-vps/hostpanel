@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
 import stat
 import subprocess
@@ -32,13 +33,19 @@ def load_preparer_module():
 
 
 class QemuEarlyEvidenceTests(unittest.TestCase):
-    def run_preparer(self, directory: pathlib.Path) -> subprocess.CompletedProcess[str]:
+    def run_preparer(
+        self,
+        directory: pathlib.Path,
+        *,
+        timeout: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(PREPARER)],
             cwd=directory,
             check=False,
             capture_output=True,
             text=True,
+            timeout=timeout,
         )
 
     def test_workflow_prepares_evidence_before_sanitizing(self) -> None:
@@ -120,6 +127,28 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
                             module._create_marker(-1)
                     self.assertFalse((evidence / MARKER_NAME).exists())
 
+    def test_unavailable_nonblock_flag_cannot_validate_existing_marker(self) -> None:
+        module = load_preparer_module()
+        for unavailable_value in INVALID_FLAG_VALUES:
+            with self.subTest(value=unavailable_value):
+                with mock.patch.object(
+                    module.os,
+                    "O_NOFOLLOW",
+                    VALID_FLAG_VALUE,
+                    create=True,
+                ):
+                    with mock.patch.object(
+                        module.os,
+                        "O_NONBLOCK",
+                        unavailable_value,
+                        create=True,
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError,
+                            "requires O_NONBLOCK; unsupported platform",
+                        ):
+                            module._validate_existing_marker(-1)
+
     def test_empty_private_evidence_directory_gets_a_sealable_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = pathlib.Path(temporary_directory)
@@ -170,6 +199,21 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("unexpected size", result.stderr)
             self.assertEqual(marker.read_text(encoding="utf-8"), "partial\n")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires FIFO support")
+    def test_fifo_existing_marker_is_rejected_without_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = pathlib.Path(temporary_directory)
+            evidence = root / "artifacts" / "qemu-vm-acceptance"
+            evidence.mkdir(parents=True, mode=0o700)
+            marker = evidence / MARKER_NAME
+            os.mkfifo(marker, 0o600)
+
+            result = self.run_preparer(root, timeout=5)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not a regular file", result.stderr)
+            self.assertTrue(stat.S_ISFIFO(marker.stat().st_mode))
 
     def test_existing_evidence_is_not_replaced_by_a_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
