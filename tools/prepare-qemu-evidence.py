@@ -14,6 +14,15 @@ DIRECTORY_MODE = 0o700
 FILE_MODE = 0o600
 
 
+def _required_open_flag(name: str) -> int:
+    flag = getattr(os, name, None)
+    if not isinstance(flag, int):
+        raise RuntimeError(
+            f"QEMU evidence preparation requires {name}; unsupported platform"
+        )
+    return flag
+
+
 def _validate_directory(metadata: os.stat_result, label: str) -> None:
     if not stat.S_ISDIR(metadata.st_mode):
         raise RuntimeError(f"{label} is not a directory")
@@ -22,7 +31,11 @@ def _validate_directory(metadata: os.stat_result, label: str) -> None:
 
 
 def _open_directory(name: str, *, dir_fd: int | None = None) -> int:
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    flags = (
+        os.O_RDONLY
+        | _required_open_flag("O_DIRECTORY")
+        | _required_open_flag("O_NOFOLLOW")
+    )
     return os.open(name, flags, dir_fd=dir_fd)
 
 
@@ -69,7 +82,7 @@ def _validate_marker(descriptor: int) -> None:
 def _validate_existing_marker(evidence_fd: int) -> None:
     marker_fd = os.open(
         MARKER_NAME,
-        os.O_RDONLY | os.O_NOFOLLOW,
+        os.O_RDONLY | _required_open_flag("O_NOFOLLOW"),
         dir_fd=evidence_fd,
     )
     try:
@@ -79,7 +92,12 @@ def _validate_existing_marker(evidence_fd: int) -> None:
 
 
 def _create_marker(evidence_fd: int) -> None:
-    marker_flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    marker_flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | os.O_EXCL
+        | _required_open_flag("O_NOFOLLOW")
+    )
     marker_fd = os.open(
         MARKER_NAME,
         marker_flags,
