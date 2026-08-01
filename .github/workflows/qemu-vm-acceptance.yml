@@ -55,9 +55,13 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Inspect signed release state bootstrap
-        run: python3 tools/inspect-release-state.py
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "${{ github.event.pull_request.head.sha || github.sha }}" ]]
+          python3 tools/inspect-release-state.py
 
   qemu-vm:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -71,12 +75,14 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Validate QEMU acceptance harness
         run: |
           set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$HP_QEMU_REVIEWED_COMMIT_SHA" ]]
           bash -n tools/run-qemu-vm-acceptance.sh
           bash -n tools/qemu-guest-install.sh
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
