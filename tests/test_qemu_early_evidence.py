@@ -100,21 +100,17 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
             with self.subTest(value=unavailable_value):
                 with tempfile.TemporaryDirectory() as temporary_directory:
                     evidence = pathlib.Path(temporary_directory)
-                    evidence_fd = module._open_directory(str(evidence))
-                    try:
-                        with mock.patch.object(
-                            module.os,
-                            "O_NOFOLLOW",
-                            unavailable_value,
-                            create=True,
+                    with mock.patch.object(
+                        module.os,
+                        "O_NOFOLLOW",
+                        unavailable_value,
+                        create=True,
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError,
+                            "requires O_NOFOLLOW; unsupported platform",
                         ):
-                            with self.assertRaisesRegex(
-                                RuntimeError,
-                                "requires O_NOFOLLOW; unsupported platform",
-                            ):
-                                module._create_marker(evidence_fd)
-                    finally:
-                        module.os.close(evidence_fd)
+                            module._create_marker(-1)
                     self.assertFalse((evidence / MARKER_NAME).exists())
 
     def test_empty_private_evidence_directory_gets_a_sealable_marker(self) -> None:
