@@ -7,6 +7,10 @@ on:
         description: Type ERASE-AND-INSTALL to authorize a destructive disposable-VM installation
         required: true
         type: string
+      reviewed_commit_sha:
+        description: Exact reviewed 40-character commit SHA to install and validate
+        required: true
+        type: string
       reinstall:
         description: Permit reinstall when /opt/hostpanel already exists
         required: true
@@ -40,14 +44,8 @@ jobs:
     timeout-minutes: 180
     environment: vps-acceptance
     env:
-      REVIEWED_COMMIT_SHA: 9c38d0095563ea33efd14124babfd29556c0da46
+      REVIEWED_COMMIT_SHA: ${{ inputs.reviewed_commit_sha }}
       EXPECTED_VERSION: 3.4.0
-      VPS_HOST: ${{ secrets.VPS_HOST }}
-      VPS_IPV6: ${{ secrets.VPS_IPV6 }}
-      VPS_SSH_PORT: ${{ secrets.VPS_SSH_PORT }}
-      VPS_ROOT_PASSWORD: ${{ secrets.VPS_ROOT_PASSWORD }}
-      VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
-      VPS_PROVIDER_SNAPSHOT_CONFIRMED: ${{ secrets.VPS_PROVIDER_SNAPSHOT_CONFIRMED }}
       PANEL_HOST_INPUT: ${{ inputs.panel_host }}
       REINSTALL: ${{ inputs.reinstall }}
       MTA: ${{ inputs.mta }}
@@ -56,15 +54,28 @@ jobs:
       - name: Check out the reviewed acceptance commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: 9c38d0095563ea33efd14124babfd29556c0da46
+          ref: ${{ inputs.reviewed_commit_sha }}
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Validate authorization, pinned source, inputs, and secrets
+      - name: Validate authorization, pinned source, inputs, and environment gates
         shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_IPV6: ${{ secrets.VPS_IPV6 }}
+          VPS_SSH_PORT: ${{ secrets.VPS_SSH_PORT }}
+          VPS_PROVIDER_SNAPSHOT_CONFIRMED: ${{ secrets.VPS_PROVIDER_SNAPSHOT_CONFIRMED }}
         run: |
           set -euo pipefail
+          [[ "${{ github.ref }}" == refs/heads/main ]] || {
+            echo 'VPS acceptance must be dispatched from main.' >&2
+            exit 1
+          }
           [[ "${{ inputs.confirm }}" == ERASE-AND-INSTALL ]]
+          [[ "$REVIEWED_COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || {
+            echo 'reviewed_commit_sha must be a full 40-character commit SHA.' >&2
+            exit 1
+          }
           [[ "$(git rev-parse HEAD)" == "$REVIEWED_COMMIT_SHA" ]] || {
             echo 'Checkout does not match REVIEWED_COMMIT_SHA.' >&2
             exit 1
@@ -73,12 +84,7 @@ jobs:
             echo 'VPS_PROVIDER_SNAPSHOT_CONFIRMED must be the environment secret yes.' >&2
             exit 1
           }
-          for name in VPS_HOST VPS_ROOT_PASSWORD VPS_SSH_KNOWN_HOSTS; do
-            [[ -n "${!name:-}" ]] || {
-              echo "Missing required environment secret: $name" >&2
-              exit 1
-            }
-          done
+          [[ -n "$VPS_HOST" ]] || { echo 'Missing required environment secret: VPS_HOST' >&2; exit 1; }
 
           VPS_PORT="${VPS_SSH_PORT:-22}"
           [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && ((VPS_PORT >= 1 && VPS_PORT <= 65535))
@@ -121,6 +127,8 @@ jobs:
           PY
 
           {
+            printf 'VPS_HOST=%s\n' "$VPS_HOST"
+            printf 'VPS_IPV6=%s\n' "$VPS_IPV6"
             printf 'VPS_PORT=%s\n' "$VPS_PORT"
             printf 'PANEL_HOST=%s\n' "$PANEL_HOST"
             printf 'ADMIN_CIDR=%s/32\n' "$RUNNER_IPV4"
@@ -134,8 +142,11 @@ jobs:
             openssh-client sshpass curl dnsutils netcat-openbsd
 
       - name: Configure strict SSH host verification
+        env:
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
+          [[ -n "$VPS_SSH_KNOWN_HOSTS" ]] || { echo 'Missing VPS_SSH_KNOWN_HOSTS.' >&2; exit 1; }
           install -d -m 700 "$HOME/.ssh"
           umask 077
           printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
@@ -147,6 +158,7 @@ jobs:
           SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
         run: |
           set -euo pipefail
+          [[ -n "$SSHPASS" ]] || { echo 'Missing VPS_ROOT_PASSWORD.' >&2; exit 1; }
           SSH=(sshpass -e ssh -p "$VPS_PORT"
             -o StrictHostKeyChecking=yes
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
@@ -181,6 +193,7 @@ jobs:
           HP_VPS_REPO_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          [[ -n "$SSHPASS" ]] || { echo 'Missing VPS_ROOT_PASSWORD.' >&2; exit 1; }
           local_cleanup(){
             rm -f /tmp/hostpanel-acceptance.env /tmp/hostpanel-acceptance-remote.sh
           }
@@ -338,6 +351,7 @@ jobs:
           SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
         run: |
           set -euo pipefail
+          [[ -n "$SSHPASS" ]] || { echo 'Missing VPS_ROOT_PASSWORD.' >&2; exit 1; }
           SSH=(sshpass -e ssh -p "$VPS_PORT"
             -o StrictHostKeyChecking=yes
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
@@ -375,6 +389,7 @@ jobs:
           SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
         run: |
           set -euo pipefail
+          [[ -n "$SSHPASS" ]] || { echo 'Missing VPS_ROOT_PASSWORD.' >&2; exit 1; }
           SSH=(sshpass -e ssh -p "$VPS_PORT"
             -o StrictHostKeyChecking=yes
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
@@ -424,26 +439,21 @@ jobs:
           set -euo pipefail
           {
             echo '== DNS =='
-            getent ahosts "$PANEL_HOST" || true
-            dig +short A "$PANEL_HOST" || true
-            echo '== HTTPS headers =='
-            curl -kfsSI --connect-timeout 15 --max-time 30 "https://${PANEL_HOST}/" || true
-            echo '== TCP listeners from runner over IPv4 =='
-            for port in 22 25 53 80 443 465 587 993; do
-              if nc -z -w 8 "$VPS_HOST" "$port"; then
-                echo "OPEN $port"
-              else
-                echo "CLOSED_OR_FILTERED $port"
-              fi
+            getent ahosts "$PANEL_HOST"
+            dig +short A "$PANEL_HOST" | tee /tmp/panel-a-records.txt
+            grep -Fxq "$VPS_HOST" /tmp/panel-a-records.txt
+            echo '== trusted HTTPS headers =='
+            curl -fsSI --connect-timeout 15 --max-time 30 "https://${PANEL_HOST}/"
+            echo '== required TCP listeners from runner over IPv4 =='
+            for port in "$VPS_PORT" 25 53 80 443 587 993; do
+              nc -z -w 8 "$VPS_HOST" "$port"
+              echo "OPEN $port"
             done
             if [[ -n "$VPS_IPV6" ]]; then
-              echo '== TCP listeners from runner over IPv6 =='
-              for port in 22 80 443; do
-                if nc -6 -z -w 8 "$VPS_IPV6" "$port"; then
-                  echo "OPEN_IPV6 $port"
-                else
-                  echo "CLOSED_OR_FILTERED_IPV6 $port"
-                fi
+              echo '== required TCP listeners from runner over IPv6 =='
+              for port in "$VPS_PORT" 80 443; do
+                nc -6 -z -w 8 "$VPS_IPV6" "$port"
+                echo "OPEN_IPV6 $port"
               done
             fi
           } | tee evidence/external-probes.txt
@@ -454,6 +464,7 @@ jobs:
           SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD }}
         run: |
           set -euo pipefail
+          [[ -n "$SSHPASS" ]] || { echo 'Missing VPS_ROOT_PASSWORD.' >&2; exit 1; }
           mkdir -p evidence/remote
           sshpass -e scp -r -P "${VPS_PORT:-22}" \
             -o StrictHostKeyChecking=yes \
@@ -479,7 +490,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: hostpanel-vps-acceptance-${{ github.run_id }}
+          name: hostpanel-vps-acceptance-${{ github.run_id }}-${{ inputs.reviewed_commit_sha }}
           path: evidence
           if-no-files-found: error
           retention-days: 14
