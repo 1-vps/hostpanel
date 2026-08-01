@@ -63,9 +63,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Inspect signed release state bootstrap
-        run: python3 tools/inspect-release-state.py
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          [[ "$ACTUAL_SHA" == "$EXPECTED_SHA" ]] || {
+            printf 'QEMU release-state checkout mismatch: expected %s, got %s\n' \
+              "$EXPECTED_SHA" "$ACTUAL_SHA" >&2
+            exit 1
+          }
+          python3 tools/inspect-release-state.py
 
   qemu-vm:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -79,12 +89,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Validate QEMU acceptance harness
         run: |
           set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          [[ "$ACTUAL_SHA" == "$HP_QEMU_REVIEWED_COMMIT_SHA" ]] || {
+            printf 'QEMU reviewed checkout mismatch: expected %s, got %s\n' \
+              "$HP_QEMU_REVIEWED_COMMIT_SHA" "$ACTUAL_SHA" >&2
+            exit 1
+          }
           bash -n tools/run-qemu-vm-acceptance.sh
           bash -n tools/qemu-guest-install.sh
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
