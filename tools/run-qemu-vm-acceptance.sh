@@ -42,6 +42,9 @@ mkdir -p "$ARTIFACT_DIR"
   || die 'artifact directories changed during setup'
 chmod 700 "$WORK_DIR" "$ARTIFACT_DIR"
 find "$ARTIFACT_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+# Keep the token as shell-only state before any long-lived child process starts.
+# Process substitutions inherit only exported variables, so tee cannot retain it.
+export -n HP_QEMU_REPO_TOKEN REPO_TOKEN 2>/dev/null || true
 exec > >(tee "$ARTIFACT_DIR/runner.log") 2>&1
 
 qemu_pid_is_ours(){
