@@ -102,8 +102,6 @@ test('dashboard actions follow asynchronous permission changes', async ({ page }
   const quickAction = page.locator('.hp-quick-action[data-hp-page="security"]');
   const railLinks = page.locator('.hp-security-link[data-hp-page="security"]');
 
-  // Navigation groups may be collapsed in the fixture, so exercise the actual
-  // authorization contract (`hidden`/`aria-hidden`) rather than CSS visibility.
   await navLink.evaluate(element => {
     element.hidden = false;
     element.removeAttribute('aria-hidden');
@@ -132,9 +130,6 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
     ['pt', 'Atualizar os dados do painel', 'Visão geral do painel', 'Em tempo real'],
     ['zh', '刷新仪表板数据', '仪表板概览', '实时'],
   ];
-  // This workflow builds the signed UI source plus the redesign overlay. Add
-  // the reviewed options, then exercise the real panel language API while
-  // extending only its locale normalizer exactly as the localization overlay does.
   await page.locator('#languageSelect').evaluate((select, locales) => {
     for (const locale of locales) {
       if (select.querySelector(`option[value="${locale}"]`)) continue;
@@ -152,6 +147,7 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
       }
       const originalNormalize = window.hpNormalizeLanguage;
       window.hpNormalizeLanguage = value => String(value || '').toLowerCase().split('-')[0];
+      window.eval(`HP_MESSAGES[${JSON.stringify(selectedLocale)}] = {}`);
       try {
         await window.hpSetLanguage(selectedLocale);
       } finally {
