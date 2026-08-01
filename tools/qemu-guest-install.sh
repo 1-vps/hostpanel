@@ -146,17 +146,24 @@ cat > /root/hostpanel-qemu-post-reboot.sh <<'POSTREBOOT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 cleanup_acceptance_state(){
-  local status=$?
+  local status=$? cleanup_status=0
   trap - EXIT
-  rm -f \
+  if ! rm -f \
     /root/hostpanel-qemu.env \
     /root/bootstrap-install.sh \
     /root/validate-production-vm.sh \
-    /root/hostpanel-qemu-post-reboot.sh || true
-  if ((status == 0)); then
-    rm -f /root/hostpanel-qemu-private-install.log || true
+    /root/hostpanel-qemu-post-reboot.sh; then
+    cleanup_status=1
   fi
-  exit "$status"
+  if ((status == 0)); then
+    if ! rm -f /root/hostpanel-qemu-private-install.log; then
+      cleanup_status=1
+    fi
+  fi
+  if ((status != 0)); then
+    exit "$status"
+  fi
+  exit "$cleanup_status"
 }
 trap cleanup_acceptance_state EXIT
 source /root/hostpanel-qemu.env
