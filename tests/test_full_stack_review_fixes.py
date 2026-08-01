@@ -113,6 +113,8 @@ wait "$child"
         self.assertIn("new MutationObserver(syncPageLinkVisibility).observe(nav", self.ui)
         self.assertIn("attributeFilter:['hidden','aria-hidden','class','style']", self.ui)
         self.assertIn("if(!page||!pageLinkAllowed(navLink))", self.ui)
+        self.assertIn("control.style.setProperty('display','none','important')", self.ui)
+        self.assertIn("control.style.removeProperty('display')", self.ui)
 
     def test_selected_locale_precedes_document_default(self) -> None:
         self.assertIn(
