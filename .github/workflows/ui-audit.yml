@@ -6,6 +6,7 @@ on:
       - .github/workflows/ui-audit.yml
       - app/static/panel-redesign.css
       - app/static/panel-redesign.js
+      - localization-overlay/**
       - tools/patch_panel_ui.py
       - bootstrap-install.sh
       - tests/test_panel_redesign.py
@@ -13,6 +14,7 @@ on:
       - tests/test_panel_patcher_section_bounds.py
       - tests/test_playwright_browser_compat.py
       - tests/test_ui_workflow_security.py
+      - tests/test_localization_bootstrap_wiring.py
       - tests/test_php_runtime_support.py
       - tests/php-runtime-compat.php
       - tests/browser/panel-redesign.spec.js
@@ -25,6 +27,7 @@ on:
       - .github/workflows/ui-audit.yml
       - app/static/panel-redesign.css
       - app/static/panel-redesign.js
+      - localization-overlay/**
       - tools/patch_panel_ui.py
       - bootstrap-install.sh
       - tests/test_panel_redesign.py
@@ -32,6 +35,7 @@ on:
       - tests/test_panel_patcher_section_bounds.py
       - tests/test_playwright_browser_compat.py
       - tests/test_ui_workflow_security.py
+      - tests/test_localization_bootstrap_wiring.py
       - tests/test_php_runtime_support.py
       - tests/php-runtime-compat.php
       - tests/browser/panel-redesign.spec.js
@@ -108,8 +112,9 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_panel_patcher_section_bounds.py' -v
           python3 -m unittest discover -s tests -p 'test_playwright_browser_compat.py' -v
           python3 -m unittest discover -s tests -p 'test_ui_workflow_security.py' -v
+          python3 -m unittest discover -s tests -p 'test_localization_bootstrap_wiring.py' -v
 
-      - name: Build reviewed UI source tree
+      - name: Build reviewed UI and localization source tree
         id: source
         run: |
           set -euo pipefail
@@ -151,6 +156,8 @@ jobs:
           install -m 0644 app/static/panel-redesign.css "$UI_ROOT/app/static/panel-redesign.css"
           install -m 0644 app/static/panel-redesign.js "$UI_ROOT/app/static/panel-redesign.js"
           python3 tools/patch_panel_ui.py "$UI_ROOT/app/templates/panel.html"
+          python3 localization-overlay/apply_localization_overlay_reviewed.py \
+            "$UI_ROOT" localization-overlay
           install -m 0644 tests/browser/panel-redesign.spec.js "$UI_ROOT/tests/browser/panel-redesign.spec.js"
           python3 - "$UI_ROOT/tests/browser/panel.spec.js" <<'PY'
           import pathlib
