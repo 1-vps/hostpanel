@@ -16,7 +16,9 @@ class UiWorkflowSecurityTests(unittest.TestCase):
     def test_signed_archive_is_verified_before_any_archive_consumer(self) -> None:
         verify = self.source.index("      - name: Verify signed source archive")
         contracts = self.source.index("      - name: Validate repository UI overlay contracts")
-        extract = self.source.index("      - name: Build reviewed UI source tree")
+        extract = self.source.index(
+            "      - name: Build reviewed UI and localization source tree"
+        )
         self.assertLess(verify, contracts)
         self.assertLess(verify, extract)
         self.assertIn("openssl pkeyutl -verify", self.source)
@@ -50,10 +52,36 @@ class UiWorkflowSecurityTests(unittest.TestCase):
             self.source.index("./node_modules/.bin/playwright install"),
         )
 
+    def test_integrated_localization_overlay_is_applied_before_browser_tests(self) -> None:
+        build = self.source.index(
+            "      - name: Build reviewed UI and localization source tree"
+        )
+        apply_overlay = self.source.index(
+            "python3 localization-overlay/apply_localization_overlay_reviewed.py",
+            build,
+        )
+        install_browser_spec = self.source.index(
+            "install -m 0644 tests/browser/panel-redesign.spec.js",
+            apply_overlay,
+        )
+        chromium = self.source.index(
+            "      - name: Run Chromium interaction and Axe audit",
+            install_browser_spec,
+        )
+        self.assertLess(build, apply_overlay)
+        self.assertLess(apply_overlay, install_browser_spec)
+        self.assertLess(install_browser_spec, chromium)
+        self.assertEqual(self.source.count("      - localization-overlay/**\n"), 2)
+        self.assertGreaterEqual(
+            self.source.count("test_localization_bootstrap_wiring.py"),
+            3,
+        )
+
     def test_security_regressions_are_executed_by_the_ui_workflow(self) -> None:
         for name in (
             "test_playwright_browser_compat.py",
             "test_ui_workflow_security.py",
+            "test_localization_bootstrap_wiring.py",
         ):
             with self.subTest(name=name):
                 self.assertGreaterEqual(self.source.count(name), 3)
