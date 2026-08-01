@@ -8,6 +8,7 @@ on:
       - tests/test_existing_catalog_corrections.py
       - tests/test_high_risk_locale_overrides.py
       - tests/test_portuguese_ui_overrides.py
+      - tests/localization_invariants.py
       - tests/test_localization_bootstrap_wiring.py
       - tests/test_localization_workflow_security.py
       - tests/test_panel_future_locales.py
@@ -21,6 +22,7 @@ on:
       - tests/test_existing_catalog_corrections.py
       - tests/test_high_risk_locale_overrides.py
       - tests/test_portuguese_ui_overrides.py
+      - tests/localization_invariants.py
       - tests/test_localization_bootstrap_wiring.py
       - tests/test_localization_workflow_security.py
       - tests/test_panel_future_locales.py
@@ -92,6 +94,7 @@ jobs:
           python3 -m py_compile \
             localization-overlay/apply_localization_overlay.py \
             localization-overlay/apply_localization_overlay_reviewed.py \
+            tests/localization_invariants.py \
             tests/test_existing_catalog_corrections.py \
             tests/test_high_risk_locale_overrides.py \
             tests/test_portuguese_ui_overrides.py \

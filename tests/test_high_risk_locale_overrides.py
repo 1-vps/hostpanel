@@ -6,6 +6,8 @@ import re
 import tarfile
 import unittest
 
+from localization_invariants import PORTUGUESE_LANGUAGE_INVARIANT_KEYS
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OVERLAY = ROOT / "localization-overlay"
@@ -167,6 +169,7 @@ class HighRiskLocaleOverrideTests(unittest.TestCase):
         self.assertEqual(canonical_sha256(visible), EXPECTED_VISIBLE_CANONICAL_SHA256)
 
     def test_every_reviewed_key_exists_and_preserves_placeholders(self):
+        equal_to_english: set[str] = set()
         for source_name, payload in (
             ("base", self.base),
             ("final", self.final),
@@ -177,11 +180,15 @@ class HighRiskLocaleOverrideTests(unittest.TestCase):
                     with self.subTest(source=source_name, locale=locale, key=key):
                         self.assertIn(key, self.english)
                         self.assertTrue(value.strip())
-                        self.assertNotEqual(value, self.english[key])
+                        if value == self.english[key]:
+                            self.assertEqual(locale, "pt")
+                            self.assertEqual(source_name, "Portuguese UI")
+                            equal_to_english.add(key)
                         self.assertEqual(
                             sorted(PLACEHOLDER.findall(value)),
                             sorted(PLACEHOLDER.findall(self.english[key])),
                         )
+        self.assertEqual(equal_to_english, PORTUGUESE_LANGUAGE_INVARIANT_KEYS)
 
     def test_reviewed_overrides_land_after_the_locked_bundle(self):
         complete = load_complete_overrides()
