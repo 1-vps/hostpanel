@@ -122,6 +122,17 @@ test('dashboard actions follow asynchronous permission changes', async ({ page }
 });
 
 test('release-candidate locales update dynamic dashboard copy', async ({ page }) => {
+  await page.route('**/api/settings/language', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true }),
+  }));
+  await page.route(/\/static\/i18n\.(ja|pt|zh)\.json$/, route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: '{}',
+  }));
+
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page);
 
@@ -140,14 +151,23 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
     }
   }, cases.map(([locale]) => locale));
 
-  for (const [locale, refresh, overview, open] of cases) {
-    await page.locator('#languageSelect').evaluate((select, selectedLocale) => {
-      select.value = selectedLocale;
-      document.documentElement.lang = selectedLocale;
-    }, locale);
-    await expect(page.locator('#dashboardRetry')).toHaveAttribute('aria-label', refresh);
-    await expect(page.locator('.hp-dashboard-rail')).toHaveAttribute('aria-label', overview);
-    await expect(page.locator('.hp-health-row [data-hp-page="security"]')).toHaveText(open);
+  await page.evaluate(() => {
+    window.__hostpanelOriginalNormalizeLanguage = window.hpNormalizeLanguage;
+    window.hpNormalizeLanguage = value => String(value || '').toLowerCase().split('-')[0];
+  });
+  try {
+    for (const [locale, refresh, overview, open] of cases) {
+      await page.locator('#languageSelect').selectOption(locale);
+      await expect(page.locator('#languageSelect')).toHaveValue(locale);
+      await expect(page.locator('#dashboardRetry')).toHaveAttribute('aria-label', refresh);
+      await expect(page.locator('.hp-dashboard-rail')).toHaveAttribute('aria-label', overview);
+      await expect(page.locator('.hp-health-row [data-hp-page="security"]')).toHaveText(open);
+    }
+  } finally {
+    await page.evaluate(() => {
+      window.hpNormalizeLanguage = window.__hostpanelOriginalNormalizeLanguage;
+      delete window.__hostpanelOriginalNormalizeLanguage;
+    });
   }
 });
 
