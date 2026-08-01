@@ -66,7 +66,12 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
         module = load_preparer_module()
         for unavailable_value in INVALID_FLAG_VALUES:
             with self.subTest(value=unavailable_value):
-                with mock.patch.object(module.os, "O_DIRECTORY", unavailable_value):
+                with mock.patch.object(
+                    module.os,
+                    "O_DIRECTORY",
+                    unavailable_value,
+                    create=True,
+                ):
                     with self.assertRaisesRegex(
                         RuntimeError,
                         "requires O_DIRECTORY; unsupported platform",
@@ -77,7 +82,12 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
         module = load_preparer_module()
         for unavailable_value in INVALID_FLAG_VALUES:
             with self.subTest(value=unavailable_value):
-                with mock.patch.object(module.os, "O_NOFOLLOW", unavailable_value):
+                with mock.patch.object(
+                    module.os,
+                    "O_NOFOLLOW",
+                    unavailable_value,
+                    create=True,
+                ):
                     with self.assertRaisesRegex(
                         RuntimeError,
                         "requires O_NOFOLLOW; unsupported platform",
@@ -92,7 +102,12 @@ class QemuEarlyEvidenceTests(unittest.TestCase):
                     evidence = pathlib.Path(temporary_directory)
                     evidence_fd = module._open_directory(str(evidence))
                     try:
-                        with mock.patch.object(module.os, "O_NOFOLLOW", unavailable_value):
+                        with mock.patch.object(
+                            module.os,
+                            "O_NOFOLLOW",
+                            unavailable_value,
+                            create=True,
+                        ):
                             with self.assertRaisesRegex(
                                 RuntimeError,
                                 "requires O_NOFOLLOW; unsupported platform",
