@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import pathlib
+import subprocess
+import tempfile
 import unittest
 
 
@@ -92,11 +94,120 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
             2,
         )
 
+    def test_remote_acceptance_state_is_removed_after_validation_or_failure(self) -> None:
+        post_reboot = self.text.index("      - name: Run post-reboot validation")
+        cleanup_start = self.text.index("cleanup_acceptance_state(){", post_reboot)
+        trap_install = self.text.index(
+            "trap cleanup_acceptance_state EXIT",
+            cleanup_start,
+        )
+        cleanup_function = self.text[cleanup_start:trap_install]
+        source_env = self.text.index(
+            "source /root/hostpanel-acceptance.env",
+            trap_install,
+        )
+        self.assertLess(cleanup_start, trap_install)
+        self.assertLess(trap_install, source_env)
+        self.assertIn("local status=$? cleanup_status=0", cleanup_function)
+        self.assertIn(
+            "if ((status == 0 && cleanup_status == 0)); then",
+            cleanup_function,
+        )
+        self.assertNotIn("|| true", cleanup_function)
+        for path in (
+            "/root/hostpanel-acceptance.env",
+            "/root/bootstrap-install.sh",
+            "/root/validate-production-vm.sh",
+            "/root/hostpanel-acceptance-remote.sh",
+            "/root/hostpanel-acceptance-private-install.log",
+        ):
+            self.assertIn(path, cleanup_function)
+
+        for original_status, rm_status, expected_status in (
+            (0, 0, 0),
+            (0, 1, 1),
+            (9, 1, 9),
+        ):
+            shell = (
+                f"rm() {{ return {rm_status}; }}\n"
+                f"{cleanup_function}\n"
+                f"bash -c 'exit {original_status}'\n"
+                "cleanup_acceptance_state\n"
+            )
+            result = subprocess.run(
+                ["bash", "-c", shell],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, expected_status, result.stderr)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            trace = pathlib.Path(temporary_directory) / "rm-calls.txt"
+            shell = (
+                "TRACE_FILE=$1\n"
+                "RM_CALLS=0\n"
+                "rm() {\n"
+                "  RM_CALLS=$((RM_CALLS + 1))\n"
+                "  printf '%s\\n' \"$*\" >> \"$TRACE_FILE\"\n"
+                "  ((RM_CALLS == 1)) && return 1\n"
+                "  return 0\n"
+                "}\n"
+                f"{cleanup_function}\n"
+                "true\n"
+                "cleanup_acceptance_state\n"
+            )
+            result = subprocess.run(
+                ["bash", "-c", shell, "bash", str(trace)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 1, result.stderr)
+            calls = trace.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(calls), 1)
+            self.assertNotIn(
+                "/root/hostpanel-acceptance-private-install.log",
+                calls[0],
+            )
+
+        collect = self.text.index("      - name: Collect root-only validation evidence")
+        evidence_copy = self.text.index(
+            'root@"$VPS_HOST":/root/hostpanel-acceptance-evidence/.',
+            collect,
+        )
+        fallback_start = self.text.index(
+            "timeout 90s sshpass -e ssh",
+            evidence_copy,
+        )
+        fallback_end = self.text.index("          find evidence", fallback_start)
+        fallback_cleanup = self.text[fallback_start:fallback_end]
+        self.assertLess(evidence_copy, fallback_start)
+        self.assertIn("-o ConnectTimeout=20", fallback_cleanup)
+        self.assertIn("-o ServerAliveInterval=15", fallback_cleanup)
+        self.assertIn("-o ServerAliveCountMax=4", fallback_cleanup)
+        for path in (
+            "/root/hostpanel-acceptance.env",
+            "/root/bootstrap-install.sh",
+            "/root/validate-production-vm.sh",
+            "/root/hostpanel-acceptance-remote.sh",
+        ):
+            self.assertIn(path, fallback_cleanup)
+        self.assertNotIn(
+            "/root/hostpanel-acceptance-private-install.log",
+            fallback_cleanup,
+        )
+        self.assertIn("|| true", fallback_cleanup)
+
     def test_generated_credentials_stay_on_the_vps(self) -> None:
         self.assertNotIn("/var/log/hostpanel-install.log", self.text)
         self.assertIn("PRIVATE_LOG=/root/hostpanel-acceptance-private-install.log", self.text)
         self.assertIn('>> "$PRIVATE_LOG" 2>&1', self.text)
-        self.assertEqual(self.text.count("hostpanel-acceptance-private-install.log"), 1)
+        self.assertGreaterEqual(
+            self.text.count("hostpanel-acceptance-private-install.log"),
+            2,
+        )
+        self.assertNotIn("evidence/hostpanel-acceptance-private-install.log", self.text)
         self.assertNotIn("install-and-pre-reboot.txt", self.text)
         self.assertNotIn("exec > >(tee", self.text)
         self.assertIn("hostpanel-acceptance-evidence", self.text)
