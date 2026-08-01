@@ -22,6 +22,17 @@ class LocalizationWorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("branches: [main]", self.pull_request_block)
         self.assertIn("localization-overlay/**", self.pull_request_block)
 
+    def test_shared_localization_policy_is_wired_everywhere(self) -> None:
+        shared_policy = "tests/localization_invariants.py"
+        self.assertEqual(self.text.count(shared_policy), 3)
+        self.assertIn(shared_policy, self.pull_request_block)
+        push_block = self.text.split("  push:\n", 1)[1].split(
+            "  workflow_dispatch:\n", 1
+        )[0]
+        self.assertIn(shared_policy, push_block)
+        compile_step = self.text.split("          python3 -m py_compile \\\n", 1)[1]
+        self.assertIn(shared_policy, compile_step)
+
     def test_signed_archive_is_verified_before_extraction(self) -> None:
         verify = self.text.index("      - name: Verify signed source archive")
         signature = self.text.index("openssl pkeyutl -verify", verify)
