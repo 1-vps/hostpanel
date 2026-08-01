@@ -34,15 +34,44 @@ class QemuTokenScopeTests(unittest.TestCase):
         checkout_action = (
             "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         )
-        self.assertEqual(self.workflow.count(checkout_action), 2)
-        self.assertEqual(self.workflow.count(reviewed_ref), 2)
-        self.assertIn(
-            '[[ "$(git rev-parse HEAD)" == "${{ github.event.pull_request.head.sha || github.sha }}" ]]',
-            self.workflow,
+        release_start = self.workflow.index("  release-state-inspection:")
+        qemu_start = self.workflow.index("\n  qemu-vm:", release_start)
+        release_section = self.workflow[release_start:qemu_start]
+        qemu_section = self.workflow[qemu_start:]
+
+        self.assertEqual(release_section.count(checkout_action), 1)
+        self.assertEqual(release_section.count(reviewed_ref), 1)
+        release_identity = release_section.index(
+            'ACTUAL_SHA="$(git rev-parse HEAD)"'
         )
+        release_mismatch = release_section.index(
+            "QEMU release-state checkout mismatch:",
+            release_identity,
+        )
+        release_execution = release_section.index(
+            "python3 tools/inspect-release-state.py",
+            release_mismatch,
+        )
+        self.assertLess(release_identity, release_mismatch)
+        self.assertLess(release_mismatch, release_execution)
+        self.assertIn('"$EXPECTED_SHA" "$ACTUAL_SHA" >&2', release_section)
+
+        self.assertEqual(qemu_section.count(checkout_action), 1)
+        self.assertEqual(qemu_section.count(reviewed_ref), 1)
+        qemu_identity = qemu_section.index('ACTUAL_SHA="$(git rev-parse HEAD)"')
+        qemu_mismatch = qemu_section.index(
+            "QEMU reviewed checkout mismatch:",
+            qemu_identity,
+        )
+        first_harness_command = qemu_section.index(
+            "bash -n tools/run-qemu-vm-acceptance.sh",
+            qemu_mismatch,
+        )
+        self.assertLess(qemu_identity, qemu_mismatch)
+        self.assertLess(qemu_mismatch, first_harness_command)
         self.assertIn(
-            '[[ "$(git rev-parse HEAD)" == "$HP_QEMU_REVIEWED_COMMIT_SHA" ]]',
-            self.workflow,
+            '"$HP_QEMU_REVIEWED_COMMIT_SHA" "$ACTUAL_SHA" >&2',
+            qemu_section,
         )
 
     def test_runner_keeps_token_out_of_qemu_and_limits_auth_file_lifetime(self):
