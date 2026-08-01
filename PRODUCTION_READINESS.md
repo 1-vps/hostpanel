@@ -86,7 +86,9 @@ sudo env \
 ```
 
 Resolve every failure before continuing. Warnings require explicit review even
-when they do not make the validator fail automatically.
+when they do not make the validator fail automatically. In particular, an
+installed OpenLiteSpeed binary or `lsws.service` must have an active and valid
+service state; it must not be accepted as an unexplained post-reboot warning.
 
 ## Verify reboot persistence
 
@@ -141,13 +143,35 @@ will not invent shell commands or execute arbitrary command strings. Review its
 `--help` output for accepted hook paths and safety gates.
 
 The manual `vps-acceptance` workflow is suitable only when its protected GitHub
-environment is configured. It must:
+environment is configured. Before storing any provider secret in that
+environment, configure all of the following controls:
+
+- allow deployments from the protected `main` branch only;
+- require at least one independent reviewer before environment secrets are
+  released to a job;
+- prevent the workflow author from approving their own protected deployment;
+- retain branch protection on `main`, including required checks and review;
+- periodically verify these settings because repository code cannot enforce or
+  inspect environment protection rules by itself.
+
+Dispatch the workflow from `main` and enter the exact integrated 40-character
+commit SHA in `reviewed_commit_sha`. The selected commit—not a historical
+hard-coded release commit—must contain every installer, UI, localization, and
+validation change intended for release.
+
+The workflow must:
 
 - require the exact destructive confirmation phrase;
 - require snapshot confirmation;
-- check out and verify the reviewed commit rather than the dispatch ref;
+- reject dispatches whose workflow ref is not `refs/heads/main`;
+- check out and verify the operator-supplied reviewed commit rather than the
+  dispatch ref;
 - use strict SSH host verification;
+- expose the root password and known-host material only to the steps that need
+  them, never through job-wide `env`;
 - clean transient runner and remote Git authentication;
+- fail when external DNS, trusted HTTPS, or required public listeners do not
+  pass, rather than recording informational probe output;
 - upload only bounded non-sensitive evidence.
 
 ## Acceptance evidence
