@@ -141,6 +141,12 @@ jobs:
         run: |
           set -euo pipefail
           install -d -m 700 artifacts/qemu-vm-acceptance
+          if [[ -z "$(find artifacts/qemu-vm-acceptance -mindepth 1 -print -quit)" ]]; then
+            umask 077
+            printf '%s\n' \
+              'No VM evidence was produced before the always-run sealing step.' \
+              > artifacts/qemu-vm-acceptance/runner-evidence-state.txt
+          fi
           python3 tools/sanitize-qemu-evidence.py artifacts/qemu-vm-acceptance
           python3 tools/seal-qemu-evidence.py \
             artifacts/qemu-vm-acceptance \
