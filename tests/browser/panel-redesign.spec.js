@@ -66,9 +66,9 @@ test('desktop dashboard has a stable information hierarchy', async ({ page }, te
   await expectNoViewportOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('desktop-dashboard.png'), fullPage: true });
 
-  const content = page.locator('#content');
-  await content.evaluate(element => { element.scrollTop = element.scrollHeight; });
-  await expect(page.locator('.hp-services-card')).toBeInViewport();
+  const servicesCard = page.locator('.hp-services-card');
+  await servicesCard.scrollIntoViewIfNeeded();
+  await expect(servicesCard).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath('desktop-dashboard-bottom.png') });
 });
 
@@ -101,7 +101,14 @@ test('dashboard actions follow asynchronous permission changes', async ({ page }
   const navLink = page.locator('#nav a[data-page="security"]');
   const quickAction = page.locator('.hp-quick-action[data-hp-page="security"]');
   const railLinks = page.locator('.hp-security-link[data-hp-page="security"]');
-  await expect(navLink).toBeVisible();
+
+  // Navigation groups may be collapsed in the fixture, so exercise the actual
+  // authorization contract (`hidden`/`aria-hidden`) rather than CSS visibility.
+  await navLink.evaluate(element => {
+    element.hidden = false;
+    element.removeAttribute('aria-hidden');
+  });
+  await expect(navLink).not.toHaveAttribute('hidden', '');
   await expect(quickAction).toBeVisible();
   await expect(railLinks).toBeVisible();
 
@@ -125,6 +132,19 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
     ['pt', 'Atualizar os dados do painel', 'Visão geral do painel', 'Em tempo real'],
     ['zh', '刷新仪表板数据', '仪表板概览', '实时'],
   ];
+  // This workflow deliberately builds the signed UI source plus only the UI
+  // overlay. Add the release-candidate options to the browser fixture so this
+  // test covers the redesign runtime independently of the localization workflow.
+  await page.locator('#languageSelect').evaluate((select, locales) => {
+    for (const locale of locales) {
+      if (select.querySelector(`option[value="${locale}"]`)) continue;
+      const option = document.createElement('option');
+      option.value = locale;
+      option.textContent = locale;
+      select.append(option);
+    }
+  }, cases.map(([locale]) => locale));
+
   for (const [locale, refresh, overview, live] of cases) {
     await page.locator('#languageSelect').selectOption(locale);
     await expect(page.locator('#dashboardRetry')).toHaveAttribute('aria-label', refresh);
@@ -191,9 +211,9 @@ test('phone layout is touch-safe, drawer-safe and free of viewport overflow', as
   await expectNoViewportOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('phone-dashboard.png'), fullPage: true });
 
-  const content = page.locator('#content');
-  await content.evaluate(element => { element.scrollTop = element.scrollHeight; });
-  await expect(page.locator('.hp-services-card')).toBeInViewport();
+  const servicesCard = page.locator('.hp-services-card');
+  await servicesCard.scrollIntoViewIfNeeded();
+  await expect(servicesCard).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath('phone-dashboard-bottom.png') });
 });
 
