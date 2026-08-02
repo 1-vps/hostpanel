@@ -23,14 +23,17 @@ class QemuTokenScopeTests(unittest.TestCase):
             if "HP_QEMU_REPO_TOKEN:" in line
         ]
         self.assertEqual(token_lines, [token_line])
-        boot_step = self.workflow.index("  - name: Boot, install, reboot, and validate")
+        boot_step = self.workflow.index(
+            "  - name: Boot, install candidate, reboot, and validate"
+        )
         token_reference = self.workflow.index(token_line)
-        harness_call = self.workflow.index("      bash tools/run-qemu-vm-acceptance.sh")
+        harness_call = self.workflow.index(
+            "      bash tools/run-qemu-source-candidate.sh"
+        )
         self.assertLess(boot_step, token_reference)
         self.assertLess(token_reference, harness_call)
 
-    def test_both_jobs_checkout_and_verify_the_workflow_commit(self):
-        reviewed_ref = "          ref: ${{ github.sha }}"
+    def test_both_jobs_checkout_and_verify_the_reviewed_head_commit(self):
         checkout_action = (
             "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
         )
@@ -40,8 +43,12 @@ class QemuTokenScopeTests(unittest.TestCase):
         qemu_section = self.workflow[qemu_start:]
 
         self.assertEqual(release_section.count(checkout_action), 1)
-        self.assertEqual(release_section.count(reviewed_ref), 1)
-        self.assertIn('EXPECTED_SHA="${{ github.sha }}"', release_section)
+        self.assertIn(
+            "REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}",
+            release_section,
+        )
+        self.assertIn("          ref: ${{ env.REVIEWED_COMMIT }}", release_section)
+        self.assertIn('[[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]', release_section)
         release_identity = release_section.index(
             'ACTUAL_SHA="$(git rev-parse HEAD)"'
         )
@@ -55,12 +62,15 @@ class QemuTokenScopeTests(unittest.TestCase):
         )
         self.assertLess(release_identity, release_mismatch)
         self.assertLess(release_mismatch, release_execution)
-        self.assertIn('"$EXPECTED_SHA" "$ACTUAL_SHA" >&2', release_section)
+        self.assertIn('"$REVIEWED_COMMIT" "$ACTUAL_SHA" >&2', release_section)
 
         self.assertEqual(qemu_section.count(checkout_action), 1)
-        self.assertEqual(qemu_section.count(reviewed_ref), 1)
         self.assertIn(
-            "HP_QEMU_REVIEWED_COMMIT_SHA: ${{ github.sha }}",
+            "HP_QEMU_REVIEWED_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}",
+            qemu_section,
+        )
+        self.assertIn(
+            "          ref: ${{ env.HP_QEMU_REVIEWED_COMMIT_SHA }}",
             qemu_section,
         )
         qemu_identity = qemu_section.index('ACTUAL_SHA="$(git rev-parse HEAD)"')
@@ -78,7 +88,7 @@ class QemuTokenScopeTests(unittest.TestCase):
             '"$HP_QEMU_REVIEWED_COMMIT_SHA" "$ACTUAL_SHA" >&2',
             qemu_section,
         )
-        self.assertNotIn("github.event.pull_request.head.sha", self.workflow)
+        self.assertIn("github.event.pull_request.head.sha", self.workflow)
 
     def test_runner_keeps_token_out_of_qemu_and_limits_auth_file_lifetime(self):
         unset_exported = self.harness.index("unset HP_QEMU_REPO_TOKEN")
