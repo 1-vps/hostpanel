@@ -91,6 +91,7 @@ jobs:
               "baseline",
               "built_at",
               "commit",
+              "late_overlay_paths",
               "overlay_paths",
               "product",
               "release_id",
