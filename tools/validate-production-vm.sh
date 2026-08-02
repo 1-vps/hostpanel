@@ -54,7 +54,7 @@ STATE_DIR="${HP_VALIDATION_STATE_DIR:-/var/lib/hostpanel-validation}"
 REPORT_DIR="${HP_VALIDATION_REPORT_DIR:-$STATE_DIR/reports}"
 REBOOT_STATE="$STATE_DIR/pre-reboot.boot-id"
 "$PYTHON3" -I "$VALIDATION_IO" ensure-directory "$STATE_DIR" 700
-"$PYTHON3" -I "$VALIDATION_IO" ensure-directory "$REPORT_DIR" 755
+"$PYTHON3" -I "$VALIDATION_IO" ensure-directory "$REPORT_DIR" 700
 
 if [[ "${HP_VALIDATION_REPORT_ACTIVE:-no}" != yes ]]; then
   exec "$PYTHON3" -I "$VALIDATION_IO" run-with-report "$REPORT_DIR" -- \
