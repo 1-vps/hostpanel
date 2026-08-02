@@ -77,6 +77,34 @@ def remove_python_bytecode(source_root: pathlib.Path) -> None:
             _unlink_bytecode(path)
 
 
+def normalize_source_modes(source_root: pathlib.Path) -> None:
+    """Make the tree mode-identical before manifesting and archiving.
+
+    Generator subprocesses inherit the caller's umask. Without this pass, the
+    same reviewed source can produce a 0600 manifest under a private guest
+    umask while the canonical tar writer correctly emits 0644, causing a false
+    attestation mismatch. Source releases intentionally support only 0755
+    directories and 0644/0755 regular files.
+    """
+
+    entries = sorted(
+        source_root.rglob("*"),
+        key=lambda path: path.relative_to(source_root).as_posix(),
+    )
+    for path in entries:
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            raise RuntimeError(f"source tree contains a symbolic link: {path}")
+        if stat.S_ISDIR(metadata.st_mode):
+            os.chmod(path, 0o755)
+        elif stat.S_ISREG(metadata.st_mode):
+            if metadata.st_nlink != 1:
+                raise RuntimeError(f"source file has multiple hard links: {path}")
+            os.chmod(path, 0o755 if metadata.st_mode & stat.S_IXUSR else 0o644)
+        else:
+            raise RuntimeError(f"source tree contains an unsupported entry: {path}")
+
+
 def install_phase_isolation(
     builder: ModuleType,
     attestations: ModuleType | None = None,
@@ -122,6 +150,7 @@ def install_phase_isolation(
         timestamp: int,
     ) -> None:
         remove_python_bytecode(source_root)
+        normalize_source_modes(source_root)
         attestations.generate_attestations(
             source_root,
             source_version=identity.source_version,
