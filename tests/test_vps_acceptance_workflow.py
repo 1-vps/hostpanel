@@ -24,11 +24,11 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
         self.assertIn("environment: vps-acceptance", self.text)
         self.assertIn("ERASE-AND-INSTALL", self.text)
         self.assertIn('[[ "${{ github.ref }}" == refs/heads/main ]]', self.text)
-        self.assertIn("VPS_PROVIDER_SNAPSHOT_CONFIRMED", self.text)
+        self.assertNotIn("VPS_PROVIDER_SNAPSHOT_CONFIRMED", self.text)
 
     def test_reviewed_commit_is_required_and_checkout_pinned_to_it(self) -> None:
         self.assertIn("reviewed_commit_sha:", self.text)
-        self.assertIn("required: true", self.section("reviewed_commit_sha:", "reinstall:"))
+        self.assertIn("required: true", self.section("reviewed_commit_sha:", "provider_instance_id:"))
         self.assertIn(
             "REVIEWED_COMMIT_SHA: ${{ inputs.reviewed_commit_sha }}",
             self.text,
@@ -63,18 +63,58 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", self.text)
         self.assertNotIn("contents: write", self.text)
 
-    def test_exact_commit_is_recorded_in_evidence(self) -> None:
+    def test_snapshot_gate_is_explicit_fresh_and_instance_bound(self) -> None:
+        for input_name in (
+            "provider_instance_id:",
+            "snapshot_id:",
+            "snapshot_created_at_utc:",
+            "snapshot_confirmation:",
+        ):
+            self.assertIn(input_name, self.text)
+        self.assertIn("VPS_PROVIDER_INSTANCE_ID: ${{ secrets.VPS_PROVIDER_INSTANCE_ID }}", self.text)
+        self.assertIn(
+            '[[ "$PROVIDER_INSTANCE_ID" == "$VPS_PROVIDER_INSTANCE_ID" ]]',
+            self.text,
+        )
+        self.assertIn("%Y-%m-%dT%H:%M:%SZ", self.text)
+        self.assertIn("dt.timedelta(hours=24)", self.text)
+        self.assertIn("dt.timedelta(minutes=5)", self.text)
+        self.assertIn(
+            "SNAPSHOT-VERIFIED:${PROVIDER_INSTANCE_ID}:${SNAPSHOT_ID}:${REVIEWED_COMMIT_SHA}:${SNAPSHOT_CREATED_AT_UTC}",
+            self.text,
+        )
+        self.assertNotIn("SNAPSHOT_CONFIRMED=yes", self.text)
+
+    def test_exact_commit_and_snapshot_are_recorded_in_evidence(self) -> None:
         evidence_setup = self.section(
-            "      - name: Configure strict SSH host verification",
+            "      - name: Configure strict SSH host verification and acceptance context",
             "      - name: Inventory the disposable VM",
         )
-        self.assertIn("evidence/acceptance-context.txt", evidence_setup)
-        self.assertIn("reviewed_commit_sha=%s", evidence_setup)
-        self.assertIn("current_main_sha=%s", evidence_setup)
-        self.assertIn("workflow_dispatch_sha=%s", evidence_setup)
-        self.assertIn("workflow_run_id=%s", evidence_setup)
-        self.assertIn("workflow_run_attempt=%s", evidence_setup)
-        self.assertIn("chmod 600 evidence/acceptance-context.txt", evidence_setup)
+        self.assertIn("$EVIDENCE_ROOT/acceptance-context.txt", evidence_setup)
+        for field in (
+            "reviewed_commit_sha=%s",
+            "current_main_sha=%s",
+            "workflow_dispatch_sha=%s",
+            "workflow_run_id=%s",
+            "workflow_run_attempt=%s",
+            "provider_instance_id=%s",
+            "snapshot_id=%s",
+            "snapshot_created_at_utc=%s",
+        ):
+            self.assertIn(field, evidence_setup)
+        self.assertIn("chmod 600", evidence_setup)
+
+    def test_incomplete_manual_release_checks_are_explicit(self) -> None:
+        for requirement in (
+            "authoritative_dns_delegation=NOT_AUTOMATED",
+            "inbound_outbound_mail_and_authentication=NOT_AUTOMATED",
+            "disposable_web_php_database_flow=NOT_AUTOMATED",
+            "backup_restore_round_trip=NOT_AUTOMATED",
+            "customer_filesystem_quota_enforcement=NOT_AUTOMATED",
+            "provider_snapshot_rollback=NOT_AUTOMATED",
+            "final_release_readiness=INCOMPLETE_UNTIL_MANUAL_EVIDENCE_ATTACHED",
+        ):
+            self.assertIn(requirement, self.text)
 
     def test_job_environment_contains_no_secrets(self) -> None:
         job_env = self.section("    env:\n", "\n\n    steps:")
@@ -152,6 +192,36 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
         self.assertIn('nc -z -w 8 "$VPS_HOST" "$port"', probes)
         self.assertNotIn("CLOSED_OR_FILTERED", probes)
 
+    def test_remote_evidence_collection_and_cleanup_fail_closed(self) -> None:
+        collection = self.section(
+            "      - name: Collect root-only validation evidence",
+            "      - name: Sanitize and seal provider evidence before upload",
+        )
+        self.assertIn("collection_failed=false", collection)
+        self.assertIn("cleanup_failed=false", collection)
+        self.assertIn("remote_evidence_collection=%s", collection)
+        self.assertIn("remote_transient_cleanup=%s", collection)
+        self.assertIn("Remote provider evidence collection failed", collection)
+        self.assertIn("Remote transient-state cleanup failed", collection)
+        self.assertNotIn("evidence/. || true", collection)
+        self.assertNotIn("hostpanel-acceptance-remote.sh' \\\n            || true", collection)
+
+    def test_provider_evidence_is_sanitized_sealed_and_only_then_uploaded(self) -> None:
+        collect = self.text.index("      - name: Collect root-only validation evidence")
+        seal = self.text.index("      - name: Sanitize and seal provider evidence before upload")
+        upload = self.text.index("      - name: Upload sealed acceptance evidence")
+        self.assertLess(collect, seal)
+        self.assertLess(seal, upload)
+        self.assertIn("tools/prepare-provider-evidence.py", self.text)
+        self.assertIn("tools/sanitize-provider-evidence.py", self.text)
+        self.assertIn("tools/seal-provider-evidence.py", self.text)
+        self.assertIn("steps.provider_evidence.outputs.ready == 'true'", self.text)
+        self.assertIn("provider-artifacts/hostpanel-vps-acceptance.tar", self.text)
+        self.assertIn("provider-artifacts/hostpanel-vps-acceptance.tar.sha256", self.text)
+        upload_section = self.text[upload:]
+        self.assertNotIn("path: evidence", upload_section)
+        self.assertNotIn("path: provider-artifacts/evidence", upload_section)
+
     def test_generated_credentials_stay_on_the_vps(self) -> None:
         self.assertNotIn("/var/log/hostpanel-install.log", self.text)
         self.assertIn(
@@ -159,7 +229,10 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
             self.text,
         )
         self.assertIn('>> "$PRIVATE_LOG" 2>&1', self.text)
-        self.assertNotIn("evidence/hostpanel-acceptance-private-install.log", self.text)
+        self.assertNotIn("hostpanel-acceptance-private-install.log", self.section(
+            "      - name: Sanitize and seal provider evidence before upload",
+            "      - name: Upload sealed acceptance evidence",
+        ))
 
 
 if __name__ == "__main__":
