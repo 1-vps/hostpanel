@@ -1,0 +1,49 @@
+name: Fix issue 116 regression assertion
+
+on:
+  pull_request:
+    types: [synchronize]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.repository == '1-vps/hostpanel' && github.event.pull_request.head.ref == 'agent/issue116-bootstrap-trust'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: agent/issue116-bootstrap-trust
+          fetch-depth: 0
+
+      - name: Narrow the unsafe discovery regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('tests/test_post_install_health.py')
+          text = path.read_text(encoding='utf-8')
+          old = '        self.assertNotIn("/tmp/hostpanel-bootstrap", self.generated)\n'
+          new = '''        self.assertNotIn(
+              "find /tmp -path '/tmp/hostpanel-bootstrap.", self.generated
+          )
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one broad assertion, found {text.count(old)}')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+          python3 -m unittest -v \
+            tests.test_post_install_health.PostInstallHealthTests.test_cli_patcher_is_source_root_bound_and_blob_verified
+          rm -f .github/workflows/fix-issue116-test.yml
+          find . -type d -name __pycache__ -prune -exec rm -rf {} +
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tests/test_post_install_health.py .github/workflows/fix-issue116-test.yml
+          git diff --cached --check
+          git commit -m 'Narrow bootstrap discovery regression assertion'
+          git push origin HEAD:agent/issue116-bootstrap-trust
