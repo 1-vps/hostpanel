@@ -8,13 +8,23 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 BOOTSTRAP = (ROOT / "bootstrap-install.sh").read_text(encoding="utf-8")
 INSTALLER = (ROOT / "install.sh").read_text(encoding="utf-8")
 HARDENER = (ROOT / "tools/harden_install.py").read_text(encoding="utf-8")
+MATRIX = (ROOT / "test-matrix.sh").read_text(encoding="utf-8")
+INSTALLER_WORKFLOW = (
+    ROOT / ".github/workflows/installer-hardening.yml"
+).read_text(encoding="utf-8")
 
 
 class Issue116BootstrapSecurityTests(unittest.TestCase):
     def test_privileged_path_and_loader_environment_are_sanitized_first(self) -> None:
         for text in (BOOTSTRAP, INSTALLER):
             self.assertLess(text.index("PATH=/usr/local/sbin"), text.index("command -v"))
-            for name in ("PYTHONPATH", "PYTHONHOME", "BASH_ENV", "LD_PRELOAD", "LD_LIBRARY_PATH"):
+            for name in (
+                "PYTHONPATH",
+                "PYTHONHOME",
+                "BASH_ENV",
+                "LD_PRELOAD",
+                "LD_LIBRARY_PATH",
+            ):
                 self.assertIn(name, text)
 
     def test_bootstrap_accepts_only_the_canonical_repository(self) -> None:
@@ -56,6 +66,16 @@ class Issue116BootstrapSecurityTests(unittest.TestCase):
         self.assertNotIn("hostpanel-bootstrap.*", HARDENER)
         self.assertIn("trusted_source_file", HARDENER)
         self.assertIn('os.environ.pop("HP_HARDENER_SOURCE_ROOT", "")', HARDENER)
+
+    def test_ci_promotes_inputs_to_owner_bound_source_roots(self) -> None:
+        self.assertIn('HP_HARDENER_SOURCE_ROOT="$SCRIPT_DIR"', MATRIX)
+        self.assertIn('chown -R 0:0 /root/hostpanel', MATRIX)
+        self.assertIn('HP_HARDENER_SOURCE_ROOT=/root/hostpanel', MATRIX)
+        self.assertIn(
+            "install -d -m 0700 /root/hostpanel-source", INSTALLER_WORKFLOW
+        )
+        self.assertIn("chown -R 0:0 /root/hostpanel-source", INSTALLER_WORKFLOW)
+        self.assertIn("cd /root/hostpanel-source", INSTALLER_WORKFLOW)
 
     def test_noncanonical_repository_fails_before_fetch(self) -> None:
         result = subprocess.run(
