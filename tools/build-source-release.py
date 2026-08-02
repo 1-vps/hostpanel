@@ -380,7 +380,11 @@ def copy_overlay(overlay_root: pathlib.Path, source_root: pathlib.Path) -> None:
             raise ReleaseBuildError(f"overlay contains an unsupported entry: {relative}")
 
 
-def run_post_processing(source_root: pathlib.Path, identity: ReleaseIdentity) -> None:
+def run_post_processing(
+    source_root: pathlib.Path,
+    repository_root: pathlib.Path,
+    identity: ReleaseIdentity,
+) -> None:
     version_path = source_root / "VERSION"
     version_path.write_text(identity.source_version + "\n", encoding="utf-8")
     os.chmod(version_path, 0o644)
@@ -389,7 +393,7 @@ def run_post_processing(source_root: pathlib.Path, identity: ReleaseIdentity) ->
     panel_template = source_root / "app" / "templates" / "panel.html"
     run(["python3", str(panel_patcher), str(panel_template)])
 
-    localization_root = source_root / "localization-overlay"
+    localization_root = repository_root / "localization-overlay"
     run(
         [
             "python3",
@@ -560,7 +564,7 @@ def build(root: pathlib.Path, commit: str, output_dir: pathlib.Path, policy_path
         overlay_root = temporary / "overlay"
         export_overlay(root, commit, policy, overlay_root)
         copy_overlay(overlay_root, source_root)
-        run_post_processing(source_root, identity)
+        run_post_processing(source_root, root, identity)
         validate_required_paths(source_root, policy)
 
         output_dir.mkdir(parents=True, exist_ok=True)
