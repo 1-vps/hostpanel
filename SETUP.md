@@ -1,22 +1,28 @@
 # HostPanel installation
 
-HostPanel provides two installation paths:
+HostPanel provides three installation paths:
 
-- `auto-install.sh` for cloud-init, Terraform, image builders, and unattended VPS provisioning;
-- `quick-install.sh` for an interactive DirectAdmin-style installation.
+- `install-one-line.sh` is the recommended minimal, unattended entry point;
+- `auto-install.sh` is the full cloud-init, Terraform, and image-builder engine;
+- `quick-install.sh` is the interactive DirectAdmin-style installer.
 
-Both paths install version `3.4.1` from reviewed, immutable Git objects. The
-fully automatic launcher is pinned to commit:
+All paths install version `3.4.1` from reviewed, immutable Git objects.
+
+The recommended one-line entry file is pinned to commit:
 
 ```text
-a88be462efa38e479070b89e0a4c90b4b7b202da
+d0689bc880a8c43af637622c52b931de87b91d61
 ```
 
 Its verified Git blob is:
 
 ```text
-4fa5e025c1516ebaaff260177b572f3253a61aa1
+fd3806cd58118e30b0ef2a680bfacdd50f191421
 ```
+
+The underlying automatic engine remains pinned to commit
+`a88be462efa38e479070b89e0a4c90b4b7b202da` and Git blob
+`4fa5e025c1516ebaaff260177b572f3253a61aa1`.
 
 ## Requirements
 
@@ -30,49 +36,65 @@ Its verified Git blob is:
 
 Create a provider snapshot and retain console access before installation.
 
-## One-line fully automatic installation
+## Recommended one-line Bash file
 
-Export the short-lived token in the current shell. The value is piped to `sudo`;
-it is not included in the command line, URL, or root process environment.
+Obtain the exact `install-one-line.sh` bytes from immutable commit
+`d0689bc880a8c43af637622c52b931de87b91d61` through a normal authenticated
+checkout or reviewed file transfer. Do not execute a moving `main` branch as
+root.
+
+Export the short-lived token in the current user shell:
 
 ```bash
 export HOSTPANEL_GITHUB_TOKEN='github_pat_REPLACE_ME'
 ```
 
-Set your domain in the following single command. It derives the panel hostname
-as `panel.example.com`, carries the current SSH source across `sudo`, installs
-missing `curl`/`git` prerequisites, downloads the immutable launcher, verifies
-its Git blob, passes the token on inherited descriptor 3, and starts the complete
-non-interactive installation:
+Set the domain and run the complete unattended installation with one command:
 
 ```bash
-printf '%s' "$HOSTPANEL_GITHUB_TOKEN" | sudo env SSH_CONNECTION="${SSH_CONNECTION:-}" HP_PANEL_DOMAIN=example.com bash -c 'set -Eeuo pipefail; umask 077; T=$(cat); [[ "$T" =~ ^[A-Za-z0-9_]{20,512}$ ]] || { echo "Invalid GitHub token input" >&2; exit 1; }; if ! command -v curl >/dev/null || ! command -v git >/dev/null; then if command -v apt-get >/dev/null; then export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y -qq ca-certificates curl git; elif command -v dnf >/dev/null; then dnf -y install ca-certificates curl git; else echo "Unsupported package manager" >&2; exit 1; fi; fi; D=$(mktemp -d /tmp/hostpanel-one-line.XXXXXX); trap "rm -rf -- \"$D\"" EXIT; { printf "header = \"Accept: application/vnd.github.raw+json\"\n"; printf "header = \"Authorization: Bearer %s\"\n" "$T"; printf "header = \"X-GitHub-Api-Version: 2022-11-28\"\n"; } >"$D/curl"; chmod 0600 "$D/curl"; curl --proto "=https" --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 180 --config "$D/curl" "https://api.github.com/repos/1-vps/hostpanel/contents/auto-install.sh?ref=a88be462efa38e479070b89e0a4c90b4b7b202da" -o "$D/install"; rm -f "$D/curl"; [[ "$(git hash-object "$D/install")" == 4fa5e025c1516ebaaff260177b572f3253a61aa1 ]] || { echo "Automatic launcher verification failed" >&2; exit 1; }; chmod 0700 "$D/install"; exec 3<<<"$T"; T=; unset T; HP_GITHUB_TOKEN_FD=3 bash "$D/install"'
+printf '%s' "$HOSTPANEL_GITHUB_TOKEN" | sudo env SSH_CONNECTION="${SSH_CONNECTION:-}" bash install-one-line.sh example.com
+```
+
+Then clear the user-shell variable:
+
+```bash
 unset HOSTPANEL_GITHUB_TOKEN
 ```
 
-When the machine already has a valid FQDN from `hostname -f`, remove
-`HP_PANEL_DOMAIN=example.com`. To avoid SSH-source detection, add an explicit
-administrative network before `bash -c`:
+The file converts `example.com` to `panel.example.com`, carries the active SSH
+source across `sudo`, installs missing outer prerequisites, downloads the
+immutable `auto-install.sh`, verifies its Git blob before execution, and passes
+the token on inherited descriptor 3. It never prompts and does not create a
+persistent token file.
 
-```text
-HP_PANEL_ADMIN_CIDR=192.0.2.10/32
+When the machine already has a valid FQDN from `hostname -f`, omit the domain:
+
+```bash
+printf '%s' "$HOSTPANEL_GITHUB_TOKEN" | sudo env SSH_CONNECTION="${SSH_CONNECTION:-}" bash install-one-line.sh
 ```
 
-The command performs no prompts. It automatically:
+To avoid SSH-source detection, provide an explicit administrative network:
 
-1. installs missing bootstrap prerequisites;
-2. validates or detects the panel hostname and administrative CIDR;
-3. keeps the token out of URLs and normal process arguments;
-4. verifies the immutable automatic launcher, interactive launcher, bootstrap, and production validator;
-5. runs the complete preflight before mutation;
-6. installs all roles with Postfix by default;
-7. verifies version `3.4.1`, runs the production validator, and runs `hostpanel-doctor`;
-8. writes machine-readable status to `/var/lib/hostpanel/auto-install-status.json`.
+```bash
+printf '%s' "$HOSTPANEL_GITHUB_TOKEN" | sudo env HP_PANEL_ADMIN_CIDR=192.0.2.10/32 bash install-one-line.sh example.com
+```
+
+The command automatically:
+
+1. validates the stdin token and keeps it out of URLs and normal arguments;
+2. installs missing `curl`, `git`, and CA prerequisites;
+3. downloads only the immutable automatic installer commit;
+4. verifies the downloaded launcher against its Git blob;
+5. validates or detects the panel hostname and administrative CIDR;
+6. runs the complete preflight before mutation;
+7. installs all roles with Postfix by default;
+8. verifies version `3.4.1`, runs the production validator and `hostpanel-doctor`;
+9. writes machine-readable status to `/var/lib/hostpanel/auto-install-status.json`.
 
 ## Automatic detection
 
 When `HP_PANEL_HOST` is omitted, the installer accepts a valid existing FQDN
-from `hostname -f`. Alternatively set:
+from `hostname -f`. Alternatively pass a domain to `install-one-line.sh` or set:
 
 ```text
 HP_PANEL_DOMAIN=example.com
@@ -81,15 +103,15 @@ HP_PANEL_DOMAIN=example.com
 which resolves to `panel.example.com`.
 
 When `HP_PANEL_ADMIN_CIDR` is omitted, the active SSH source is converted to a
-single-address `/32` or `/128`. The one-line command explicitly carries
-`SSH_CONNECTION` across `sudo`. Cloud-init normally has no SSH source, so set the
-CIDR explicitly there. Missing or unsafe values fail closed; the panel is never
-made public automatically.
+single-address `/32` or `/128`. The recommended one-line command explicitly
+carries `SSH_CONNECTION` across `sudo`. Cloud-init normally has no SSH source,
+so set the CIDR explicitly there. Missing or unsafe values fail closed; the
+panel is never made public automatically.
 
 ## Provisioning secrets
 
 For cloud-init, systemd credentials, Terraform provisioners, or secret-manager
-integrations, the installer also accepts:
+integrations, invoke `auto-install.sh` directly. It accepts:
 
 ```text
 HP_GITHUB_TOKEN_FILE=/path/to/root-only-token
@@ -109,6 +131,9 @@ Token files must be root-owned, single-linked regular files with mode `0400` or
 changes while being read.
 
 ## Configuration
+
+The one-line entry file forwards these environment variables to the automatic
+engine:
 
 ```text
 HP_PANEL_HOST=panel.example.com
@@ -155,9 +180,9 @@ cloud-init metadata.
 
 ## Interactive installation
 
-For a guided installation, use the immutable `quick-install.sh` command already
-documented in the repository. It prompts for the token, hostname, CIDR, and
-confirmation while retaining the same preflight and Git-object verification.
+For a guided installation, use `quick-install.sh`. It prompts for the token,
+hostname, CIDR, and confirmation while retaining the same preflight and
+Git-object verification.
 
 ## Verify
 
