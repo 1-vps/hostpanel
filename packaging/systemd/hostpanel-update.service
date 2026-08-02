@@ -1,0 +1,25 @@
+[Unit]
+Description=Check and apply signed HostPanel GitHub release updates
+Documentation=https://github.com/1-vps/hostpanel
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/hostpanel/tools/hostpanel-update
+ConditionPathExists=/etc/hostpanel/update.pub
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=-/etc/hostpanel/update-agent.conf
+ExecStart=/opt/hostpanel/tools/hostpanel-update --apply --auto
+UMask=0077
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+TimeoutStartSec=3h
