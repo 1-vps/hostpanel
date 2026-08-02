@@ -46,11 +46,6 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
         self.assertIn("hostpanel-v*-source.tar.gz", self.workflow)
         self.assertIn("hostpanel-v*-source.tar.gz.sig", self.workflow)
         self.assertIn("SHA256SUMS", self.workflow)
-        self.assertIn("permissions:\n  contents: write", self.workflow)
-        self.assertIn(
-            'gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG"',
-            self.workflow,
-        )
         self.assertIn("tools/build-update-release.py", self.workflow)
         self.assertIn("HOSTPANEL_RELEASE_PRIVATE_KEY", self.workflow)
         self.assertIn("openssl pkeyutl -sign", self.workflow)
@@ -60,6 +55,30 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
         )
         self.assertIn("gh release create", self.workflow)
         self.assertNotIn("BEGIN PRIVATE KEY", self.workflow)
+
+    def test_release_workflow_is_main_only_and_least_privilege(self) -> None:
+        self.assertNotIn("workflow_dispatch:", self.workflow)
+        self.assertIn("permissions:\n  contents: read", self.workflow)
+        self.assertIn("  verify:\n", self.workflow)
+        self.assertIn("  publish:\n", self.workflow)
+        self.assertIn("environment: hostpanel-release", self.workflow)
+        self.assertIn("permissions:\n      contents: write", self.workflow)
+        self.assertIn('[[ "$GITHUB_REF" == refs/heads/main ]]', self.workflow)
+        self.assertIn('[[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]', self.workflow)
+        self.assertIn("persist-credentials: false", self.workflow)
+        self.assertLess(
+            self.workflow.index("  publish:\n"),
+            self.workflow.index("HOSTPANEL_RELEASE_PRIVATE_KEY"),
+        )
+
+    def test_release_workflow_enforces_external_gates_and_safe_resume(self) -> None:
+        self.assertIn("for issue in 7 14; do", self.workflow)
+        self.assertIn("Release gate issue #$issue is still $state", self.workflow)
+        self.assertIn("Tag $TAG exists without a release; publication will resume", self.workflow)
+        self.assertIn('tag_type="$(gh api', self.workflow)
+        self.assertIn('tag_sha="$(gh api', self.workflow)
+        self.assertIn('[[ "$tag_type" == commit && "$tag_sha" == "$GITHUB_SHA" ]]', self.workflow)
+        self.assertIn("Existing tag $TAG does not point to the tested commit", self.workflow)
 
     def test_update_agent_is_installed_and_polled_frequently(self) -> None:
         self.assertIn("/opt/hostpanel/tools/hostpanel-update", self.install_agent)
@@ -79,12 +98,11 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
         self.assertIn("signed GitHub update agent installation", self.hardener)
         self.assertIn("EXPECTED_UPDATE_AGENT_BLOBS", self.hardener)
         self.assertIn(
-            "hostpanel-bootstrap.*/repository/tools/install-update-agent.sh",
+            'bash "$UPDATE_AGENT_ROOT/tools/install-update-agent.sh" >>"$LOG" 2>&1',
             self.hardener,
         )
-        self.assertIn("git hash-object --no-filters", self.hardener)
         self.assertIn(
-            'bash "$UPDATE_AGENT_ROOT/tools/install-update-agent.sh" >>"$LOG" 2>&1',
+            "Could not resolve exactly one reviewed GitHub update agent",
             self.hardener,
         )
         self.assertIn('for backup in "${TREE_ROLLBACK_BACKUPS[@]}"; do', self.hardener)
