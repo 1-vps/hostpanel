@@ -77,3 +77,10 @@ The updater verifies, in order:
 Status is written atomically to `/var/lib/hostpanel/update-status.json`.
 The installer snapshot and rollback mechanisms remain responsible for restoring
 the previous installation if an update fails.
+
+## Release safety gate
+
+Do not publish a new signed source version until all release blockers are closed,
+including provider-backed acceptance and required native-language sign-off.
+The workflow automates packaging and publication; it does not replace those
+human release approvals.
