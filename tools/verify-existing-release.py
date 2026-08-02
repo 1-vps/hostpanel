@@ -149,11 +149,12 @@ def verify(
         "built_at",
     }:
         raise SystemExit("existing release build metadata has an unexpected shape")
+    if metadata.get("release_id") != expected_release_id:
+        raise SystemExit("existing release build metadata release_id does not match")
     metadata_checks = {
         "schema": metadata.get("schema") == 1,
         "product": metadata.get("product") == "hostpanel",
         "version": metadata.get("version") == expected_version,
-        "release_id": metadata.get("release_id") == expected_release_id,
         "tag": metadata.get("tag") == f"v{expected_version}",
         "commit": metadata.get("commit") == expected_commit,
         "archive": metadata.get("archive") == archive_path.name,
