@@ -56,7 +56,7 @@ class QemuSourceCandidateTests(unittest.TestCase):
         self.assertIn("bash -n tools/bootstrap-source-candidate.sh", self.workflow)
         self.assertIn("bash -n tools/run-qemu-source-candidate.sh", self.workflow)
         self.assertIn("bash tools/run-qemu-source-candidate.sh", self.workflow)
-        self.assertNotIn("HP_QEMU_EXPECTED_VERSION: 3.4.0", self.workflow)
+        self.assertIn("github.event.pull_request.head.sha || github.sha", self.workflow)
 
     def test_source_version_is_patch_release(self) -> None:
         self.assertEqual(SOURCE_VERSION, "3.4.1")
