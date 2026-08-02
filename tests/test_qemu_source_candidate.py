@@ -39,6 +39,12 @@ class QemuSourceCandidateTests(unittest.TestCase):
         self.assertIn("duplicate candidate archive path", self.bootstrap)
         self.assertIn("Extracted candidate VERSION does not match SOURCE_VERSION", self.bootstrap)
 
+    def test_candidate_bootstrap_forwards_installer_arguments_exactly(self) -> None:
+        invocation = 'bash "$SOURCE_ROOT/install.sh" "$@"'
+        self.assertIn(invocation, self.bootstrap)
+        self.assertEqual(self.bootstrap.count(invocation), 1)
+        self.assertNotIn('bash "$SOURCE_ROOT/install.sh"\n', self.bootstrap)
+
     def test_wrapper_temporarily_promotes_and_restores_candidate_bootstrap(self) -> None:
         self.assertIn("ORIGINAL_SHA=", self.wrapper)
         self.assertIn("restore_bootstrap", self.wrapper)
