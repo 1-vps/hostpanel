@@ -95,6 +95,7 @@ jobs:
                   archive.add(path, arcname=name, recursive=False)
           manifest = {
               "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "base_tree": subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip(),
               "files": entries,
               "deleted": deleted,
           }
