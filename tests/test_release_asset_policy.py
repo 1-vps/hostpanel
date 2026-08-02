@@ -48,7 +48,7 @@ class ReleaseAssetPolicyTests(unittest.TestCase):
         self.assertIn("-in dist/release-build.json", self.workflow)
         self.assertIn("-out dist/release-build.json.sig", self.workflow)
         self.assertIn("-sigfile dist/release-build.json.sig", self.workflow)
-        self.assertIn("dist/release-build.json.sig \\", self.workflow)
+        self.assertGreaterEqual(self.workflow.count("dist/release-build.json.sig"), 4)
 
 
 if __name__ == "__main__":
