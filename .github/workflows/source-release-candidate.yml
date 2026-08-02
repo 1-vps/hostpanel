@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/source-release-candidate.yml'
+      - '.github/workflows/publish-release.yml'
       - 'SOURCE_VERSION'
       - 'RELEASE_VERSION'
       - 'SHA256SUMS'
@@ -48,21 +49,29 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$REVIEWED_COMMIT" ]]
           git diff --exit-code -- .
 
-      - name: Run source-builder regressions
+      - name: Run source and release-bundle regressions
         run: |
           set -euo pipefail
           python3 -m py_compile \
             tools/build-source-release.py \
             tools/run-source-release-builder.py \
             tools/compare-source-archives.py \
-            tools/generate-source-attestations.py
+            tools/generate-source-attestations.py \
+            tools/verify-source-release-bundle.py \
+            tools/build-update-release.py \
+            tools/verify-existing-release.py \
+            tools/build-release-bundle.py
           python3 -m unittest discover -s tests -p 'test_source_release_builder.py' -v
           python3 -m unittest discover -s tests -p 'test_source_release_entrypoint.py' -v
           python3 -m unittest discover -s tests -p 'test_source_attestations.py' -v
+          python3 -m unittest discover -s tests -p 'test_source_release_bundle_verifier.py' -v
+          python3 -m unittest discover -s tests -p 'test_release_bundle_builder.py' -v
           python3 -m unittest discover -s tests -p 'test_single_update_contract.py' -v
+          python3 -m unittest discover -s tests -p 'test_github_update_pipeline.py' -v
           [[ "$(python3 tools/run-source-release-builder.py --repository-root . --print-version)" == "3.4.1" ]]
+          [[ "$(python3 tools/build-update-release.py --repository-root . --print-version)" == "3.4.1" ]]
 
-      - name: Build the candidate twice
+      - name: Build and verify the candidate twice
         run: |
           set -euo pipefail
           mkdir -p dist-a dist-b
@@ -87,17 +96,27 @@ jobs:
             source-file-manifest.json; do
             cmp -- "dist-a/$metadata" "dist-b/$metadata"
           done
-          (
-            cd dist-a
-            sha256sum \
-              "${archive_a##*/}" \
-              source-build.json \
-              sbom.cdx.json \
-              dependency-lock-attestation.json \
-              source-file-manifest.json \
-              > SOURCE-CANDIDATE-SHA256SUMS
-            sha256sum -c SOURCE-CANDIDATE-SHA256SUMS
-          )
+          for directory in dist-a dist-b; do
+            archive="$(find "$directory" -maxdepth 1 -type f -name 'hostpanel-v*-source.tar.gz' -print -quit)"
+            (
+              cd "$directory"
+              sha256sum \
+                "${archive##*/}" \
+                source-build.json \
+                sbom.cdx.json \
+                dependency-lock-attestation.json \
+                source-file-manifest.json \
+                > SOURCE-CANDIDATE-SHA256SUMS
+              sha256sum -c SOURCE-CANDIDATE-SHA256SUMS
+            )
+            python3 tools/verify-source-release-bundle.py \
+              --directory "$directory" \
+              --repository-root . \
+              --commit "$REVIEWED_COMMIT" \
+              --source-version 3.4.1 \
+              --release-id 3.4.1-hardened-r1
+          done
+          cmp -- dist-a/SOURCE-CANDIDATE-SHA256SUMS dist-b/SOURCE-CANDIDATE-SHA256SUMS
           python3 - "$REVIEWED_COMMIT" dist-a <<'PY'
           import json
           import pathlib
