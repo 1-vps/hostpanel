@@ -24,7 +24,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 2
 
-      - name: Wire reviewed HostPanel brand assets
+      - name: Build complete reviewed brand integration
         run: |
           set -euo pipefail
           python3 <<'PY'
@@ -34,30 +34,45 @@ jobs:
 
           ROOT = pathlib.Path.cwd()
 
-          def replace_exact(path: str, old: str, new: str, *, count: int = 1) -> None:
+          def replace_reviewed(
+              path: str,
+              old: str,
+              new: str,
+              *,
+              old_count: int = 1,
+              new_count: int = 1,
+          ) -> None:
               target = ROOT / path
               text = target.read_text(encoding="utf-8")
-              actual = text.count(old)
-              if actual != count:
-                  raise SystemExit(
-                      f"{path}: expected {count} occurrence(s), found {actual}: {old!r}"
-                  )
-              target.write_text(text.replace(old, new, count), encoding="utf-8")
+              found_old = text.count(old)
+              found_new = text.count(new)
+              if found_old == old_count and found_new == 0:
+                  target.write_text(text.replace(old, new, old_count), encoding="utf-8")
+                  return
+              if found_old == 0 and found_new == new_count:
+                  return
+              raise SystemExit(
+                  f"{path}: unexpected reviewed shape old={found_old} new={found_new}"
+              )
 
-          replace_exact(
-              "tools/patch_panel_ui.py",
+          patcher_old = (
               "STYLE_TAG = '<link href=\"/static/panel-redesign.css\" rel=\"stylesheet\"/>'\n"
-              "SCRIPT_TAG = '<script defer=\"\" src=\"/static/panel-redesign.js\"></script>'\n",
+              "SCRIPT_TAG = '<script defer=\"\" src=\"/static/panel-redesign.js\"></script>'\n"
+          )
+          patcher_new = (
               "STYLE_TAG = '<link href=\"/static/panel-redesign.css\" rel=\"stylesheet\"/>'\n"
               "BRAND_STYLE_TAG = '<link href=\"/static/hostpanel-brand.css\" rel=\"stylesheet\"/>'\n"
               "FAVICON_TAG = '<link href=\"/static/hostpanel-mark.svg\" rel=\"icon\" type=\"image/svg+xml\"/>'\n"
-              "SCRIPT_TAG = '<script defer=\"\" src=\"/static/panel-redesign.js\"></script>'\n",
+              "SCRIPT_TAG = '<script defer=\"\" src=\"/static/panel-redesign.js\"></script>'\n"
           )
-          replace_exact(
-              "tools/patch_panel_ui.py",
+          replace_reviewed("tools/patch_panel_ui.py", patcher_old, patcher_new)
+
+          patch_call_old = (
               "    text = _place_before_once(\n"
               "        text,\n"
-              "        '<script defer=\"\" src=\"/static/panel-i18n.js\"></script>',\n",
+              "        '<script defer=\"\" src=\"/static/panel-i18n.js\"></script>',\n"
+          )
+          patch_call_new = (
               "    text = _insert_once(\n"
               "        text,\n"
               "        STYLE_TAG,\n"
@@ -72,98 +87,108 @@ jobs:
               "    )\n"
               "    text = _place_before_once(\n"
               "        text,\n"
-              "        '<script defer=\"\" src=\"/static/panel-i18n.js\"></script>',\n",
+              "        '<script defer=\"\" src=\"/static/panel-i18n.js\"></script>',\n"
           )
+          replace_reviewed("tools/patch_panel_ui.py", patch_call_old, patch_call_new)
 
-          replace_exact(
-              "bootstrap-install.sh",
+          bootstrap_old = (
               "  app/static/panel-redesign.css\n"
               "  app/static/panel-redesign.js\n"
-              ")\n",
+              ")\n"
+          )
+          bootstrap_new = (
               "  app/static/panel-redesign.css\n"
               "  app/static/panel-redesign.js\n"
               "  app/static/hostpanel-brand.css\n"
               "  app/static/hostpanel-mark.svg\n"
               "  app/static/hostpanel-logo.svg\n"
-              ")\n",
+              ")\n"
           )
-          replace_exact(
-              "bootstrap-install.sh",
-              "install -m 0644 \"$CHECKOUT/app/static/panel-redesign.css\" \"$SOURCE_ROOT/app/static/panel-redesign.css\"\n"
-              "install -m 0644 \"$CHECKOUT/app/static/panel-redesign.js\" \"$SOURCE_ROOT/app/static/panel-redesign.js\"\n",
+          replace_reviewed("bootstrap-install.sh", bootstrap_old, bootstrap_new)
+
+          install_old = (
               "install -m 0644 \"$CHECKOUT/app/static/panel-redesign.css\" \"$SOURCE_ROOT/app/static/panel-redesign.css\"\n"
               "install -m 0644 \"$CHECKOUT/app/static/panel-redesign.js\" \"$SOURCE_ROOT/app/static/panel-redesign.js\"\n"
-              "install -m 0644 \"$CHECKOUT/app/static/hostpanel-brand.css\" \"$SOURCE_ROOT/app/static/hostpanel-brand.css\"\n"
-              "install -m 0644 \"$CHECKOUT/app/static/hostpanel-mark.svg\" \"$SOURCE_ROOT/app/static/hostpanel-mark.svg\"\n"
-              "install -m 0644 \"$CHECKOUT/app/static/hostpanel-logo.svg\" \"$SOURCE_ROOT/app/static/hostpanel-logo.svg\"\n",
           )
+          install_new = (
+              install_old
+              + "install -m 0644 \"$CHECKOUT/app/static/hostpanel-brand.css\" \"$SOURCE_ROOT/app/static/hostpanel-brand.css\"\n"
+              + "install -m 0644 \"$CHECKOUT/app/static/hostpanel-mark.svg\" \"$SOURCE_ROOT/app/static/hostpanel-mark.svg\"\n"
+              + "install -m 0644 \"$CHECKOUT/app/static/hostpanel-logo.svg\" \"$SOURCE_ROOT/app/static/hostpanel-logo.svg\"\n"
+          )
+          replace_reviewed("bootstrap-install.sh", install_old, install_new)
 
           assets = (
               "      - app/static/hostpanel-brand.css\n"
               "      - app/static/hostpanel-mark.svg\n"
               "      - app/static/hostpanel-logo.svg\n"
           )
-          replace_exact(
+          ui_asset_old = "      - app/static/panel-redesign.js\n"
+          ui_asset_new = ui_asset_old + assets
+          replace_reviewed(
               ".github/workflows/ui-audit.yml",
-              "      - app/static/panel-redesign.js\n",
-              "      - app/static/panel-redesign.js\n" + assets,
-              count=2,
+              ui_asset_old,
+              ui_asset_new,
+              old_count=2,
+              new_count=2,
           )
-          replace_exact(
+          replace_reviewed(
               ".github/workflows/qemu-vm-acceptance.yml",
-              "      - app/static/panel-redesign.js\n",
-              "      - app/static/panel-redesign.js\n" + assets,
+              ui_asset_old,
+              ui_asset_new,
           )
 
-          replace_exact(
+          test_path_old = "      - tests/test_panel_redesign.py\n"
+          test_path_new = test_path_old + "      - tests/test_hostpanel_brand.py\n"
+          replace_reviewed(
               ".github/workflows/ui-audit.yml",
-              "      - tests/test_panel_redesign.py\n",
-              "      - tests/test_panel_redesign.py\n"
-              "      - tests/test_hostpanel_brand.py\n",
-              count=2,
+              test_path_old,
+              test_path_new,
+              old_count=2,
+              new_count=2,
           )
-          replace_exact(
+          replace_reviewed(
               ".github/workflows/qemu-vm-acceptance.yml",
-              "      - tests/test_panel_redesign.py\n",
-              "      - tests/test_panel_redesign.py\n"
-              "      - tests/test_hostpanel_brand.py\n",
+              test_path_old,
+              test_path_new,
           )
-          replace_exact(
-              ".github/workflows/ui-audit.yml",
-              "          python3 -m unittest discover -s tests -p 'test_panel_redesign.py' -v\n",
+
+          command_old = (
               "          python3 -m unittest discover -s tests -p 'test_panel_redesign.py' -v\n"
-              "          python3 -m unittest discover -s tests -p 'test_hostpanel_brand.py' -v\n",
           )
-          replace_exact(
-              ".github/workflows/qemu-vm-acceptance.yml",
-              "          python3 -m unittest discover -s tests -p 'test_panel_redesign.py' -v\n",
-              "          python3 -m unittest discover -s tests -p 'test_panel_redesign.py' -v\n"
-              "          python3 -m unittest discover -s tests -p 'test_hostpanel_brand.py' -v\n",
+          command_new = command_old + (
+              "          python3 -m unittest discover -s tests -p 'test_hostpanel_brand.py' -v\n"
           )
-          replace_exact(
-              ".github/workflows/ui-audit.yml",
-              "          install -m 0644 app/static/panel-redesign.css \"$UI_ROOT/app/static/panel-redesign.css\"\n"
-              "          install -m 0644 app/static/panel-redesign.js \"$UI_ROOT/app/static/panel-redesign.js\"\n",
+          replace_reviewed(
+              ".github/workflows/ui-audit.yml", command_old, command_new
+          )
+          replace_reviewed(
+              ".github/workflows/qemu-vm-acceptance.yml", command_old, command_new
+          )
+
+          ui_copy_old = (
               "          install -m 0644 app/static/panel-redesign.css \"$UI_ROOT/app/static/panel-redesign.css\"\n"
               "          install -m 0644 app/static/panel-redesign.js \"$UI_ROOT/app/static/panel-redesign.js\"\n"
-              "          install -m 0644 app/static/hostpanel-brand.css \"$UI_ROOT/app/static/hostpanel-brand.css\"\n"
-              "          install -m 0644 app/static/hostpanel-mark.svg \"$UI_ROOT/app/static/hostpanel-mark.svg\"\n"
-              "          install -m 0644 app/static/hostpanel-logo.svg \"$UI_ROOT/app/static/hostpanel-logo.svg\"\n",
+          )
+          ui_copy_new = (
+              ui_copy_old
+              + "          install -m 0644 app/static/hostpanel-brand.css \"$UI_ROOT/app/static/hostpanel-brand.css\"\n"
+              + "          install -m 0644 app/static/hostpanel-mark.svg \"$UI_ROOT/app/static/hostpanel-mark.svg\"\n"
+              + "          install -m 0644 app/static/hostpanel-logo.svg \"$UI_ROOT/app/static/hostpanel-logo.svg\"\n"
+          )
+          replace_reviewed(
+              ".github/workflows/ui-audit.yml", ui_copy_old, ui_copy_new
           )
 
-          replace_exact(
-              "README.md",
-              "# HostPanel\n",
+          readme_old = "# HostPanel\n"
+          readme_new = (
               '<p align="center">\n'
               '  <img src="app/static/hostpanel-logo.svg" alt="HostPanel" width="460">\n'
               '</p>\n\n'
-              '# HostPanel\n',
+              '# HostPanel\n'
           )
+          replace_reviewed("README.md", readme_old, readme_new)
           PY
-
-          git show HEAD^:.github/workflows/installer-hardening.yml \
-            > .github/workflows/installer-hardening.yml
-          rm -f .github/workflows/apply-hostpanel-brand-once.yml
 
       - name: Validate complete brand integration
         run: |
@@ -174,32 +199,31 @@ jobs:
           bash -n bootstrap-install.sh
           git diff --check
 
-      - name: Commit complete brand integration
+      - name: Export reviewed workflow files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hostpanel-brand-workflows-${{ github.run_id }}
+          path: |
+            .github/workflows/ui-audit.yml
+            .github/workflows/qemu-vm-acceptance.yml
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Commit non-workflow product integration
         run: |
           set -euo pipefail
           git config user.name 'HostPanel automation'
           git config user.email 'actions@users.noreply.github.com'
-          git add -A
-          git commit -m 'Use the HostPanel logo across the product'
+          git add README.md bootstrap-install.sh tools/patch_panel_ui.py
+          if git diff --cached --quiet; then
+            echo 'Non-workflow brand integration is already committed.'
+            exit 0
+          fi
+          git commit -m 'Use the HostPanel logo in the product'
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
 
   deterministic-and-static:
     if: ${{ false }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - run: true
-
-  supported-os-preflight:
-    if: ${{ false }}
-    runs-on: ubuntu-24.04
-    needs: deterministic-and-static
-    steps:
-      - run: true
-
-  ubuntu-2604-runtime-lock:
-    if: ${{ false }}
-    runs-on: ubuntu-24.04
-    needs: deterministic-and-static
     steps:
       - run: true
