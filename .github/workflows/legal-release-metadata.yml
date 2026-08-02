@@ -1,0 +1,31 @@
+name: Legal release metadata
+
+on:
+  pull_request:
+    paths:
+      - README.md
+      - LICENSE
+      - tools/release_legal.py
+      - .github/workflows/legal-release-metadata.yml
+  push:
+    branches: [main]
+    paths:
+      - README.md
+      - LICENSE
+      - tools/release_legal.py
+      - .github/workflows/legal-release-metadata.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Validate final legal metadata
+        run: python3 tools/release_legal.py --repository-root .

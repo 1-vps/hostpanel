@@ -11,6 +11,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VALIDATOR_PATH = ROOT / "tools" / "release_legal.py"
 WRAPPER_PATH = ROOT / "tools" / "build-update-release.py"
+WORKFLOW_PATH = ROOT / ".github" / "workflows" / "legal-release-metadata.yml"
 
 
 def load_validator():
@@ -27,6 +28,7 @@ class ReleaseLegalGateTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.validator = load_validator()
         cls.wrapper = WRAPPER_PATH.read_text(encoding="utf-8")
+        cls.workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
 
     def fixture(self, readme: str, license_text: str):
         temporary = tempfile.TemporaryDirectory()
@@ -80,6 +82,13 @@ class ReleaseLegalGateTests(unittest.TestCase):
         self.assertIn('os.environ.get("GITHUB_WORKFLOW") == PUBLISH_WORKFLOW_NAME', self.wrapper)
         self.assertIn('os.environ.get("HP_REQUIRE_FINAL_LEGAL_TERMS") == "yes"', self.wrapper)
         self.assertIn('with_name("build_update_release_impl.py")', self.wrapper)
+
+    def test_read_only_workflow_tracks_legal_inputs(self) -> None:
+        for path in ("README.md", "LICENSE", "tools/release_legal.py"):
+            self.assertGreaterEqual(self.workflow.count(path), 2)
+        self.assertIn("contents: read", self.workflow)
+        self.assertIn("persist-credentials: false", self.workflow)
+        self.assertIn("python3 tools/release_legal.py --repository-root .", self.workflow)
 
     def test_wrapper_blocks_before_builder_on_incomplete_terms(self) -> None:
         temporary, root = self.fixture(
