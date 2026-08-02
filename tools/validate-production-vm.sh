@@ -9,8 +9,9 @@ Usage: sudo validate-production-vm.sh [--check|--prepare-reboot|--post-reboot]
 
 Optional environment:
   HP_EXPECTED_VERSION, HP_PANEL_HOST, HP_PANEL_PORT, HP_EXPECTED_PUBLIC_IP
+  HP_VALIDATION_IO_HELPER, HP_VALIDATION_STATE_DIR, HP_VALIDATION_REPORT_DIR
   HP_DESTRUCTIVE_TESTS=yes
-  HP_PROVIDER_SNAPSHOT_CONFIRMED=yes
+  HP_PROVIDER_INSTANCE_ID, HP_PROVIDER_SNAPSHOT_ID, HP_PROVIDER_SNAPSHOT_CREATED_AT_UTC
   HP_BACKUP_TEST_SCRIPT, HP_RESTORE_TEST_SCRIPT, HP_FAILURE_INJECTION_SCRIPT
 HELP
 }
@@ -24,22 +25,45 @@ esac
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || { printf 'Error: run as root.\n' >&2; exit 1; }
 
+SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd -P)"
+VALIDATION_IO="${HP_VALIDATION_IO_HELPER:-$SCRIPT_DIR/secure-validation-io.py}"
+PYTHON3="$(command -v python3)"
+BASH_BIN="$(command -v bash)"
+[[ -n "$PYTHON3" && -n "$BASH_BIN" ]] || {
+  printf '%s\n' 'Error: python3 and bash are required.' >&2
+  exit 1
+}
+[[ -f "$VALIDATION_IO" && ! -L "$VALIDATION_IO" ]] || {
+  printf 'Error: secure validation helper is unsafe or missing: %s\n' "$VALIDATION_IO" >&2
+  exit 1
+}
+helper_metadata="$(stat -c '%u:%a:%h' "$VALIDATION_IO")"
+helper_uid="${helper_metadata%%:*}"
+helper_rest="${helper_metadata#*:}"
+helper_mode="${helper_rest%%:*}"
+helper_links="${helper_rest##*:}"
+helper_mode_value=$((8#$helper_mode))
+if [[ "$helper_uid" != 0 || "$helper_links" != 1 ]] || ((helper_mode_value & 0022)); then
+  printf 'Error: secure validation helper must be root-owned, single-linked, and not group/world writable.\n' >&2
+  exit 1
+fi
+
 EXPECTED_VERSION="${HP_EXPECTED_VERSION:-3.4.0}"
 STATE_DIR="${HP_VALIDATION_STATE_DIR:-/var/lib/hostpanel-validation}"
 REPORT_DIR="${HP_VALIDATION_REPORT_DIR:-/var/log}"
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-REPORT="$REPORT_DIR/hostpanel-production-validation-$STAMP.log"
 REBOOT_STATE="$STATE_DIR/pre-reboot.boot-id"
+
+if [[ "${HP_VALIDATION_REPORT_ACTIVE:-no}" != yes ]]; then
+  exec "$PYTHON3" -I "$VALIDATION_IO" run-with-report "$REPORT_DIR" -- \
+    "$BASH_BIN" "$SCRIPT_PATH" "$@"
+fi
+REPORT="${HP_VALIDATION_REPORT_PATH:?secure report path is missing}"
+"$PYTHON3" -I "$VALIDATION_IO" ensure-directory "$STATE_DIR" 700
+
 PASS_COUNT=0
 WARN_COUNT=0
 FAIL_COUNT=0
-
-install -d -o root -g root -m 700 "$STATE_DIR"
-install -d -o root -g root -m 755 "$REPORT_DIR"
-: >"$REPORT"
-chown root:root "$REPORT"
-chmod 600 "$REPORT"
-exec > >(tee -a "$REPORT") 2>&1
 
 pass(){ PASS_COUNT=$((PASS_COUNT + 1)); printf '[PASS] %s\n' "$*"; }
 warn(){ WARN_COUNT=$((WARN_COUNT + 1)); printf '[WARN] %s\n' "$*"; }
@@ -203,28 +227,39 @@ check_cert(){
   if [[ -n "$cert" ]]; then openssl x509 -in "$cert" -noout -checkend 86400 >/dev/null 2>&1 && pass "certificate is parseable: $cert" || fail "certificate is invalid or near expiry: $cert"; else warn 'no HostPanel certificate was found'; fi
 }
 
-validate_hook(){
-  local path="$1" owner="" mode="" value=0
-  case "$path" in /*) ;; *) fail "hook path must be absolute: $path"; return 1 ;; esac
-  [[ -f "$path" && -x "$path" && ! -L "$path" ]] || { fail "hook is unsafe: $path"; return 1; }
-  owner="$(stat -c '%U' "$path")"; mode="$(stat -c '%a' "$path")"; value=$((8#$mode))
-  if [[ "$owner" != root ]] || (( (value & 0022) != 0 )); then fail "hook must be root-owned and not group/world writable: $path"; return 1; fi
+run_hook(){
+  local label="$1" path="$2"
+  if "$PYTHON3" -I "$VALIDATION_IO" exec-hook "$path"; then
+    pass "$label"
+  else
+    fail "$label"
+  fi
 }
-run_hook(){ local label="$1" path="$2"; validate_hook "$path" && run_required "$label" "$path"; }
 run_hooks(){
   local backup="${HP_BACKUP_TEST_SCRIPT:-}" restore="${HP_RESTORE_TEST_SCRIPT:-}" injection="${HP_FAILURE_INJECTION_SCRIPT:-}"
+  local instance="${HP_PROVIDER_INSTANCE_ID:-}" snapshot="${HP_PROVIDER_SNAPSHOT_ID:-}" created="${HP_PROVIDER_SNAPSHOT_CREATED_AT_UTC:-}"
   [[ -n "$backup$restore$injection" ]] || { warn 'backup, restore, and failure-injection hooks were not supplied'; return; }
   [[ "${HP_DESTRUCTIVE_TESTS:-no}" == yes ]] || { fail 'hooks require HP_DESTRUCTIVE_TESTS=yes'; return; }
   [[ -z "$backup" ]] || run_hook 'operator backup test passed' "$backup"
-  if [[ -n "$restore$injection" && "${HP_PROVIDER_SNAPSHOT_CONFIRMED:-no}" != yes ]]; then fail 'restore/failure injection requires HP_PROVIDER_SNAPSHOT_CONFIRMED=yes'; return; fi
+  if [[ -n "$restore$injection" ]]; then
+    [[ "$instance" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ \
+      && "$snapshot" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ \
+      && "$created" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
+      fail 'restore/failure injection requires bound provider instance and snapshot identity'
+      return
+    }
+  fi
   [[ -z "$restore" ]] || run_hook 'operator restore test passed' "$restore"
   [[ -z "$injection" ]] || run_hook 'operator failure-injection rollback test passed' "$injection"
 }
 
 check_reboot(){
   local previous="" current=""
-  [[ -r "$REBOOT_STATE" ]] || { fail 'pre-reboot state is missing'; return; }
-  previous="$(tr -d '[:space:]' <"$REBOOT_STATE")"; current="$(tr -d '[:space:]' </proc/sys/kernel/random/boot_id)"
+  if ! previous="$("$PYTHON3" -I "$VALIDATION_IO" read-state "$REBOOT_STATE" | tr -d '[:space:]')"; then
+    fail 'pre-reboot state is missing or unsafe'
+    return
+  fi
+  current="$(tr -d '[:space:]' </proc/sys/kernel/random/boot_id)"
   [[ -n "$previous" && "$previous" != "$current" ]] && pass 'boot ID changed; reboot was verified' || fail 'boot ID did not change'
 }
 
@@ -234,7 +269,12 @@ printf 'HostPanel production VM validation\nMode: %s\nReport: %s\nUTC start: %s\
 [[ "$MODE" != --post-reboot ]] || check_reboot
 run_checks
 if [[ "$MODE" == --prepare-reboot && $FAIL_COUNT -eq 0 ]]; then
-  tr -d '[:space:]' </proc/sys/kernel/random/boot_id >"$REBOOT_STATE"; chown root:root "$REBOOT_STATE"; chmod 600 "$REBOOT_STATE"; pass "pre-reboot boot ID recorded at $REBOOT_STATE"
+  boot_id="$(tr -d '[:space:]' </proc/sys/kernel/random/boot_id)"
+  if printf '%s\n' "$boot_id" | "$PYTHON3" -I "$VALIDATION_IO" write-state "$REBOOT_STATE"; then
+    pass "pre-reboot boot ID recorded at $REBOOT_STATE"
+  else
+    fail 'pre-reboot boot ID could not be recorded securely'
+  fi
 fi
 printf '\nSummary: %d passed, %d warnings, %d failed\nReport saved to %s\n' "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT" "$REPORT"
 ((FAIL_COUNT == 0))
