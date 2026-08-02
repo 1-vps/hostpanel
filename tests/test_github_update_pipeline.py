@@ -72,8 +72,9 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
         )
 
     def test_release_workflow_enforces_external_gates_and_safe_resume(self) -> None:
-        self.assertIn("for issue in 7 14; do", self.workflow)
+        self.assertEqual(self.workflow.count("for issue in 7 14; do"), 2)
         self.assertIn("Release gate issue #$issue is still $state", self.workflow)
+        self.assertIn("Release gate issue #$issue was reopened or remains $state", self.workflow)
         self.assertIn("Tag $TAG exists without a release; publication will resume", self.workflow)
         self.assertIn('tag_type="$(gh api', self.workflow)
         self.assertIn('tag_sha="$(gh api', self.workflow)
