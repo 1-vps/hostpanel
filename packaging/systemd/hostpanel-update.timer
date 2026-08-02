@@ -1,0 +1,13 @@
+[Unit]
+Description=Poll GitHub for signed HostPanel releases
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+AccuracySec=15s
+Persistent=true
+Unit=hostpanel-update.service
+
+[Install]
+WantedBy=timers.target
