@@ -167,3 +167,5 @@ Before serving customers:
 - [`SECURITY.md`](SECURITY.md)
 - [`FIREWALL.md`](FIREWALL.md)
 - [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md)
+
+Current deployable overlay release: **3.4.1** (signed base source: `3.4.0`).

@@ -210,7 +210,7 @@ class Issue115UpdaterHardeningTests(unittest.TestCase):
         )
 
     def test_beta_uses_bounded_release_list(self) -> None:
-        self.assertIn("/releases?per_page=", self.updater_source)
+        self.assertIn('f"?per_page={MAX_BETA_RELEASES}"', self.updater_source)
         self.assertIn("MAX_BETA_RELEASES = 20", self.updater_source)
         self.assertIn("resolved.sort(key=lambda item: Version.parse", self.updater_source)
 

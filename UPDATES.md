@@ -1,58 +1,28 @@
 # Signed GitHub releases and automatic updates
 
-HostPanel publishes a signed GitHub Release when a new signed source version is
-merged to `main`. Installed servers poll the private repository every five
-minutes and apply a newer signed stable release.
+HostPanel publishes a signed GitHub Release for the deployable version in
+`RELEASE_VERSION`. The signed source archive remains the immutable base; every
+reviewed overlay revision must increase `RELEASE_VERSION` above the base
+archive's `VERSION`. Reusing the same deployable version fails the release
+build.
 
-## Release publication
+## Publication boundary
 
-The workflow `.github/workflows/publish-release.yml` runs only after the signed
-source archive, its signature, or `SHA256SUMS` changes on `main`. It has no
-manual branch-selectable dispatch.
+`.github/workflows/publish-release.yml` runs from protected `main`, verifies the
+signed base source, enforces all release-gate issues, runs the complete
+regression suite, builds the exact reviewed commit, and enters the protected
+`hostpanel-release` environment only for signing and publication.
 
-Publication is split into two security boundaries:
+Release inputs include `RELEASE_VERSION`, updater/runtime code, the public
+keyring, installers, packaging, and the release workflow itself. Existing tags
+and releases are accepted only when their commit, exact asset set, signatures,
+manifest, archive digest, and provenance all match the reviewed commit.
 
-1. the `verify` job has read-only repository access, verifies the signed source,
-   checks release gates, runs the full regression suite, and builds a test
-   update archive;
-2. the `publish` job runs only after verification, enters the protected
-   `hostpanel-release` environment, rebuilds from the same exact commit, signs
-   the archive and canonical manifest, and receives write access only while it
-   creates the tag and GitHub Release.
+## Trusted update configuration
 
-The workflow also handles a partial previous failure. If the tag exists but the
-Release does not, publication resumes only when the existing lightweight tag
-points to the exact tested commit. An existing tag that points elsewhere is a
-hard failure.
-
-Before any new release is signed, GitHub issues #7 and #14 must both be closed.
-This makes provider-backed acceptance and native-language approval technical
-release gates rather than documentation-only reminders.
-
-### Required GitHub environment
-
-Create an environment named `hostpanel-release` and configure all of the
-following outside repository code:
-
-- allow deployments from protected `main` only;
-- require independent reviewer approval;
-- prevent self-review where supported;
-- store `HOSTPANEL_RELEASE_PRIVATE_KEY` as an **environment secret**, not a
-  repository-wide secret;
-- remove any older repository-level copy of that secret.
-
-`HOSTPANEL_RELEASE_PRIVATE_KEY` must contain the PEM Ed25519 private key matching
-`releases/update.pub`. The private key must never be committed to the repository
-or copied to an installed server.
-
-To publish a version, add the newly signed source archive and signature, replace
-`SHA256SUMS`, update release notes, and merge through the protected `main`
-branch. Reusing an existing version never creates a second release.
-
-## Server configuration
-
-The installer enables `hostpanel-update.timer`. Its defaults are stored in
-`/etc/hostpanel/update-agent.conf`:
+The update service does not source configuration as a process environment.
+`/etc/hostpanel/update-agent.conf` is parsed through a descriptor-bound,
+root-owned mode-0600 reader and accepts only these keys:
 
 ```ini
 HP_UPDATE_REPOSITORY=1-vps/hostpanel
@@ -60,58 +30,77 @@ HP_UPDATE_CHANNEL=stable
 HP_UPDATE_TOKEN_FILE=/etc/hostpanel/github-update.token
 HP_UPDATE_REQUIRE_TOKEN=yes
 HP_UPDATE_PUBLIC_KEY=/etc/hostpanel/update.pub
+HP_UPDATE_KEYRING=/etc/hostpanel/update-keyring.json
 HP_AUTO_UPDATE=yes
 ```
 
-For a private GitHub repository, create a fine-grained token with read-only
-**Contents** access to this repository and store it in a root-owned mode-0600
-file:
+The token file must be root-owned, single-linked, mode `0600`, ASCII-only, and
+contain no whitespace, including no trailing newline:
 
 ```bash
-sudo install -o root -g root -m 600 /dev/null /etc/hostpanel/github-update.token
 read -rsp 'GitHub update token: ' TOKEN; echo
-printf '%s\n' "$TOKEN" | sudo tee /etc/hostpanel/github-update.token >/dev/null
+printf '%s' "$TOKEN" | sudo tee /etc/hostpanel/github-update.token >/dev/null
 unset TOKEN
 sudo chown root:root /etc/hostpanel/github-update.token
 sudo chmod 600 /etc/hostpanel/github-update.token
-sudo systemctl start hostpanel-update.service
 ```
 
-A public repository does not require the token file; set
-`HP_UPDATE_REQUIRE_TOKEN=no` only when the Release assets are intentionally
-public.
+`stable` resolves GitHub's latest final release. `beta` inspects at most 20
+GitHub releases and selects the highest valid signed prerelease version. Draft
+flags, prerelease flags, tags, signed channel, and strict semantic-version form
+must agree.
 
-## Manual operation
+## Verification and transport
+
+Every request and redirect must remain HTTPS and within the GitHub API/release
+asset host set. Authorization is removed on cross-origin redirects. Duplicate
+asset names, unsafe names, non-integer sizes, and advertised/downloaded size
+mismatches fail closed.
+
+The updater verifies, in order:
+
+1. root ownership, exact mode, single link, stable descriptor/path identity,
+   and bounded size for configuration, token, keyring, and key files;
+2. a bounded keyring with SHA-256 key IDs and semantic activation/retirement
+   windows;
+3. the manifest signature using securely captured public-key bytes;
+4. strict manifest shape, channel/version/tag/commit binding;
+5. archive length, digest, and signature with the same key that signed the
+   manifest;
+6. archive path/type/mode/expansion bounds and extracted `VERSION`;
+7. the existing reinstall, snapshot, health-check, and rollback path.
+
+## Key rotation
+
+Rotation is two-stage:
+
+1. publish an old-key-signed release that adds the next public key to
+   `releases/` and to `update-keyring.json`, with a future `activate_from`
+   version while retaining the old key;
+2. after that transition is installed, sign a later release with the new key;
+3. keep an overlap window as needed, then set the old key's `retire_after`;
+4. never remove the previous key before all supported clients have crossed the
+   transition release.
+
+The installer deploys the complete bounded keyring atomically with the updater.
+The reinstall snapshot covers `/etc/hostpanel`, so rollback preserves the
+previous trusted keyring.
+
+## Manual operation and result codes
 
 ```bash
 sudo /opt/hostpanel/tools/hostpanel-update --check
 sudo /opt/hostpanel/tools/hostpanel-update --apply
-sudo /opt/hostpanel/tools/hostpanel-update --apply --dry-run
+sudo /opt/hostpanel/tools/hostpanel-update --dry-run
 systemctl status hostpanel-update.timer
 journalctl -u hostpanel-update.service
 ```
 
-The updater verifies, in order:
+`--dry-run` downloads and verifies the complete manifest/archive/signature path
+without requiring `--apply`. Exit `10` means a newer verified release is
+available but was not applied. Exit `75` means another updater owns the lock.
+The oneshot unit declares both expected states successful; verification and
+installer failures remain service failures.
 
-- GitHub release metadata and stable channel;
-- the manifest signature against `/etc/hostpanel/update.pub`;
-- manifest schema, semantic version, tag and commit;
-- archive size and SHA-256;
-- archive signature;
-- every archive path, type, mode and extraction bound;
-- the extracted `VERSION`;
-- the existing reinstall and rollback path.
-
-Status is written atomically to `/var/lib/hostpanel/update-status.json`.
-The installer snapshot and rollback mechanisms remain responsible for restoring
-the previous installation if an update fails.
-
-## Release safety gate
-
-Do not close issue #7 until provider-backed installation, reboot, external
-web/DNS/mail, backup/restore and controlled rollback evidence is attached.
-Do not close issue #14 until named native reviewers have approved all three
-locale catalogs and rendered states.
-
-The workflow automates packaging, verification and publication. It intentionally
-cannot replace these external approvals.
+Status is written atomically to
+`/var/lib/hostpanel/update-status.json`, including the signing key ID.

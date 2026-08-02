@@ -49,7 +49,7 @@ if [[ "$helper_uid" != 0 || "$helper_links" != 1 ]] || ((helper_mode_value & 002
   exit 1
 fi
 
-EXPECTED_VERSION="${HP_EXPECTED_VERSION:-3.4.0}"
+EXPECTED_VERSION="${HP_EXPECTED_VERSION:-3.4.1}"
 STATE_DIR="${HP_VALIDATION_STATE_DIR:-/var/lib/hostpanel-validation}"
 REPORT_DIR="${HP_VALIDATION_REPORT_DIR:-$STATE_DIR/reports}"
 REBOOT_STATE="$STATE_DIR/pre-reboot.boot-id"

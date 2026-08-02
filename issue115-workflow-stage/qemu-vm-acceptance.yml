@@ -1,0 +1,204 @@
+name: QEMU VM acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      mta:
+        description: Mail transfer agent
+        required: true
+        default: postfix
+        type: choice
+        options:
+          - postfix
+          - exim
+  pull_request:
+    paths:
+      - .github/workflows/qemu-vm-acceptance.yml
+      - .github/workflows/publish-release.yml
+      - localization-overlay/**
+      - packaging/systemd/hostpanel-update.service
+      - packaging/systemd/hostpanel-update.timer
+      - releases/update.pub
+      - releases/update-keyring.json
+      - tools/run-qemu-vm-acceptance.sh
+      - tools/qemu-guest-install.sh
+      - tools/prepare-qemu-evidence.py
+      - tools/sanitize-qemu-evidence.py
+      - tools/seal-qemu-evidence.py
+      - tools/inspect-release-state.py
+      - tools/validate-production-vm.sh
+      - tools/build-update-release.py
+      - tools/hostpanel-update.py
+      - tools/install-update-agent.sh
+      - tools/harden_install.py
+      - tools/harden_install_impl.py
+      - tools/harden_install_runtime.py
+      - tools/patch_cli_runtime_env.py
+      - tools/patch_panel_ui.py
+      - app/static/panel-redesign.css
+      - app/static/panel-redesign.js
+      - app/static/hostpanel-brand.css
+      - app/static/hostpanel-mark.svg
+      - app/static/hostpanel-logo.svg
+      - bootstrap-install.sh
+      - RELEASE_VERSION
+      - install.sh
+      - install.base.sh
+      - install-hardened.sh
+      - requirements.lock
+      - SHA256SUMS
+      - '*.sig'
+      - tests/test_existing_catalog_corrections.py
+      - tests/test_high_risk_locale_overrides.py
+      - tests/test_portuguese_ui_overrides.py
+      - tests/test_localization_bootstrap_wiring.py
+      - tests/test_localization_workflow_security.py
+      - tests/test_full_stack_review_fixes.py
+      - tests/test_github_update_pipeline.py
+      - tests/test_updater_issue115.py
+      - tests/test_qemu_vm_acceptance.py
+      - tests/test_qemu_token_scope.py
+      - tests/test_qemu_evidence_sanitizer.py
+      - tests/test_qemu_early_evidence.py
+      - tests/test_qemu_evidence_sealer.py
+      - tests/test_qemu_default_version.py
+      - tests/test_post_install_health.py
+      - tests/test_first_reboot_hardening.py
+      - tests/test_qemu_reboot_wait.py
+      - tests/test_systemd_resolved_dns.py
+      - tests/test_panel_redesign.py
+      - tests/test_hostpanel_brand.py
+      - tests/test_panel_future_locales.py
+      - tests/test_panel_patcher_section_bounds.py
+      - tests/test_php_runtime_support.py
+      - tests/php-runtime-compat.php
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qemu-vm-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-state-inspection:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Inspect signed release state bootstrap
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${{ github.sha }}"
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          [[ "$ACTUAL_SHA" == "$EXPECTED_SHA" ]] || {
+            printf 'QEMU release-state checkout mismatch: expected %s, got %s\n' \
+              "$EXPECTED_SHA" "$ACTUAL_SHA" >&2
+            exit 1
+          }
+          python3 tools/inspect-release-state.py
+
+  qemu-vm:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      HP_QEMU_REVIEWED_COMMIT_SHA: ${{ github.sha }}
+      HP_QEMU_MTA: ${{ inputs.mta || 'postfix' }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate QEMU acceptance harness
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          [[ "$ACTUAL_SHA" == "$HP_QEMU_REVIEWED_COMMIT_SHA" ]] || {
+            printf 'QEMU reviewed checkout mismatch: expected %s, got %s\n' \
+              "$HP_QEMU_REVIEWED_COMMIT_SHA" "$ACTUAL_SHA" >&2
+            exit 1
+          }
+          bash -n tools/run-qemu-vm-acceptance.sh
+          bash -n tools/qemu-guest-install.sh
+          bash -n tools/install-update-agent.sh
+          python3 -m py_compile \
+            tools/prepare-qemu-evidence.py \
+            tools/build-update-release.py \
+            tools/hostpanel-update.py
+          python3 -m unittest discover -s tests -p 'test_existing_catalog_corrections.py' -v
+          python3 -m unittest discover -s tests -p 'test_high_risk_locale_overrides.py' -v
+          python3 -m unittest discover -s tests -p 'test_portuguese_ui_overrides.py' -v
+          python3 -m unittest discover -s tests -p 'test_localization_bootstrap_wiring.py' -v
+          python3 -m unittest discover -s tests -p 'test_localization_workflow_security.py' -v
+          python3 -m unittest discover -s tests -p 'test_full_stack_review_fixes.py' -v
+          python3 -m unittest discover -s tests -p 'test_github_update_pipeline.py' -v
+          python3 -m unittest discover -s tests -p 'test_updater_issue115.py' -v
+          python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
+          python3 -m unittest discover -s tests -p 'test_qemu_token_scope.py' -v
+          python3 -m unittest discover -s tests -p 'test_qemu_evidence_sanitizer.py' -v
+          python3 -m unittest discover -s tests -p 'test_qemu_early_evidence.py' -v
+          python3 -m unittest discover -s tests -p 'test_qemu_evidence_sealer.py' -v
+          python3 -m unittest discover -s tests -p 'test_qemu_default_version.py' -v
+          python3 -m unittest discover -s tests -p 'test_systemd_resolved_dns.py' -v
+          python3 -m unittest discover -s tests -p 'test_panel_redesign.py' -v
+          python3 -m unittest discover -s tests -p 'test_hostpanel_brand.py' -v
+          python3 -m unittest discover -s tests -p 'test_panel_future_locales.py' -v
+          python3 -m unittest discover -s tests -p 'test_panel_patcher_section_bounds.py' -v
+          python3 -m unittest discover -s tests -p 'test_php_runtime_support.py' -v
+
+      - name: Reclaim runner disk
+        run: |
+          set -euo pipefail
+          docker system prune --all --force || true
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/share/dotnet
+          df -h
+
+      - name: Install QEMU dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            qemu-system-x86 qemu-utils cloud-image-utils acl \
+            openssh-client curl netcat-openbsd
+          qemu-system-x86_64 --version
+          if [[ -c /dev/kvm ]]; then
+            sudo setfacl -m "u:$(id -u):rw" /dev/kvm || true
+          fi
+
+      - name: Boot, install, reboot, and validate
+        env:
+          HP_QEMU_REPO_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/qemu-vm-acceptance
+          bash tools/run-qemu-vm-acceptance.sh
+
+      - name: Sanitize and seal VM evidence before upload
+        id: sanitize-evidence
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          python3 tools/prepare-qemu-evidence.py
+          python3 tools/sanitize-qemu-evidence.py artifacts/qemu-vm-acceptance
+          python3 tools/seal-qemu-evidence.py \
+            artifacts/qemu-vm-acceptance \
+            artifacts/qemu-vm-acceptance.tar
+
+      - name: Upload non-sensitive VM evidence
+        if: ${{ always() && steps.sanitize-evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qemu-vm-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/qemu-vm-acceptance.tar
+          if-no-files-found: error
+          retention-days: 14

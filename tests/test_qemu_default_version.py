@@ -11,12 +11,18 @@ class QemuDefaultVersionTests(unittest.TestCase):
     def test_local_harness_default_matches_ci_release_version(self):
         harness = HARNESS.read_text(encoding="utf-8")
         workflow = WORKFLOW.read_text(encoding="utf-8")
+        release_version = (ROOT / "RELEASE_VERSION").read_text(encoding="utf-8").strip()
+        self.assertEqual(release_version, "3.4.1")
         self.assertIn(
-            'EXPECTED_VERSION="${HP_QEMU_EXPECTED_VERSION:-3.4.0}"',
+            "DEFAULT_EXPECTED_VERSION=\"$(tr -d '[:space:]' <\"$REPO_ROOT/RELEASE_VERSION\")\"",
             harness,
         )
-        self.assertIn("HP_QEMU_EXPECTED_VERSION: 3.4.0", workflow)
-        self.assertNotIn("3.4.0-hardened-r6", harness)
+        self.assertIn(
+            'EXPECTED_VERSION="${HP_QEMU_EXPECTED_VERSION:-$DEFAULT_EXPECTED_VERSION}"',
+            harness,
+        )
+        self.assertNotIn("HP_QEMU_EXPECTED_VERSION: 3.4.0", workflow)
+        self.assertIn("- RELEASE_VERSION", workflow)
 
     def test_success_evidence_omits_generic_unredacted_journals(self):
         harness = HARNESS.read_text(encoding="utf-8")

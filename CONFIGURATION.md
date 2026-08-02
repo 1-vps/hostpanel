@@ -134,7 +134,7 @@ The production validator expects the installed application version, not the
 working-release label:
 
 ```text
-HP_EXPECTED_VERSION=3.4.0
+HP_EXPECTED_VERSION=3.4.1
 ```
 
 Other common validator inputs:
@@ -160,8 +160,10 @@ After supported configuration changes, rerun:
 sudo /opt/hostpanel/venv/bin/python \
   /opt/hostpanel/app/hostpanel-doctor --quiet
 sudo env \
-  HP_EXPECTED_VERSION=3.4.0 \
+  HP_EXPECTED_VERSION=3.4.1 \
   HP_PANEL_HOST=panel.example.com \
   HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
   bash /root/validate-production-vm.sh --check
 ```
+
+Current deployable overlay release: **3.4.1** (signed base source: `3.4.0`).

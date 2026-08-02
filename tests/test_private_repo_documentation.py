@@ -5,8 +5,8 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REVIEWED_COMMIT = "9c38d0095563ea33efd14124babfd29556c0da46"
-BOOTSTRAP_BLOB = "eae493681ce5eecd5ea61491f8e08e1f40938e08"
-VALIDATOR_BLOB = "2672271aacc0d85013765b3a7887fdec95518643"
+BOOTSTRAP_BLOB = "5d5bd1af8742703396e911a34163cd2992581737"
+VALIDATOR_BLOB = "2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9"
 DOC_PATHS = (
     ROOT / "README.md",
     ROOT / "SETUP.md",
@@ -37,7 +37,7 @@ class PrivateRepositoryDocumentationTests(unittest.TestCase):
         for name, text in self.docs.items():
             with self.subTest(document=name):
                 self.assertIn(REVIEWED_COMMIT, text)
-                self.assertIn("3.4.0", text)
+                self.assertIn("3.4.1", text)
 
     def test_setup_fetches_exact_private_objects(self) -> None:
         setup = self.docs["SETUP.md"]
@@ -65,7 +65,7 @@ class PrivateRepositoryDocumentationTests(unittest.TestCase):
         configuration = self.docs["CONFIGURATION.md"]
         self.assertIn("Treat `GIT_CONFIG_VALUE_0` as a secret", configuration)
         self.assertIn("Contents: Read-only", configuration)
-        self.assertIn("HP_EXPECTED_VERSION=3.4.0", configuration)
+        self.assertIn("HP_EXPECTED_VERSION=3.4.1", configuration)
 
     def test_production_guide_requires_blob_evidence(self) -> None:
         production = self.docs["PRODUCTION_READINESS.md"]

@@ -60,17 +60,20 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertIn("if: ${{ always() }}", self.workflow)
         self.assertIn("retention-days: 14", self.workflow)
 
-    def test_expected_version_matches_signed_source_version(self):
+    def test_expected_version_matches_reviewed_release_version(self):
+        release_version = (ROOT / "RELEASE_VERSION").read_text(encoding="utf-8").strip()
+        self.assertEqual(release_version, "3.4.1")
+        self.assertNotIn("HP_QEMU_EXPECTED_VERSION:", self.workflow)
         self.assertIn(
-            f"HP_QEMU_EXPECTED_VERSION: {self.signed_version}",
-            self.workflow,
-        )
-        self.assertIn(
-            'EXPECTED_VERSION="${HP_QEMU_EXPECTED_VERSION:-',
+            "DEFAULT_EXPECTED_VERSION=\"$(tr -d '[:space:]' <\"$REPO_ROOT/RELEASE_VERSION\")\"",
             self.harness,
         )
         self.assertIn(
-            f'EXPECTED_VERSION="${{HP_EXPECTED_VERSION:-{self.signed_version}}}"',
+            'EXPECTED_VERSION="${HP_QEMU_EXPECTED_VERSION:-$DEFAULT_EXPECTED_VERSION}"',
+            self.harness,
+        )
+        self.assertIn(
+            f'EXPECTED_VERSION="${{HP_EXPECTED_VERSION:-{release_version}}}"',
             self.validator,
         )
         self.assertNotIn("$REPO_ROOT/VERSION", self.harness)
