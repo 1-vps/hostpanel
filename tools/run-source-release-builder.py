@@ -13,17 +13,26 @@ from typing import Sequence
 
 
 BUILDER_PATH = pathlib.Path(__file__).with_name("build-source-release.py")
+ATTESTATION_PATH = pathlib.Path(__file__).with_name("generate-source-attestations.py")
 BYTECODE_SUFFIXES = {".pyc", ".pyo"}
 
 
-def load_builder() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("hostpanel_source_release_builder", BUILDER_PATH)
+def load_module(name: str, path: pathlib.Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise RuntimeError("could not load source release builder")
+        raise RuntimeError(f"could not load {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def load_builder() -> ModuleType:
+    return load_module("hostpanel_source_release_builder", BUILDER_PATH)
+
+
+def load_attestations() -> ModuleType:
+    return load_module("hostpanel_source_attestations", ATTESTATION_PATH)
 
 
 def overlay_archive_path(destination: pathlib.Path) -> pathlib.Path:
@@ -68,7 +77,13 @@ def remove_python_bytecode(source_root: pathlib.Path) -> None:
             _unlink_bytecode(path)
 
 
-def install_phase_isolation(builder: ModuleType) -> None:
+def install_phase_isolation(
+    builder: ModuleType,
+    attestations: ModuleType | None = None,
+) -> None:
+    if attestations is None:
+        attestations = load_attestations()
+
     def export_overlay(
         root: pathlib.Path,
         commit: str,
@@ -107,7 +122,20 @@ def install_phase_isolation(builder: ModuleType) -> None:
         timestamp: int,
     ) -> None:
         remove_python_bytecode(source_root)
+        attestations.generate_attestations(
+            source_root,
+            source_version=identity.source_version,
+            release_id=identity.release_id,
+            timestamp=timestamp,
+        )
         original_write_archive(source_root, output_path, identity, timestamp)
+        attestations.verify_archive_attestations(
+            output_path,
+            root_name=identity.archive_root,
+            source_version=identity.source_version,
+            release_id=identity.release_id,
+        )
+        attestations.copy_attestations(source_root, output_path.parent)
 
     builder.export_overlay = export_overlay
     builder.write_deterministic_archive = write_deterministic_archive
@@ -123,12 +151,16 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as error:
-        builder_error = getattr(
-            sys.modules.get("hostpanel_source_release_builder"),
-            "ReleaseBuildError",
-            (),
+        handled_errors = tuple(
+            error_type
+            for module_name, error_name in (
+                ("hostpanel_source_release_builder", "ReleaseBuildError"),
+                ("hostpanel_source_attestations", "AttestationError"),
+            )
+            if (module := sys.modules.get(module_name)) is not None
+            and isinstance((error_type := getattr(module, error_name, None)), type)
         )
-        if builder_error and isinstance(error, builder_error):
+        if handled_errors and isinstance(error, handled_errors):
             print(f"Source release build failed: {error}", file=os.sys.stderr)
             raise SystemExit(1)
         raise
