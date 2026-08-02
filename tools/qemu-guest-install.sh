@@ -8,6 +8,7 @@ for input in \
   /tmp/guest.env \
   /tmp/bootstrap-install.sh \
   /tmp/validate-production-vm.sh \
+  /tmp/secure-validation-io.py \
   /tmp/qemu-guest-install.sh; do
   [[ -f "$input" && ! -L "$input" ]] || {
     printf 'Unsafe or missing QEMU guest input: %s\n' "$input" >&2
@@ -137,9 +138,11 @@ apt-get update -qq >> "$PRIVATE_LOG" 2>&1
 apt-get install -y -qq ca-certificates curl git openssl python3 >> "$PRIVATE_LOG" 2>&1
 install -o root -g root -m 700 /tmp/bootstrap-install.sh /root/bootstrap-install.sh
 install -o root -g root -m 700 /tmp/validate-production-vm.sh /root/validate-production-vm.sh
+install -o root -g root -m 700 /tmp/secure-validation-io.py /root/secure-validation-io.py
 rm -f \
   /tmp/bootstrap-install.sh \
   /tmp/validate-production-vm.sh \
+  /tmp/secure-validation-io.py \
   /tmp/qemu-guest-install.sh
 
 cat > /root/hostpanel-qemu-post-reboot.sh <<'POSTREBOOT'
@@ -152,6 +155,7 @@ cleanup_acceptance_state(){
     /root/hostpanel-qemu.env \
     /root/bootstrap-install.sh \
     /root/validate-production-vm.sh \
+    /root/secure-validation-io.py \
     /root/hostpanel-qemu-post-reboot.sh; then
     cleanup_status=1
   fi
