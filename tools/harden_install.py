@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 EXPECTED_IMPL_BLOB = "ac1a86fba8dd6bace70cd844a61bfccdda55d916"
-EXPECTED_CLI_PATCHER_BLOB = "a20ce7252351179fa225a9a0b168b5fa9568883c"
+EXPECTED_CLI_PATCHER_BLOB = "eaa64717db43e77e6a5a8e93ef6d0b81c8536985"
 EXPECTED_UPDATE_AGENT_BLOBS = {
     "tools/hostpanel-update.py": "2e854ed6fde55dd722f8d07cb932ffca598bad5c",
     "tools/install-update-agent.sh": "1a95da641b806a6fbf77e3d6a5a3f6d3c9295a12",
