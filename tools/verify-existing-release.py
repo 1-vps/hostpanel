@@ -13,6 +13,11 @@ import stat
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+SEMVER_RE = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
 MAX_JSON_BYTES = 1024 * 1024
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 
@@ -34,7 +39,7 @@ def regular_file_size(path: pathlib.Path, label: str, maximum: int) -> int:
 def load_object(path: pathlib.Path, label: str) -> dict[str, object]:
     regular_file_size(path, label, MAX_JSON_BYTES)
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8", errors="strict"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SystemExit(f"invalid {label}: {exc}") from exc
     if not isinstance(value, dict):
@@ -43,15 +48,28 @@ def load_object(path: pathlib.Path, label: str) -> dict[str, object]:
 
 
 def sha256_file(path: pathlib.Path) -> str:
-    regular_file_size(path, "release archive", MAX_ARCHIVE_BYTES)
+    expected_size = regular_file_size(path, "release archive", MAX_ARCHIVE_BYTES)
     digest = hashlib.sha256()
+    total = 0
     try:
         with path.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                total += len(chunk)
+                if total > MAX_ARCHIVE_BYTES:
+                    raise SystemExit("release archive exceeds the size limit while hashing")
                 digest.update(chunk)
     except OSError as exc:
         raise SystemExit(f"could not hash release archive: {exc}") from exc
+    if total != expected_size:
+        raise SystemExit("release archive changed size while hashing")
     return digest.hexdigest()
+
+
+def semver_core(value: str, label: str) -> str:
+    match = SEMVER_RE.fullmatch(value)
+    if match is None:
+        raise SystemExit(f"{label} is not semantic")
+    return ".".join(match.group(index) for index in (1, 2, 3))
 
 
 def require_utc_timestamp(value: object) -> None:
@@ -73,9 +91,15 @@ def verify(
     metadata_path: pathlib.Path,
     expected_commit: str,
     expected_version: str,
+    expected_release_id: str,
 ) -> None:
     if COMMIT_RE.fullmatch(expected_commit) is None:
         raise SystemExit("expected commit must be a lowercase full SHA-1")
+    if semver_core(expected_version, "expected version") != semver_core(
+        expected_release_id, "expected release identifier"
+    ):
+        raise SystemExit("expected version and release identifier core versions differ")
+
     manifest = load_object(manifest_path, "release manifest")
     if set(manifest) != {
         "schema",
@@ -114,7 +138,10 @@ def verify(
 
     metadata = load_object(metadata_path, "release build metadata")
     if set(metadata) != {
+        "schema",
+        "product",
         "version",
+        "release_id",
         "tag",
         "commit",
         "archive",
@@ -123,7 +150,10 @@ def verify(
     }:
         raise SystemExit("existing release build metadata has an unexpected shape")
     metadata_checks = {
+        "schema": metadata.get("schema") == 1,
+        "product": metadata.get("product") == "hostpanel",
         "version": metadata.get("version") == expected_version,
+        "release_id": metadata.get("release_id") == expected_release_id,
         "tag": metadata.get("tag") == f"v{expected_version}",
         "commit": metadata.get("commit") == expected_commit,
         "archive": metadata.get("archive") == archive_path.name,
@@ -142,6 +172,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--metadata", type=pathlib.Path, required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--release-id", required=True)
     return parser.parse_args()
 
 
@@ -153,6 +184,7 @@ def main() -> int:
         args.metadata,
         args.commit,
         args.version,
+        args.release_id,
     )
     return 0
 
