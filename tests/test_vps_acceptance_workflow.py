@@ -35,14 +35,46 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
         )
         self.assertIn("ref: ${{ inputs.reviewed_commit_sha }}", self.text)
         self.assertIn(
-            '[[ "$REVIEWED_COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]]',
+            '[[ "$REVIEWED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]',
             self.text,
         )
         self.assertGreaterEqual(
             self.text.count('[[ "$(git rev-parse HEAD)" == "$REVIEWED_COMMIT_SHA" ]]'),
-            2,
+            1,
         )
+        self.assertIn('CHECKED_OUT_SHA="$(git rev-parse HEAD)"', self.text)
         self.assertNotIn("REVIEWED_COMMIT_SHA: 9c38d009", self.text)
+
+    def test_current_main_is_checked_before_provider_contact_and_install(self) -> None:
+        lookup = 'gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha'
+        self.assertEqual(self.text.count(lookup), 2)
+        first_lookup = self.text.index(lookup)
+        inventory = self.text.index("      - name: Inventory the disposable VM")
+        self.assertLess(first_lookup, inventory)
+        install = self.text.index("      - name: Install HostPanel and prepare reboot validation")
+        second_lookup = self.text.index(lookup, first_lookup + 1)
+        repo_auth = self.text.index("          REPO_AUTH_HEADER=", install)
+        self.assertGreater(second_lookup, install)
+        self.assertLess(second_lookup, repo_auth)
+        self.assertIn("Refusing stale VPS acceptance", self.text)
+        self.assertIn("Refusing stale VPS installation", self.text)
+        self.assertIn('[[ "$GITHUB_SHA" == "$CURRENT_MAIN_SHA" ]]', self.text)
+        self.assertGreaterEqual(self.text.count("GH_TOKEN: ${{ github.token }}"), 2)
+        self.assertIn("permissions:\n  contents: read", self.text)
+        self.assertNotIn("contents: write", self.text)
+
+    def test_exact_commit_is_recorded_in_evidence(self) -> None:
+        evidence_setup = self.section(
+            "      - name: Configure strict SSH host verification",
+            "      - name: Inventory the disposable VM",
+        )
+        self.assertIn("evidence/acceptance-context.txt", evidence_setup)
+        self.assertIn("reviewed_commit_sha=%s", evidence_setup)
+        self.assertIn("current_main_sha=%s", evidence_setup)
+        self.assertIn("workflow_dispatch_sha=%s", evidence_setup)
+        self.assertIn("workflow_run_id=%s", evidence_setup)
+        self.assertIn("workflow_run_attempt=%s", evidence_setup)
+        self.assertIn("chmod 600 evidence/acceptance-context.txt", evidence_setup)
 
     def test_job_environment_contains_no_secrets(self) -> None:
         job_env = self.section("    env:\n", "\n\n    steps:")
