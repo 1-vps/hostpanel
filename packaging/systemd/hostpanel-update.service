@@ -11,6 +11,7 @@ Type=oneshot
 User=root
 Group=root
 EnvironmentFile=-/etc/hostpanel/update-agent.conf
+ExecStartPre=/bin/sh -ec 'p=/etc/hostpanel/github-update.token; [ ! -e "$p" ] || { [ -f "$p" ] && [ ! -L "$p" ] && [ "$(stat -c "%%u:%%a:%%h" "$p")" = "0:600:1" ]; }'
 ExecStart=/opt/hostpanel/tools/hostpanel-update --apply --auto
 UMask=0077
 PrivateTmp=yes
