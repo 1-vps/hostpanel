@@ -66,6 +66,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_source_attestations.py' -v
           python3 -m unittest discover -s tests -p 'test_source_release_bundle_verifier.py' -v
           python3 -m unittest discover -s tests -p 'test_release_bundle_builder.py' -v
+          python3 -m unittest discover -s tests -p 'test_release_bundle_candidate_workflow.py' -v
           python3 -m unittest discover -s tests -p 'test_single_update_contract.py' -v
           python3 -m unittest discover -s tests -p 'test_github_update_pipeline.py' -v
           [[ "$(python3 tools/run-source-release-builder.py --repository-root . --print-version)" == "3.4.1" ]]
