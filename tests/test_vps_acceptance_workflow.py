@@ -192,6 +192,20 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
         self.assertIn('nc -z -w 8 "$VPS_HOST" "$port"', probes)
         self.assertNotIn("CLOSED_OR_FILTERED", probes)
 
+    def test_remote_evidence_collection_and_cleanup_fail_closed(self) -> None:
+        collection = self.section(
+            "      - name: Collect root-only validation evidence",
+            "      - name: Sanitize and seal provider evidence before upload",
+        )
+        self.assertIn("collection_failed=false", collection)
+        self.assertIn("cleanup_failed=false", collection)
+        self.assertIn("remote_evidence_collection=%s", collection)
+        self.assertIn("remote_transient_cleanup=%s", collection)
+        self.assertIn("Remote provider evidence collection failed", collection)
+        self.assertIn("Remote transient-state cleanup failed", collection)
+        self.assertNotIn("evidence/. || true", collection)
+        self.assertNotIn("hostpanel-acceptance-remote.sh' \\\n            || true", collection)
+
     def test_provider_evidence_is_sanitized_sealed_and_only_then_uploaded(self) -> None:
         collect = self.text.index("      - name: Collect root-only validation evidence")
         seal = self.text.index("      - name: Sanitize and seal provider evidence before upload")
