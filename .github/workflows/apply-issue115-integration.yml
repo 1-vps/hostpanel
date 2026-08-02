@@ -27,6 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/apply-issue115-integration.py
+          python3 tools/fix-issue115-tests.py
           git diff --check
 
       - name: Validate sources and release version
@@ -41,6 +42,9 @@ jobs:
             tools/build-update-release.py \
             tools/harden_install.py \
             tools/apply-issue115-integration.py \
+            tools/fix-issue115-tests.py \
+            tests/test_qemu_default_version.py \
+            tests/test_qemu_vm_acceptance.py \
             tests/test_updater_issue115.py
           test "$(python3 tools/build-update-release.py --print-version)" = 3.4.1
 
@@ -53,6 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -f tools/apply-issue115-integration.py \
+            tools/fix-issue115-tests.py \
             .github/workflows/apply-issue115-integration.yml
           git add -A
           git diff --cached --check
