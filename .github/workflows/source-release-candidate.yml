@@ -51,9 +51,15 @@ jobs:
       - name: Run source-builder regressions
         run: |
           set -euo pipefail
-          python3 -m py_compile tools/build-source-release.py tools/run-source-release-builder.py tools/compare-source-archives.py
+          python3 -m py_compile \
+            tools/build-source-release.py \
+            tools/run-source-release-builder.py \
+            tools/compare-source-archives.py \
+            tools/generate-source-attestations.py
           python3 -m unittest discover -s tests -p 'test_source_release_builder.py' -v
           python3 -m unittest discover -s tests -p 'test_source_release_entrypoint.py' -v
+          python3 -m unittest discover -s tests -p 'test_source_attestations.py' -v
+          python3 -m unittest discover -s tests -p 'test_single_update_contract.py' -v
           [[ "$(python3 tools/run-source-release-builder.py --repository-root . --print-version)" == "3.4.1" ]]
 
       - name: Build the candidate twice
@@ -74,20 +80,32 @@ jobs:
           [[ "${archive_a##*/}" == "${archive_b##*/}" ]]
           python3 tools/compare-source-archives.py "$archive_a" "$archive_b"
           cmp -- "$archive_a" "$archive_b"
-          cmp -- dist-a/source-build.json dist-b/source-build.json
+          for metadata in \
+            source-build.json \
+            sbom.cdx.json \
+            dependency-lock-attestation.json \
+            source-file-manifest.json; do
+            cmp -- "dist-a/$metadata" "dist-b/$metadata"
+          done
           (
             cd dist-a
-            sha256sum "${archive_a##*/}" source-build.json > SOURCE-CANDIDATE-SHA256SUMS
+            sha256sum \
+              "${archive_a##*/}" \
+              source-build.json \
+              sbom.cdx.json \
+              dependency-lock-attestation.json \
+              source-file-manifest.json \
+              > SOURCE-CANDIDATE-SHA256SUMS
             sha256sum -c SOURCE-CANDIDATE-SHA256SUMS
           )
-          python3 - "$REVIEWED_COMMIT" dist-a/source-build.json <<'PY'
+          python3 - "$REVIEWED_COMMIT" dist-a <<'PY'
           import json
           import pathlib
           import sys
 
           commit = sys.argv[1]
-          path = pathlib.Path(sys.argv[2])
-          payload = json.loads(path.read_text(encoding="utf-8"))
+          directory = pathlib.Path(sys.argv[2])
+          payload = json.loads((directory / "source-build.json").read_text(encoding="utf-8"))
           expected_keys = {
               "archive",
               "baseline",
@@ -110,6 +128,28 @@ jobs:
               raise SystemExit("source-build.json has the wrong source version")
           if payload["release_id"] != "3.4.1-hardened-r1":
               raise SystemExit("source-build.json has the wrong release identifier")
+
+          sbom = json.loads((directory / "sbom.cdx.json").read_text(encoding="utf-8"))
+          if sbom.get("bomFormat") != "CycloneDX" or sbom.get("specVersion") != "1.6":
+              raise SystemExit("SBOM identity mismatch")
+          if not sbom.get("components"):
+              raise SystemExit("SBOM contains no dependency components")
+
+          lock = json.loads(
+              (directory / "dependency-lock-attestation.json").read_text(encoding="utf-8")
+          )
+          if lock.get("source_version") != "3.4.1" or not lock.get("packages"):
+              raise SystemExit("dependency lock attestation mismatch")
+          if lock.get("lock", {}).get("package_count") != len(lock["packages"]):
+              raise SystemExit("dependency lock package count mismatch")
+
+          manifest = json.loads(
+              (directory / "source-file-manifest.json").read_text(encoding="utf-8")
+          )
+          if manifest.get("source_version") != "3.4.1" or not manifest.get("entries"):
+              raise SystemExit("source file manifest mismatch")
+          if manifest.get("scope", {}).get("excludes") != ["source-file-manifest.json"]:
+              raise SystemExit("source file manifest scope mismatch")
           PY
 
       - name: Upload unsigned source candidate
@@ -119,6 +159,9 @@ jobs:
           path: |
             dist-a/hostpanel-v3.4.1-hardened-r1-source.tar.gz
             dist-a/source-build.json
+            dist-a/sbom.cdx.json
+            dist-a/dependency-lock-attestation.json
+            dist-a/source-file-manifest.json
             dist-a/SOURCE-CANDIDATE-SHA256SUMS
           if-no-files-found: error
           retention-days: 7
