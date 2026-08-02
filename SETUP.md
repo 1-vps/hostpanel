@@ -12,49 +12,62 @@ fully automatic launcher is pinned to commit:
 a88be462efa38e479070b89e0a4c90b4b7b202da
 ```
 
+Its verified Git blob is:
+
+```text
+4fa5e025c1516ebaaff260177b572f3253a61aa1
+```
+
 ## Requirements
 
 - Ubuntu 22.04, 24.04, or 26.04; Debian 12 or 13; Rocky Linux 9 or 10; or AlmaLinux 9 or 10
 - x86-64/AMD64 or ARM64/AArch64
 - at least 2 GB RAM and 10 GB free on `/`
 - root access
-- a valid panel FQDN
-- an administrative IP or CIDR
+- a valid panel FQDN or domain
+- an administrative IP or CIDR, or an active SSH connection that can be detected
 - a short-lived GitHub token with **Contents: Read-only** access to `1-vps/hostpanel`
 
 Create a provider snapshot and retain console access before installation.
 
-## Fully automatic installation
+## One-line fully automatic installation
 
-Create a root-only token file without a trailing newline:
+Export the short-lived token in the current shell. The value is piped to `sudo`;
+it is not included in the command line, URL, or root process environment.
 
 ```bash
-sudo install -d -o root -g root -m 0700 /etc/hostpanel
-printf '%s' "$HOSTPANEL_GITHUB_TOKEN" \
-  | sudo tee /etc/hostpanel/install-github.token >/dev/null
-sudo chown root:root /etc/hostpanel/install-github.token
-sudo chmod 0600 /etc/hostpanel/install-github.token
+export HOSTPANEL_GITHUB_TOKEN='github_pat_REPLACE_ME'
+```
+
+Set your domain in the following single command. It derives the panel hostname
+as `panel.example.com`, carries the current SSH source across `sudo`, installs
+missing `curl`/`git` prerequisites, downloads the immutable launcher, verifies
+its Git blob, passes the token on inherited descriptor 3, and starts the complete
+non-interactive installation:
+
+```bash
+printf '%s' "$HOSTPANEL_GITHUB_TOKEN" | sudo env SSH_CONNECTION="${SSH_CONNECTION:-}" HP_PANEL_DOMAIN=example.com bash -c 'set -Eeuo pipefail; umask 077; T=$(cat); [[ "$T" =~ ^[A-Za-z0-9_]{20,512}$ ]] || { echo "Invalid GitHub token input" >&2; exit 1; }; if ! command -v curl >/dev/null || ! command -v git >/dev/null; then if command -v apt-get >/dev/null; then export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y -qq ca-certificates curl git; elif command -v dnf >/dev/null; then dnf -y install ca-certificates curl git; else echo "Unsupported package manager" >&2; exit 1; fi; fi; D=$(mktemp -d /tmp/hostpanel-one-line.XXXXXX); trap "rm -rf -- \"$D\"" EXIT; { printf "header = \"Accept: application/vnd.github.raw+json\"\n"; printf "header = \"Authorization: Bearer %s\"\n" "$T"; printf "header = \"X-GitHub-Api-Version: 2022-11-28\"\n"; } >"$D/curl"; chmod 0600 "$D/curl"; curl --proto "=https" --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 180 --config "$D/curl" "https://api.github.com/repos/1-vps/hostpanel/contents/auto-install.sh?ref=a88be462efa38e479070b89e0a4c90b4b7b202da" -o "$D/install"; rm -f "$D/curl"; [[ "$(git hash-object "$D/install")" == 4fa5e025c1516ebaaff260177b572f3253a61aa1 ]] || { echo "Automatic launcher verification failed" >&2; exit 1; }; chmod 0700 "$D/install"; exec 3<<<"$T"; T=; unset T; HP_GITHUB_TOKEN_FD=3 bash "$D/install"'
 unset HOSTPANEL_GITHUB_TOKEN
 ```
 
-Replace the hostname and CIDR, then run this one line:
+When the machine already has a valid FQDN from `hostname -f`, remove
+`HP_PANEL_DOMAIN=example.com`. To avoid SSH-source detection, add an explicit
+administrative network before `bash -c`:
 
-```bash
-sudo env HP_PANEL_HOST=panel.example.com HP_PANEL_ADMIN_CIDR=192.0.2.10/32 HP_GITHUB_TOKEN_FILE=/etc/hostpanel/install-github.token bash -c 'set -Eeuo pipefail; umask 077; command -v curl >/dev/null || { if command -v apt-get >/dev/null; then apt-get update -qq && apt-get install -y -qq ca-certificates curl; elif command -v dnf >/dev/null; then dnf -y install ca-certificates curl; else exit 1; fi; }; D=$(mktemp -d /tmp/hostpanel-auto-link.XXXXXX); trap "rm -rf -- \"$D\"" EXIT; T=$(cat "$HP_GITHUB_TOKEN_FILE"); [[ "$T" =~ ^[A-Za-z0-9_]{20,512}$ ]]; { printf "header = \"Accept: application/vnd.github.raw+json\"\n"; printf "header = \"Authorization: Bearer %s\"\n" "$T"; printf "header = \"X-GitHub-Api-Version: 2022-11-28\"\n"; } >"$D/curl"; unset T; curl --proto "=https" --tlsv1.2 -fsSL --retry 5 --config "$D/curl" "https://api.github.com/repos/1-vps/hostpanel/contents/auto-install.sh?ref=a88be462efa38e479070b89e0a4c90b4b7b202da" -o "$D/install"; chmod 0700 "$D/install"; bash "$D/install"'
+```text
+HP_PANEL_ADMIN_CIDR=192.0.2.10/32
 ```
 
 The command performs no prompts. It automatically:
 
 1. installs missing bootstrap prerequisites;
 2. validates or detects the panel hostname and administrative CIDR;
-3. reads the token from a root-only file or inherited descriptor;
+3. keeps the token out of URLs and normal process arguments;
 4. verifies the immutable automatic launcher, interactive launcher, bootstrap, and production validator;
 5. runs the complete preflight before mutation;
 6. installs all roles with Postfix by default;
 7. verifies version `3.4.1`, runs the production validator, and runs `hostpanel-doctor`;
 8. writes machine-readable status to `/var/lib/hostpanel/auto-install-status.json`.
-
-The token is never placed in a URL or normal command argument.
 
 ## Automatic detection
 
@@ -68,20 +81,22 @@ HP_PANEL_DOMAIN=example.com
 which resolves to `panel.example.com`.
 
 When `HP_PANEL_ADMIN_CIDR` is omitted, the active SSH source is converted to a
-single-address `/32` or `/128`. Cloud-init normally has no SSH source, so set the
+single-address `/32` or `/128`. The one-line command explicitly carries
+`SSH_CONNECTION` across `sudo`. Cloud-init normally has no SSH source, so set the
 CIDR explicitly there. Missing or unsafe values fail closed; the panel is never
 made public automatically.
 
 ## Provisioning secrets
 
-The installer accepts:
+For cloud-init, systemd credentials, Terraform provisioners, or secret-manager
+integrations, the installer also accepts:
 
 ```text
 HP_GITHUB_TOKEN_FILE=/path/to/root-only-token
 HP_GITHUB_TOKEN_FD=3
 ```
 
-It also discovers:
+It discovers:
 
 ```text
 $CREDENTIALS_DIRECTORY/github-token
