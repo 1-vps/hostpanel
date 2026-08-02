@@ -6,13 +6,15 @@ on:
       - agent/updater-trust-monotonic
     paths:
       - .github/workflows/apply-issue115-integration.yml
+  pull_request:
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
 
 jobs:
   integrate-and-validate:
-    if: ${{ contains(github.event.head_commit.message, 'run issue 115 integration') }}
+    if: ${{ github.event_name == 'pull_request' || contains(github.event.head_commit.message, 'run issue 115 integration') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
