@@ -1,277 +1,191 @@
-Eclipse Public License - v 2.0
+HostPanel End User License Agreement
 
-    THE ACCOMPANYING PROGRAM IS PROVIDED UNDER THE TERMS OF THIS ECLIPSE
-    PUBLIC LICENSE ("AGREEMENT"). ANY USE, REPRODUCTION OR DISTRIBUTION
-    OF THE PROGRAM CONSTITUTES RECIPIENT'S ACCEPTANCE OF THIS AGREEMENT.
+Version 1.0 — Effective [DATE] Applies to HostPanel version 3.x and all associated modules, plugins, and documentation
 
-1. DEFINITIONS
+IMPORTANT — READ CAREFULLY. This End User License Agreement ("Agreement") is a binding legal contract between you, either an individual or a legal entity ("Licensee", "you"), and [LEGAL ENTITY NAME], a company registered in [COUNTRY] under company number [COMPANY REG. NO.], with registered office at [REGISTERED ADDRESS] ("Licensor", "we", "us").
 
-"Contribution" means:
+By downloading, installing, activating a license key for, copying, or otherwise using the Software, you accept this Agreement in full. If you do not accept it, do not install or use the Software and request a refund in accordance with Section 10.
 
-  a) in the case of the initial Contributor, the initial content
-     Distributed under this Agreement, and
+If you are entering into this Agreement on behalf of a company or other legal entity, you represent that you have authority to bind that entity, and "Licensee" refers to that entity.
 
-  b) in the case of each subsequent Contributor:
-     i) changes to the Program, and
-     ii) additions to the Program;
-  where such changes and/or additions to the Program originate from
-  and are Distributed by that particular Contributor. A Contribution
-  "originates" from a Contributor if it was added to the Program by
-  such Contributor itself or anyone acting on such Contributor's behalf.
-  Contributions do not include changes or additions to the Program that
-  are not Modified Works.
+1. Definitions
 
-"Contributor" means any person or entity that Distributes the Program.
+1.1 "Software" means the HostPanel web hosting control panel in object and source form, including all files distributed by Licensor, its command-line tools, daemons, agents, APIs, templates, and Documentation, together with any Updates supplied under this Agreement.
 
-"Licensed Patents" mean patent claims licensable by a Contributor which
-are necessarily infringed by the use or sale of its Contribution alone
-or when combined with the Program.
+1.2 "Modules" means the billing-system integrations (including but not limited to WHMCS, Blesta, and ClientExec modules), whether distributed with the Software or separately, except to the extent any such module is accompanied by its own license file, in which case that license governs that module.
 
-"Program" means the Contributions Distributed in accordance with this
-Agreement.
+1.3 "Documentation" means the installation, administration, and API documentation supplied by Licensor.
 
-"Recipient" means anyone who receives the Program under this Agreement
-or any Secondary License (as applicable), including Contributors.
+1.4 "Licensed Server" means a single physical machine, virtual machine, or container instance on which the Software is installed and which is bound to a valid License Key.
 
-"Derivative Works" shall mean any work, whether in Source Code or other
-form, that is based on (or derived from) the Program and for which the
-editorial revisions, annotations, elaborations, or other modifications
-represent, as a whole, an original work of authorship.
+1.5 "License Key" means the unique credential issued by Licensor that activates the Software on a Licensed Server for the duration of a Subscription Term.
 
-"Modified Works" shall mean any work in Source Code or other form that
-results from an addition to, deletion from, or modification of the
-contents of the Program, including, for purposes of clarity any new file
-in Source Code form that contains any contents of the Program. Modified
-Works shall not include works that contain only declarations,
-interfaces, types, classes, structures, or files of the Program solely
-in each case in order to link to, bind by name, or subclass the Program
-or Modified Works thereof.
+1.6 "Subscription Term" means the period for which Licensee has paid the applicable Fees, as stated in the applicable order or invoice, including any renewal periods.
 
-"Distribute" means the acts of a) distributing or b) making available
-in any manner that enables the transfer of a copy.
+1.7 "Licensing Service" means the Licensor-operated service at [hostpanel.online] or its successor endpoints, against which the Software validates License Keys.
 
-"Source Code" means the form of a Program preferred for making
-modifications, including but not limited to software source code,
-documentation source, and configuration files.
+1.8 "End Users" means Licensee's own customers or personnel who access hosting accounts administered through the Software, without themselves receiving a copy of the Software.
 
-"Secondary License" means either the GNU General Public License,
-Version 2.0, or any later versions of that license, including any
-exceptions or additional permissions as identified by the initial
-Contributor.
+1.9 "Updates" means bug fixes, patches, security releases, and new versions of the Software that Licensor makes generally available to subscribers at no additional charge.
 
-2. GRANT OF RIGHTS
+1.10 "Third-Party Components" means software not authored by Licensor that is distributed with or required by the Software, as identified in the THIRD-PARTY-NOTICES file.
 
-  a) Subject to the terms of this Agreement, each Contributor hereby
-  grants Recipient a non-exclusive, worldwide, royalty-free copyright
-  license to reproduce, prepare Derivative Works of, publicly display,
-  publicly perform, Distribute and sublicense the Contribution of such
-  Contributor, if any, and such Derivative Works.
+2. Grant of License
 
-  b) Subject to the terms of this Agreement, each Contributor hereby
-  grants Recipient a non-exclusive, worldwide, royalty-free patent
-  license under Licensed Patents to make, use, sell, offer to sell,
-  import and otherwise transfer the Contribution of such Contributor,
-  if any, in Source Code or other form. This patent license shall
-  apply to the combination of the Contribution and the Program if, at
-  the time the Contribution is added by the Contributor, such addition
-  of the Contribution causes such combination to be covered by the
-  Licensed Patents. The patent license shall not apply to any other
-  combinations which include the Contribution. No hardware per se is
-  licensed hereunder.
+2.1 Grant. Subject to Licensee's continuous compliance with this Agreement and payment of all Fees, Licensor grants Licensee a limited, non-exclusive, non-transferable, non-sublicensable, revocable license, for the duration of the Subscription Term, to:
 
-  c) Recipient understands that although each Contributor grants the
-  licenses to its Contributions set forth herein, no assurances are
-  provided by any Contributor that the Program does not infringe the
-  patent or other intellectual property rights of any other entity.
-  Each Contributor disclaims any liability to Recipient for claims
-  brought by any other entity based on infringement of intellectual
-  property rights or otherwise. As a condition to exercising the
-  rights and licenses granted hereunder, each Recipient hereby
-  assumes sole responsibility to secure any other intellectual
-  property rights needed, if any. For example, if a third party
-  patent license is required to allow Recipient to Distribute the
-  Program, it is Recipient's responsibility to acquire that license
-  before distributing the Program.
+    (a) install and run one instance of the Software on each Licensed Server for which a valid License Key has been issued;
 
-  d) Each Contributor represents that to its knowledge it has
-  sufficient copyright rights in its Contribution, if any, to grant
-  the copyright license set forth in this Agreement.
+    (b) use the Software to administer hosting services provided by Licensee to its End Users, including in a commercial hosting business;
 
-  e) Notwithstanding the terms of any Secondary License, no
-  Contributor makes additional grants to any Recipient (other than
-  those set forth in this Agreement) as a result of such Recipient's
-  receipt of the Program under the terms of a Secondary License
-  (if permitted under the terms of Section 3).
+    (c) make a reasonable number of copies solely for backup, disaster recovery, and archival purposes; and
 
-3. REQUIREMENTS
+    (d) modify the Software's source code for Licensee's own internal use on Licensed Servers, provided that Section 3 is observed and that Licensor has no obligation to support any modified installation.
 
-3.1 If a Contributor Distributes the Program in any form, then:
+2.2 Non-production instances. Licensee may install the Software on up to [TWO (2)] additional non-production instances per paid Licensed Server for development, staging, testing, or training purposes, provided those instances are not used to host live services for third parties.
 
-  a) the Program must also be made available as Source Code, in
-  accordance with section 3.2, and the Contributor must accompany
-  the Program with a statement that the Source Code for the Program
-  is available under this Agreement, and informs Recipients how to
-  obtain it in a reasonable manner on or through a medium customarily
-  used for software exchange; and
+2.3 Source availability is not open source. The Software is written in an interpreted language and is therefore delivered in human-readable form. Delivery of readable source code confers no rights beyond those expressly granted in this Agreement. The Software is proprietary, commercially licensed software and is not open source, free software, or in the public domain.
 
-  b) the Contributor may Distribute the Program under a license
-  different than this Agreement, provided that such license:
-     i) effectively disclaims on behalf of all other Contributors all
-     warranties and conditions, express and implied, including
-     warranties or conditions of title and non-infringement, and
-     implied warranties or conditions of merchantability and fitness
-     for a particular purpose;
+2.4 Reservation of rights. All rights not expressly granted are reserved by Licensor.
 
-     ii) effectively excludes on behalf of all other Contributors all
-     liability for damages, including direct, indirect, special,
-     incidental and consequential damages, such as lost profits;
+3. Restrictions
 
-     iii) does not attempt to limit or alter the recipients' rights
-     in the Source Code under section 3.2; and
+Except as expressly permitted in Section 2, and except to the extent such restriction is prohibited by mandatory applicable law (including Articles 5 and 6 of Directive 2009/24/EC on the legal protection of computer programs), Licensee shall not, and shall not permit any third party to:
 
-     iv) requires any subsequent distribution of the Program by any
-     party to be under a license that satisfies the requirements
-     of this section 3.
+    (a) sell, resell, rent, lease, lend, distribute, publish, or otherwise make the Software available to any third party, whether or not for charge;
 
-3.2 When the Program is Distributed as Source Code:
+    (b) install or run the Software on any server not covered by a valid License Key, or exceed the number of Licensed Servers paid for;
 
-  a) it must be made available under this Agreement, or if the
-  Program (i) is combined with other material in a separate file or
-  files made available under a Secondary License, and (ii) the initial
-  Contributor attached to the Source Code the notice described in
-  Exhibit A of this Agreement, then the Program may be made available
-  under the terms of such Secondary Licenses, and
+    (c) disable, bypass, tamper with, spoof, emulate, or otherwise circumvent the License Key mechanism, the Licensing Service, or any technical protection or usage-metering measure in the Software;
 
-  b) a copy of this Agreement must be included with each copy of
-  the Program.
+    (d) share, publish, or transfer a License Key to any third party;
 
-3.3 Contributors may not remove or alter any copyright, patent,
-trademark, attribution notices, disclaimers of warranty, or limitations
-of liability ("notices") contained within the Program from any copy of
-the Program which they Distribute, provided that Contributors may add
-their own appropriate notices.
+    (e) remove, obscure, or alter any copyright, trademark, license, or attribution notice contained in the Software;
 
-4. COMMERCIAL DISTRIBUTION
+    (f) use the Software, or any part of it, to create, develop, or assist in the development of a product that competes with the Software;
 
-Commercial distributors of software may accept certain responsibilities
-with respect to end users, business partners and the like. While this
-license is intended to facilitate the commercial use of the Program,
-the Contributor who includes the Program in a commercial product
-offering should do so in a manner which does not create potential
-liability for other Contributors. Therefore, if a Contributor includes
-the Program in a commercial product offering, such Contributor
-("Commercial Contributor") hereby agrees to defend and indemnify every
-other Contributor ("Indemnified Contributor") against any losses,
-damages and costs (collectively "Losses") arising from claims, lawsuits
-and other legal actions brought by a third party against the Indemnified
-Contributor to the extent caused by the acts or omissions of such
-Commercial Contributor in connection with its distribution of the Program
-in a commercial product offering. The obligations in this section do not
-apply to any claims or Losses relating to any actual or alleged
-intellectual property infringement. In order to qualify, an Indemnified
-Contributor must: a) promptly notify the Commercial Contributor in
-writing of such claim, and b) allow the Commercial Contributor to control,
-and cooperate with the Commercial Contributor in, the defense and any
-related settlement negotiations. The Indemnified Contributor may
-participate in any such claim at its own expense.
+    (g) offer the Software to third parties as a hosted, managed, or "as-a-service" offering in which the third party obtains administrative control of a Software instance, other than the ordinary provision of hosting accounts to End Users as contemplated in Section 2.1(b);
 
-For example, a Contributor might include the Program in a commercial
-product offering, Product X. That Contributor is then a Commercial
-Contributor. If that Commercial Contributor then makes performance
-claims, or offers warranties related to Product X, those performance
-claims and warranties are such Commercial Contributor's responsibility
-alone. Under this section, the Commercial Contributor would have to
-defend claims against the other Contributors related to those performance
-claims and warranties, and if a court requires any other Contributor to
-pay any damages as a result, the Commercial Contributor must pay
-those damages.
+    (h) use the Software in violation of any applicable law, or to host, distribute, or facilitate unlawful content or activity; or
 
-5. NO WARRANTY
+    (i) publish, disclose, or make available the Software's source code, in whole or in substantial part, to any person other than Licensee's own personnel and contractors who are bound by confidentiality obligations no less protective than Section 7.
 
-EXCEPT AS EXPRESSLY SET FORTH IN THIS AGREEMENT, AND TO THE EXTENT
-PERMITTED BY APPLICABLE LAW, THE PROGRAM IS PROVIDED ON AN "AS IS"
-BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR
-IMPLIED INCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OR CONDITIONS OF
-TITLE, NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR
-PURPOSE. Each Recipient is solely responsible for determining the
-appropriateness of using and distributing the Program and assumes all
-risks associated with its exercise of rights under this Agreement,
-including but not limited to the risks and costs of program errors,
-compliance with applicable laws, damage to or loss of data, programs
-or equipment, and unavailability or interruption of operations.
+4. License Keys, Activation, and Verification
 
-6. DISCLAIMER OF LIABILITY
+4.1 Activation. The Software requires activation against the Licensing Service and will periodically re-validate its License Key. Licensee shall maintain network connectivity sufficient to permit this validation.
 
-EXCEPT AS EXPRESSLY SET FORTH IN THIS AGREEMENT, AND TO THE EXTENT
-PERMITTED BY APPLICABLE LAW, NEITHER RECIPIENT NOR ANY CONTRIBUTORS
-SHALL HAVE ANY LIABILITY FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING WITHOUT LIMITATION LOST
-PROFITS), HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-ARISING IN ANY WAY OUT OF THE USE OR DISTRIBUTION OF THE PROGRAM OR THE
-EXERCISE OF ANY RIGHTS GRANTED HEREUNDER, EVEN IF ADVISED OF THE
-POSSIBILITY OF SUCH DAMAGES.
+4.2 Data transmitted. During activation and validation, the Software transmits to the Licensing Service: the License Key, the Licensed Server's IP address and hostname, a hardware or installation fingerprint, the installed Software version, and the operating system version. Licensor processes this data solely to verify license entitlement, prevent unauthorized use, provide support, and produce aggregate usage statistics. Processing is described in Licensor's Privacy Policy at [URL].
 
-7. GENERAL
+4.3 Grace period and degradation. If validation fails, the Software will continue to operate normally for a grace period of [SEVEN (7)] days. After the grace period, administrative functions may be progressively restricted. Hosted services, websites, mailboxes, and databases already provisioned on the Licensed Server will not be interrupted by license expiry or validation failure.
 
-If any provision of this Agreement is invalid or unenforceable under
-applicable law, it shall not affect the validity or enforceability of
-the remainder of the terms of this Agreement, and without further
-action by the parties hereto, such provision shall be reformed to the
-minimum extent necessary to make such provision valid and enforceable.
+4.4 Suspension of keys. Licensor may suspend or revoke a License Key where Fees are overdue by more than [FIFTEEN (15)] days, where Licensee materially breaches Section 3, or where Licensor reasonably suspects the key has been compromised or shared. Except where the breach is Section 3(c) or (d), Licensor will give Licensee at least seven (7) days' notice and an opportunity to cure before revocation.
 
-If Recipient institutes patent litigation against any entity
-(including a cross-claim or counterclaim in a lawsuit) alleging that the
-Program itself (excluding combinations of the Program with other software
-or hardware) infringes such Recipient's patent(s), then such Recipient's
-rights granted under Section 2(b) shall terminate as of the date such
-litigation is filed.
+5. Fees, Taxes, and Renewal
 
-All Recipient's rights under this Agreement shall terminate if it
-fails to comply with any of the material terms or conditions of this
-Agreement and does not cure such failure in a reasonable period of
-time after becoming aware of such noncompliance. If all Recipient's
-rights under this Agreement terminate, Recipient agrees to cease use
-and distribution of the Program as soon as reasonably practicable.
-However, Recipient's obligations under this Agreement and any licenses
-granted by Recipient relating to the Program shall continue and survive.
+5.1 Fees. Licensee shall pay the fees set out in the applicable order, invoice, or published price list ("Fees"). Fees are payable in advance for each Subscription Term.
 
-Everyone is permitted to copy and distribute copies of this Agreement,
-but in order to avoid inconsistency the Agreement is copyrighted and
-may only be modified in the following manner. The Agreement Steward
-reserves the right to publish new versions (including revisions) of
-this Agreement from time to time. No one other than the Agreement
-Steward has the right to modify this Agreement. The Eclipse Foundation
-is the initial Agreement Steward. The Eclipse Foundation may assign the
-responsibility to serve as the Agreement Steward to a suitable separate
-entity. Each new version of the Agreement will be given a distinguishing
-version number. The Program (including Contributions) may always be
-Distributed subject to the version of the Agreement under which it was
-received. In addition, after a new version of the Agreement is published,
-Contributor may elect to Distribute the Program (including its
-Contributions) under the new version.
+5.2 Taxes and VAT. Fees are exclusive of VAT and any other applicable taxes or duties, which will be added where required. Where Licensee is a business established in an EU Member State other than Licensor's, Licensee shall provide a valid VAT identification number, and the reverse charge mechanism will apply. Licensee is responsible for the accuracy of any VAT number provided and for any liability arising from an invalid number.
 
-Except as expressly stated in Sections 2(a) and 2(b) above, Recipient
-receives no rights or licenses to the intellectual property of any
-Contributor under this Agreement, whether expressly, by implication,
-estoppel or otherwise. All rights in the Program not expressly granted
-under this Agreement are reserved. Nothing in this Agreement is intended
-to be enforceable by any entity that is not a Contributor or Recipient.
-No third-party beneficiary rights are created under this Agreement.
+5.3 Automatic renewal. Unless cancelled before the end of the current Subscription Term, subscriptions renew automatically for successive periods of equal length at the then-current price. Licensee may cancel renewal at any time through the customer portal.
 
-Exhibit A - Form of Secondary Licenses Notice
+5.4 Price changes. Licensor may change prices for renewal terms on not less than thirty (30) days' written notice before the renewal date. If Licensee does not accept the change, Licensee may cancel renewal before the renewal date.
 
-"This Source Code may also be made available under the following
-Secondary Licenses when the conditions for such availability set forth
-in the Eclipse Public License, v. 2.0 are satisfied: {name license(s),
-version(s), and exceptions or additional permissions here}."
+5.5 Late payment. Overdue amounts bear interest at the rate provided by applicable law on late payment in commercial transactions, calculated from the due date until payment.
 
-  Simply including a copy of this Agreement, including this Exhibit A
-  is not sufficient to license the Source Code under Secondary Licenses.
+6. Ownership and Third-Party Components
 
-  If it is not possible or desirable to put the notice in a particular
-  file, then You may include the notice in a location (such as a LICENSE
-  file in a relevant directory) where a recipient would be likely to
-  look for such a notice.
+6.1 Ownership. The Software is licensed, not sold. Licensor and its licensors retain all right, title, and interest in and to the Software, including all copyrights, trade secrets, trademarks, and other intellectual property rights.
 
-  You may add additional accurate notices of copyright ownership.
+6.2 Modifications. Any modification Licensee makes to the Software under Section 2.1(d) remains a derivative work of the Software. Licensee owns its own original code but may exercise rights in it only in a manner consistent with this Agreement, and may not distribute it in a form that includes or discloses the Software.
+
+6.3 Feedback. If Licensee provides suggestions, feature requests, or bug reports, Licensor may use them without restriction or obligation.
+
+6.4 Third-Party Components. Third-Party Components are licensed under their own terms, which are set out in the THIRD-PARTY-NOTICES file and which prevail over this Agreement in respect of those components. Nothing in this Agreement restricts any right Licensee has under an open source license covering a Third-Party Component.
+
+7. Confidentiality
+
+The Software's source code, architecture, and non-public documentation constitute Licensor's confidential information and trade secrets. Licensee shall protect them using at least the degree of care it applies to its own confidential information and not less than reasonable care, and shall disclose them only to personnel and contractors with a need to know who are bound by written confidentiality obligations. This Section does not apply to information that is or becomes public through no fault of Licensee, or that Licensee is required to disclose by law, provided Licensee gives Licensor prompt notice where lawful.
+
+8. Support and Updates
+
+8.1 During an active Subscription Term, Licensor will make Updates available and will provide support in accordance with the support policy published at [URL].
+
+8.2 Licensor has no obligation to support installations that are modified, that run unsupported operating systems or PHP versions, or whose License Key is expired or suspended.
+
+8.3 Licensor may discontinue support for a major version of the Software on not less than [SIX (6)] months' notice.
+
+9. Data Protection
+
+Where Licensor processes personal data on Licensee's behalf, the parties' respective obligations under Regulation (EU) 2016/679 (GDPR) are set out in the Data Processing Agreement at [URL], which is incorporated by reference. Licensee is the controller in respect of its End Users' data held within the Software; Licensor does not access that data except where necessary to provide support at Licensee's request.
+
+10. Term, Termination, and Refunds
+
+10.1 Term. This Agreement takes effect on first installation or activation and continues for as long as any Subscription Term remains active.
+
+10.2 Termination by Licensee. Licensee may terminate at any time by ceasing use of the Software and cancelling its subscription. Fees already paid are non-refundable except as stated in Section 10.4 or as required by law.
+
+10.3 Termination by Licensor. Licensor may terminate this Agreement on written notice if Licensee materially breaches it and fails to cure within thirty (30) days of notice, or immediately in the case of a breach of Section 3(a), 3(c), 3(d), or 3(f).
+
+10.4 Refund period. Licensee may request a full refund within [FOURTEEN (14)] days of first purchase of a License Key by contacting [support email]. Refunds are not available on renewals.
+
+10.5 Consumers — right of withdrawal. Where Licensee is a consumer resident in the EU, Licensee has a statutory right of withdrawal within fourteen (14) days under Directive 2011/83/EU. By downloading or activating the Software within that period, Licensee expressly requests immediate performance and acknowledges losing the right of withdrawal upon commencement of delivery of the digital content.
+
+10.6 Effect of termination. On termination or expiry, all licenses granted terminate, License Keys are deactivated, and Licensee shall cease all use of the Software and delete or destroy all copies, except that Licensee may retain archival backups it is required to keep by law. Sections 3, 6, 7, 11, 12, 13, and 15 survive termination.
+
+11. Warranty and Disclaimer
+
+11.1 Limited warranty. Licensor warrants that, for ninety (90) days from first delivery, the Software will perform substantially in accordance with the Documentation. Licensee's exclusive remedy for breach of this warranty is, at Licensor's option, correction of the Software or refund of the Fees paid for the affected Subscription Term.
+
+11.2 Disclaimer. EXCEPT AS EXPRESSLY STATED IN SECTION 11.1, AND TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, WHETHER EXPRESS, IMPLIED, OR STATUTORY, INCLUDING ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, ACCURACY, OR NON-INFRINGEMENT. LICENSOR DOES NOT WARRANT THAT THE SOFTWARE WILL BE UNINTERRUPTED, ERROR-FREE, OR SECURE AGAINST ALL ATTACKS.
+
+11.3 Security. Licensee is responsible for securing its own servers, operating systems, network, credentials, and backups, and for applying security Updates promptly. The Software is administrative software operating with elevated privileges; Licensee acknowledges the associated risk.
+
+11.4 Consumers. Nothing in this Section limits statutory rights that a consumer has under mandatory applicable law.
+
+12. Limitation of Liability
+
+12.1 TO THE MAXIMUM EXTENT PERMITTED BY LAW, LICENSOR SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, GOODWILL, BUSINESS, DATA, OR ANTICIPATED SAVINGS, ARISING OUT OF OR RELATING TO THIS AGREEMENT OR THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+12.2 LICENSOR'S TOTAL AGGREGATE LIABILITY ARISING OUT OF OR RELATING TO THIS AGREEMENT SHALL NOT EXCEED THE TOTAL FEES PAID BY LICENSEE TO LICENSOR IN THE TWELVE (12) MONTHS IMMEDIATELY PRECEDING THE EVENT GIVING RISE TO THE CLAIM.
+
+12.3 Nothing in this Agreement excludes or limits liability for: death or personal injury caused by negligence; fraud or fraudulent misrepresentation; intentional misconduct or gross negligence; or any other liability that cannot lawfully be excluded or limited.
+
+12.4 Data loss. Licensee is solely responsible for maintaining independent, tested backups of all data on Licensed Servers. Licensor is not liable for loss or corruption of Licensee's or End Users' data.
+
+13. Indemnification
+
+13.1 By Licensor. Licensor will defend Licensee against any third-party claim that the unmodified Software, used in accordance with this Agreement, infringes that party's copyright or trade secret rights, and will pay damages finally awarded, provided Licensee gives prompt notice, reasonable cooperation, and sole control of the defence. If the Software becomes subject to such a claim, Licensor may at its option procure the right to continue use, modify the Software to be non-infringing, or terminate the license and refund Fees for the unexpired portion of the Subscription Term. This obligation does not apply to claims arising from modifications made by Licensee, combination with software not supplied by Licensor, or use in breach of this Agreement.
+
+13.2 By Licensee. Licensee will indemnify Licensor against any third-party claim arising from Licensee's use of the Software in breach of this Agreement or from content or services Licensee provides to its End Users.
+
+14. Audit
+
+Licensor may, on not less than thirty (30) days' written notice and not more than once in any twelve-month period, request that Licensee certify in writing the number of Licensed Servers on which the Software is installed. If an audit reveals underpayment exceeding five percent (5%), Licensee shall pay the shortfall together with Licensor's reasonable audit costs.
+
+15. General
+
+15.1 Governing law. This Agreement is governed by the laws of [Sweden], excluding its conflict-of-laws rules and the United Nations Convention on Contracts for the International Sale of Goods.
+
+15.2 Jurisdiction. The courts of [Stockholm, Sweden] have exclusive jurisdiction over any dispute arising out of this Agreement. Where Licensee is a consumer, this does not deprive Licensee of the protection of mandatory provisions of the law of Licensee's country of residence, nor of the right to bring proceedings in the courts of that country.
+
+15.3 Assignment. Licensee may not assign or transfer this Agreement or any License Key without Licensor's prior written consent, except to a successor of all or substantially all of its business on written notice to Licensor. Licensor may assign this Agreement freely.
+
+15.4 Export and sanctions. Licensee shall comply with all applicable export control and sanctions laws and shall not make the Software available to any person or in any jurisdiction where doing so is prohibited.
+
+15.5 Changes to this Agreement. Licensor may amend this Agreement for future Subscription Terms on not less than thirty (30) days' notice before renewal. Continued use after the renewal date constitutes acceptance. The version of this Agreement in force at the start of a Subscription Term governs that term.
+
+15.6 Entire agreement. This Agreement, together with any order form, the Data Processing Agreement, and the support policy, constitutes the entire agreement between the parties and supersedes all prior proposals and representations. Any conflicting or additional terms in Licensee's purchase order are rejected and have no effect.
+
+15.7 Severability. If any provision is held unenforceable, it shall be modified to the minimum extent necessary to make it enforceable, and the remaining provisions remain in full force.
+
+15.8 No waiver. Failure to enforce any provision is not a waiver of the right to enforce it later.
+
+15.9 Force majeure. Neither party is liable for delay or failure to perform caused by events beyond its reasonable control, excluding payment obligations.
+
+15.10 Language. This Agreement is concluded in English. Any translation is provided for convenience only, and the English version prevails.
+
+16. Contact
+
+[LEGAL ENTITY NAME] [REGISTERED ADDRESS] Company number: [COMPANY REG. NO.] VAT number: [VAT NO.] Email: [legal@hostpanel.online]
+
+Copyright © [YEAR] [LEGAL ENTITY NAME]. All rights reserved. HostPanel is a trademark of [LEGAL ENTITY NAME].
