@@ -17,6 +17,7 @@ import tempfile
 from types import ModuleType
 from typing import Sequence
 
+sys.dont_write_bytecode = True
 
 SOURCE_METADATA = (
     "source-build.json",
@@ -98,8 +99,18 @@ def copy_exclusive(source: pathlib.Path, destination: pathlib.Path) -> None:
         raise ReleaseBundleError(f"release payload is missing: {source}") from exc
     if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
         raise ReleaseBundleError(f"release payload is unsafe: {source}")
+    if metadata.st_size <= 0 or metadata.st_size > MAX_FILE_BYTES:
+        raise ReleaseBundleError(f"release payload has an unsafe size: {source}")
     with source.open("rb") as input_handle, destination.open("xb") as output_handle:
-        shutil.copyfileobj(input_handle, output_handle, length=1024 * 1024)
+        remaining = metadata.st_size
+        while remaining:
+            chunk = input_handle.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise ReleaseBundleError(f"release payload changed size while copying: {source}")
+            output_handle.write(chunk)
+            remaining -= len(chunk)
+        if input_handle.read(1):
+            raise ReleaseBundleError(f"release payload grew while copying: {source}")
         output_handle.flush()
         os.fsync(output_handle.fileno())
     os.chmod(destination, 0o644)
@@ -138,6 +149,13 @@ def require_empty_output_directory(output_dir: pathlib.Path) -> None:
             raise ReleaseBundleError("release output directory must be empty")
     else:
         output_dir.mkdir(parents=True, mode=0o755)
+
+
+def validate_summary_path(summary_path: pathlib.Path, output_dir: pathlib.Path) -> None:
+    if summary_path == output_dir or output_dir in summary_path.parents:
+        raise ReleaseBundleError("bundle summary must be outside the release payload directory")
+    if summary_path.exists() or summary_path.is_symlink():
+        raise ReleaseBundleError(f"refusing to overwrite bundle summary: {summary_path}")
 
 
 def build(
@@ -275,20 +293,21 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    output_dir = args.output_dir.resolve()
+    summary_path = args.summary.resolve() if args.summary is not None else None
     try:
+        if summary_path is not None:
+            validate_summary_path(summary_path, output_dir)
         summary = build(
             args.repository_root.resolve(),
             args.commit,
             args.channel,
-            args.output_dir.resolve(),
+            output_dir,
         )
         encoded = (
             json.dumps(summary, sort_keys=True, separators=(",", ":")) + "\n"
         ).encode("utf-8")
-        if args.summary is not None:
-            summary_path = args.summary.resolve()
-            if summary_path.exists() or summary_path.is_symlink():
-                raise ReleaseBundleError(f"refusing to overwrite bundle summary: {summary_path}")
+        if summary_path is not None:
             summary_path.parent.mkdir(parents=True, exist_ok=True)
             with summary_path.open("xb") as handle:
                 handle.write(encoded)
