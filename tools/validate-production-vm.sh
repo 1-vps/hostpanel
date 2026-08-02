@@ -51,15 +51,16 @@ fi
 
 EXPECTED_VERSION="${HP_EXPECTED_VERSION:-3.4.0}"
 STATE_DIR="${HP_VALIDATION_STATE_DIR:-/var/lib/hostpanel-validation}"
-REPORT_DIR="${HP_VALIDATION_REPORT_DIR:-/var/log}"
+REPORT_DIR="${HP_VALIDATION_REPORT_DIR:-$STATE_DIR/reports}"
 REBOOT_STATE="$STATE_DIR/pre-reboot.boot-id"
+"$PYTHON3" -I "$VALIDATION_IO" ensure-directory "$STATE_DIR" 700
+"$PYTHON3" -I "$VALIDATION_IO" ensure-directory "$REPORT_DIR" 755
 
 if [[ "${HP_VALIDATION_REPORT_ACTIVE:-no}" != yes ]]; then
   exec "$PYTHON3" -I "$VALIDATION_IO" run-with-report "$REPORT_DIR" -- \
     "$BASH_BIN" "$SCRIPT_PATH" "$@"
 fi
 REPORT="${HP_VALIDATION_REPORT_PATH:?secure report path is missing}"
-"$PYTHON3" -I "$VALIDATION_IO" ensure-directory "$STATE_DIR" 700
 
 PASS_COUNT=0
 WARN_COUNT=0
