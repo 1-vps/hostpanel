@@ -575,15 +575,19 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$SSHPASS" ]] || { echo 'Missing VPS_ROOT_PASSWORD.' >&2; exit 1; }
+          collection_failed=false
+          cleanup_failed=false
           mkdir -p "$EVIDENCE_ROOT/remote"
-          sshpass -e scp -r -P "${VPS_PORT:-22}" \
+          if ! sshpass -e scp -r -P "${VPS_PORT:-22}" \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o PreferredAuthentications=password \
             -o PubkeyAuthentication=no \
             -o ConnectTimeout=20 \
-            root@"$VPS_HOST":/root/hostpanel-acceptance-evidence/. "$EVIDENCE_ROOT/remote/" || true
-          timeout 90s sshpass -e ssh -p "${VPS_PORT:-22}" \
+            root@"$VPS_HOST":/root/hostpanel-acceptance-evidence/. "$EVIDENCE_ROOT/remote/"; then
+            collection_failed=true
+          fi
+          if ! timeout 90s sshpass -e ssh -p "${VPS_PORT:-22}" \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o PreferredAuthentications=password \
@@ -592,9 +596,23 @@ jobs:
             -o ServerAliveInterval=15 \
             -o ServerAliveCountMax=4 \
             root@"$VPS_HOST" \
-            'rm -f /root/hostpanel-acceptance.env /root/bootstrap-install.sh /root/validate-production-vm.sh /root/hostpanel-acceptance-remote.sh' \
-            || true
+            'rm -f /root/hostpanel-acceptance.env /root/bootstrap-install.sh /root/validate-production-vm.sh /root/hostpanel-acceptance-remote.sh'; then
+            cleanup_failed=true
+          fi
+          {
+            printf 'remote_evidence_collection=%s\n' "$collection_failed"
+            printf 'remote_transient_cleanup=%s\n' "$cleanup_failed"
+          } > "$EVIDENCE_ROOT/collection-status.txt"
+          chmod 600 "$EVIDENCE_ROOT/collection-status.txt"
           find "$EVIDENCE_ROOT" -type f -exec chmod 600 {} +
+          if [[ "$collection_failed" == true ]]; then
+            echo 'Remote provider evidence collection failed.' >&2
+            exit 1
+          fi
+          if [[ "$cleanup_failed" == true ]]; then
+            echo 'Remote transient-state cleanup failed.' >&2
+            exit 1
+          fi
 
       - name: Sanitize and seal provider evidence before upload
         if: always()
