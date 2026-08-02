@@ -13,12 +13,12 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 UPDATER_PATH = ROOT / "tools" / "hostpanel-update.py"
 BUILDER_PATH = ROOT / "tools" / "build-update-release.py"
+HARDENER_PATH = ROOT / "tools" / "harden_install.py"
 INSTALL_AGENT = ROOT / "tools" / "install-update-agent.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "publish-release.yml"
 SERVICE = ROOT / "packaging" / "systemd" / "hostpanel-update.service"
 TIMER = ROOT / "packaging" / "systemd" / "hostpanel-update.timer"
 PUBLIC_KEY = ROOT / "releases" / "update.pub"
-INSTALLER = ROOT / "install.sh"
 
 
 def load_updater():
@@ -39,11 +39,13 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
         cls.install_agent = INSTALL_AGENT.read_text(encoding="utf-8")
         cls.service = SERVICE.read_text(encoding="utf-8")
         cls.timer = TIMER.read_text(encoding="utf-8")
-        cls.installer = INSTALLER.read_text(encoding="utf-8")
+        cls.hardener = HARDENER_PATH.read_text(encoding="utf-8")
 
     def test_release_workflow_publishes_new_signed_source_versions(self) -> None:
         self.assertIn("branches: [main]", self.workflow)
         self.assertIn("hostpanel-v*-source.tar.gz", self.workflow)
+        self.assertIn("hostpanel-v*-source.tar.gz.sig", self.workflow)
+        self.assertIn("SHA256SUMS", self.workflow)
         self.assertIn("permissions:\n  contents: write", self.workflow)
         self.assertIn(
             'gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG"',
@@ -73,9 +75,13 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
         self.assertIn("OnUnitActiveSec=5min", self.timer)
         self.assertIn("Persistent=true", self.timer)
 
-    def test_installer_refreshes_update_agent_after_success(self) -> None:
-        self.assertIn("tools/install-update-agent.sh", self.installer)
-        self.assertIn('bash "$SCRIPT_DIR/tools/install-update-agent.sh"', self.installer)
+    def test_generated_installer_enables_agent_after_health_checks(self) -> None:
+        self.assertIn("signed GitHub update agent installation", self.hardener)
+        self.assertIn(
+            'bash "$SOURCE_ROOT/tools/install-update-agent.sh" >>"$LOG" 2>&1',
+            self.hardener,
+        )
+        self.assertIn('for backup in "${TREE_ROLLBACK_BACKUPS[@]}"; do', self.hardener)
 
     def test_public_key_is_ed25519_pem(self) -> None:
         text = PUBLIC_KEY.read_text(encoding="utf-8")
@@ -144,6 +150,7 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
     def test_source_files_compile_or_parse(self) -> None:
         compile(UPDATER_PATH.read_text(encoding="utf-8"), str(UPDATER_PATH), "exec")
         compile(BUILDER_PATH.read_text(encoding="utf-8"), str(BUILDER_PATH), "exec")
+        compile(HARDENER_PATH.read_text(encoding="utf-8"), str(HARDENER_PATH), "exec")
         self.assertTrue(
             INSTALL_AGENT.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash")
         )
