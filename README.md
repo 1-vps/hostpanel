@@ -8,12 +8,16 @@ HostPanel is a multi-tenant Linux hosting control panel for web, DNS, mail,
 databases, backups, certificates, firewall policy, monitoring, and infrastructure
 operations.
 
-**Current working release label:** `3.4.0-hardened-r6`  
-**Signed base release:** `3.4.0-hardened-r5`  
-**Installed `/opt/hostpanel/VERSION`:** `3.4.0`  
-**Reviewed installer overlay:** `9c38d0095563ea33efd14124babfd29556c0da46`  
-**Merged implementation:** `6a2b8f76ece798408ef7b04586e73be8c3041750`  
-**License:** MIT
+**Current deployable release:** `3.4.1`  
+**Signed base source:** `3.4.0-hardened-r5`  
+**Installed `/opt/hostpanel/VERSION`:** `3.4.1`  
+**Production publication:** blocked until every release gate and the final legal terms are complete  
+**License:** Proprietary — see [LICENSE](LICENSE).
+
+> The current `LICENSE` file is an EULA draft with unresolved legal placeholders.
+> It must not be treated as approved commercial terms. Signed publication remains
+> fail-closed until an authorized legal representative supplies and approves every
+> required identity, policy, contact, jurisdiction, and commercial-term value.
 
 > HostPanel changes operating-system packages, service configuration, firewall
 > rules, databases, mail, DNS, scheduled jobs, and customer data paths. Validate
@@ -26,13 +30,13 @@ Do not execute an unpinned branch script as root.
 The installer uses two independent verification layers:
 
 1. an embedded long-lived release public key verifies the signed
-   `3.4.0-hardened-r5` source archive;
-2. the operator-supplied full Git commit SHA authenticates every installer
-   overlay object that derives the `3.4.0-hardened-r6` working release.
+   `3.4.0-hardened-r5` base-source archive;
+2. the operator-supplied full Git commit SHA authenticates every reviewed overlay
+   object used to derive deployable release `3.4.1`.
 
-The signed application writes `3.4.0` to `/opt/hostpanel/VERSION`. The
-`hardened-r5` and `hardened-r6` identifiers are packaging and installer-overlay
-revision labels, not installed application versions.
+The resulting installation writes `3.4.1` to `/opt/hostpanel/VERSION`. The signed
+base-source label identifies the authenticated starting archive, not the final
+installed release.
 
 ## Requirements
 
@@ -52,38 +56,17 @@ reviewed external repository yourself, then use `HP_MULTI_PHP_REPO=off` and
 ## Secure private-repository installation
 
 Anonymous `raw.githubusercontent.com` commands do not work for this private
-repository. Do not put a GitHub token in a URL or command-line argument. The full
-root-shell procedure, including token cleanup, is documented in
-[`SETUP.md`](SETUP.md).
+repository. Do not put a GitHub token in a URL or command-line argument. Follow
+the complete root-shell procedure in [`SETUP.md`](SETUP.md), including:
 
-The procedure:
+1. a hidden prompt for a short-lived read-only token;
+2. GitHub Contents API downloads bound to the documented full reviewed commit SHA;
+3. transient Git authentication scoped only to the exact fetch and detached checkout;
+4. immediate removal of token material and Git authentication variables before
+   any repository-controlled helper or installer runs.
 
-1. prompts without echo for a short-lived read-only token;
-2. downloads `bootstrap-install.sh` and `tools/validate-production-vm.sh` through
-   the GitHub Contents API from exactly
-   `9c38d0095563ea33efd14124babfd29556c0da46`;
-3. provides transient Git authentication only while the bootstrap fetches that
-   reviewed commit;
-4. removes the token file, plain token, encoded header, and Git authentication
-   variables after installation.
-
-After the pinned files and transient Git authentication are prepared, run:
-
-```bash
-HP_REPO_REF=9c38d0095563ea33efd14124babfd29556c0da46 \
-HP_PANEL_HOST=panel.example.com \
-HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
-HP_MULTI_PHP_REPO=off \
-HP_RSPAMD_REPO=off \
-bash /root/bootstrap-install.sh --check --mta postfix
-
-HP_REPO_REF=9c38d0095563ea33efd14124babfd29556c0da46 \
-HP_PANEL_HOST=panel.example.com \
-HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
-HP_MULTI_PHP_REPO=off \
-HP_RSPAMD_REPO=off \
-bash /root/bootstrap-install.sh --mta postfix
-```
+Always use the exact reviewed commit and blob identifiers recorded in `SETUP.md`.
+Run the documented `--check` invocation before the mutating installation.
 
 Public panel exposure is fail-closed. When no administrative source can be
 detected, installation stops unless `HP_PANEL_ADMIN_CIDR` is supplied.
@@ -111,7 +94,7 @@ bash /root/validate-production-vm.sh --check
 Expected installed application version:
 
 ```text
-3.4.0
+3.4.1
 ```
 
 Installer log:
@@ -142,8 +125,9 @@ code must not receive the same runner trust boundary.
 [`.github/workflows/vps-acceptance.yml`](.github/workflows/vps-acceptance.yml) is
 manual, environment-gated, and destructive. It checks out the exact reviewed
 commit, verifies `HEAD` before any VPS connection and before installation,
-requires a confirmed provider snapshot, uses strict SSH host verification, and
-removes transient Git authentication on all exit paths.
+requires a fresh provider snapshot bound to the run, uses strict SSH host
+verification, sanitizes and seals evidence, and removes transient authentication
+on all exit paths.
 
 This complements QEMU by testing public networking, trusted TLS, DNS delegation,
 mail deliverability, reverse DNS, backup/restore, quota enforcement, and recovery
@@ -158,7 +142,9 @@ Before serving customers:
 3. test every selected role and required service externally;
 4. create a backup and perform a restore test;
 5. verify firewall persistence and reconnect over the configured SSH port;
-6. configure trusted TLS, DNS, reverse DNS, SPF, DKIM, and DMARC as applicable.
+6. configure trusted TLS, DNS, reverse DNS, SPF, DKIM, and DMARC as applicable;
+7. close every release-gate issue with current, reviewable evidence;
+8. complete and approve every legal term in `LICENSE`.
 
 ## Maintained documentation
 
@@ -167,5 +153,4 @@ Before serving customers:
 - [`SECURITY.md`](SECURITY.md)
 - [`FIREWALL.md`](FIREWALL.md)
 - [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md)
-
-Current deployable overlay release: **3.4.1** (signed base source: `3.4.0`).
+- [`UPDATES.md`](UPDATES.md)
