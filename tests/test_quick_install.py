@@ -9,6 +9,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "quick-install.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "installer-hardening.yml"
+SETUP = ROOT / "SETUP.md"
 EXPECTED_RELEASE_COMMIT = "d50ccea35aa6356f7f815a606fa91f6186b66a6f"
 EXPECTED_BOOTSTRAP_BLOB = "639fae60ddd5bec36f5e3167dd21733a412a69fd"
 EXPECTED_VALIDATOR_BLOB = "2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9"
@@ -19,6 +20,7 @@ class QuickInstallTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.source = INSTALLER.read_text(encoding="utf-8")
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
+        cls.setup = SETUP.read_text(encoding="utf-8")
 
     def test_shell_syntax_and_help(self) -> None:
         subprocess.run(["bash", "-n", str(INSTALLER)], check=True)
@@ -70,6 +72,15 @@ class QuickInstallTests(unittest.TestCase):
         for variable in ("PYTHONPATH", "PYTHONHOME", "BASH_ENV", "LD_PRELOAD"):
             self.assertIn(variable, self.source)
         self.assertIn("umask 077", self.source)
+
+
+    def test_documented_one_line_launcher_is_immutable_and_private_safe(self) -> None:
+        self.assertIn("c534a220ad775b4fe94e53ae297d1698444c1388", self.setup)
+        self.assertIn("contents/quick-install.sh?ref=c534a220ad775b4fe94e53ae297d1698444c1388", self.setup)
+        self.assertIn("HP_GITHUB_TOKEN_FILE=\"$D/token\"", self.setup)
+        self.assertIn("Authorization: Bearer %s", self.setup)
+        self.assertNotIn("quick-install.sh?ref=main", self.setup)
+        self.assertNotIn("raw.githubusercontent.com", self.setup)
 
     def test_workflow_parses_and_shellchecks_quick_installer(self) -> None:
         self.assertRegex(
