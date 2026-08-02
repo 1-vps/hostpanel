@@ -8,23 +8,28 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "auto-install.sh"
+QUICK = ROOT / "quick-install.sh"
 SETUP = ROOT / "SETUP.md"
 CLOUD_INIT = ROOT / "examples" / "cloud-init-hostpanel.yaml"
 WORKFLOW = ROOT / ".github" / "workflows" / "automatic-installer.yml"
-LAUNCHER_COMMIT = "a88be462efa38e479070b89e0a4c90b4b7b202da"
-LAUNCHER_BLOB = "4fa5e025c1516ebaaff260177b572f3253a61aa1"
+AUTO_COMMIT = "cb15cca3e1e4d8f2525d7989428c02771bd96331"
+AUTO_BLOB = "d3dd590c8e0c673b3fb40e156c01ae0ccf49b43c"
+QUICK_COMMIT = "2164c28f9dcce9beee3b33a9fd8c476f2dbac21b"
+QUICK_BLOB = "b934377222910cae9ec223d666a09aebaf28c21f"
 
 
 class AutomaticInstallTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = INSTALLER.read_text(encoding="utf-8")
+        cls.quick = QUICK.read_text(encoding="utf-8")
         cls.setup = SETUP.read_text(encoding="utf-8")
         cls.cloud_init = CLOUD_INIT.read_text(encoding="utf-8")
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
 
     def test_shell_syntax_and_noninteractive_help(self) -> None:
-        subprocess.run(["bash", "-n", str(INSTALLER)], check=True)
+        for script in (INSTALLER, QUICK):
+            subprocess.run(["bash", "-n", str(script)], check=True)
         result = subprocess.run(
             ["bash", str(INSTALLER), "--help"],
             check=True,
@@ -32,81 +37,101 @@ class AutomaticInstallTests(unittest.TestCase):
             text=True,
         )
         self.assertIn("never prompts", result.stdout)
-        self.assertIn("HP_GITHUB_TOKEN_FILE", result.stdout)
+        self.assertIn("check-only", result.stdout)
+        self.assertIn("unverified", result.stdout)
 
     def test_all_execution_inputs_are_pinned(self) -> None:
-        self.assertIn('QUICK_INSTALL_COMMIT="7745b637d3a77664e385528838800100291d575c"', self.source)
-        self.assertIn('QUICK_INSTALL_BLOB="9018696895963da33f4f3dbf3288600a36763455"', self.source)
+        self.assertIn(f'QUICK_INSTALL_COMMIT="{QUICK_COMMIT}"', self.source)
+        self.assertIn(f'QUICK_INSTALL_BLOB="{QUICK_BLOB}"', self.source)
         self.assertIn('PRODUCT_COMMIT="d50ccea35aa6356f7f815a606fa91f6186b66a6f"', self.source)
         self.assertIn('VALIDATOR_BLOB="2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9"', self.source)
         self.assertNotIn("ref=main", self.source)
+        self.assertNotIn("ref=main", self.quick)
 
-    def test_unattended_detection_fails_closed(self) -> None:
-        self.assertIn("hostname -f", self.source)
-        self.assertIn("SSH_CONNECTION", self.source)
-        self.assertIn("Could not detect a valid FQDN", self.source)
-        self.assertIn("Could not detect an SSH source", self.source)
+    def test_fd_is_consumed_and_not_inherited_by_quick_installer(self) -> None:
+        close = self.source.index('eval "exec ${TOKEN_FD}<&-"')
+        clear = self.source.index('unset HP_GITHUB_TOKEN_FD', close)
+        delegate = self.source.index('env -u HP_GITHUB_TOKEN_FD', clear)
+        self.assertLess(close, clear)
+        self.assertLess(clear, delegate)
+        self.assertIn('HP_GITHUB_TOKEN_FILE="$PRIVATE_TOKEN_FILE"', self.source)
+        self.assertIn('unset HP_GITHUB_TOKEN_FD', self.quick)
+
+    def test_authenticated_curl_ignores_default_configuration(self) -> None:
+        self.assertIn("curl -q --proto '=https' --tlsv1.2", self.source)
+        self.assertIn("curl -q --proto '=https' --tlsv1.2", self.quick)
+        self.assertNotRegex(self.source, re.compile(r"\bcurl --proto"))
+        self.assertNotRegex(self.quick, re.compile(r"\bcurl --proto"))
+
+    def test_check_only_avoids_package_and_persistent_installer_mutation(self) -> None:
+        self.assertIn("check-only never installs packages", self.source)
+        self.assertIn("check-only never installs packages", self.quick)
+        self.assertIn('[[ "$CHECK_ONLY" == no ]] || return 0', self.source)
+        self.assertIn('bash "$WORK_DIR/bootstrap-install.sh" --check', self.quick)
+        check_exit = self.quick.index('if [[ "$CHECK_ONLY" == yes ]]')
+        root_install = self.quick.index('install -o root -g root -m 0700 "$WORK_DIR/bootstrap-install.sh"')
+        self.assertLess(check_exit, root_install)
+        self.assertIn("No packages or persistent installer files were changed", self.source)
+
+    def test_explicit_domain_is_authoritative_and_fails_closed(self) -> None:
+        domain_branch = self.source.index('elif [[ -n "$PANEL_DOMAIN" ]]')
+        invalid = self.source.index('die "Invalid HP_PANEL_DOMAIN', domain_branch)
+        fallback = self.source.index('PANEL_HOST="$(detect_host', invalid)
+        self.assertLess(domain_branch, invalid)
+        self.assertLess(invalid, fallback)
+        self.assertNotIn('validate_hostname "panel.${PANEL_DOMAIN#.}" 2>/dev/null && return 0', self.source)
         self.assertNotIn("HP_ALLOW_PUBLIC_PANEL=yes", self.source)
 
-    def test_token_handling_is_file_or_descriptor_only(self) -> None:
-        self.assertNotRegex(self.source, r"--token\b")
-        self.assertNotRegex(self.source.lower(), r"[?&]token=")
-        self.assertIn("HP_GITHUB_TOKEN_FILE", self.source)
-        self.assertIn("HP_GITHUB_TOKEN_FD", self.source)
-        self.assertIn("O_NOFOLLOW", self.source)
-        self.assertIn("before.st_nlink != 1", self.source)
-        self.assertIn("mode 0400/0600", self.source)
-        self.assertIn("/run/secrets/hostpanel_github_token", self.source)
+    def test_doctor_is_required_and_skips_are_unverified(self) -> None:
+        self.assertIn('[[ -x /opt/hostpanel/venv/bin/python ]] || die', self.source)
+        self.assertIn('[[ -f /opt/hostpanel/app/hostpanel-doctor ]] || die', self.source)
+        self.assertIn('/opt/hostpanel/app/hostpanel-doctor --quiet', self.source)
+        self.assertIn('record_status unverified', self.source)
+        self.assertNotIn('if [[ -x /opt/hostpanel/venv/bin/python && -f /opt/hostpanel/app/hostpanel-doctor ]]', self.source)
 
-    def test_preflight_is_delegated_to_verified_quick_installer(self) -> None:
-        self.assertIn('git hash-object "$WORK_DIR/quick-install.sh"', self.source)
-        self.assertIn('HP_GITHUB_TOKEN_FILE="$PRIVATE_TOKEN_FILE" bash "$WORK_DIR/quick-install.sh"', self.source)
-        self.assertIn("--yes", self.source)
-        self.assertIn("--check-only", self.source)
-
-    def test_idempotence_lock_status_and_validation(self) -> None:
-        self.assertIn('flock -n "$LOCK_FD"', self.source)
-        self.assertIn('STATUS_DIR="/var/lib/hostpanel"', self.source)
-        self.assertIn('STATUS_FILE="$STATUS_DIR/auto-install-status.json"', self.source)
+    def test_healthy_rerun_checks_before_credentials(self) -> None:
+        installed_branch = self.source.index('if [[ -n "$installed" && "$REINSTALL" == no')
+        credentials = self.source.index('PHASE="reading-credentials"')
+        self.assertLess(installed_branch, credentials)
+        self.assertIn("ensure_download_context", self.source)
         self.assertIn("Existing HostPanel installation is healthy", self.source)
-        self.assertIn("bash /root/validate-production-vm.sh --check", self.source)
-        self.assertIn("hostpanel-doctor --quiet", self.source)
-        self.assertIn("secrets.token_hex(8)", self.source)
 
-    def test_setup_documents_only_the_automatic_engine(self) -> None:
-        self.assertIn(
-            "`auto-install.sh` is the only documented HostPanel installation entry point",
-            self.setup,
-        )
-        self.assertIn(
-            "the full cloud-init, Terraform, image-builder, and unattended VPS engine",
-            self.setup,
-        )
-        self.assertIn(LAUNCHER_COMMIT, self.setup)
-        self.assertIn(LAUNCHER_BLOB, self.setup)
-        self.assertIn("bash auto-install.sh", self.setup)
-        self.assertIn("HP_GITHUB_TOKEN_FD=3", self.setup)
-        self.assertIn("HP_GITHUB_TOKEN_FILE=/run/secrets/hostpanel_github_token", self.setup)
+    def test_lock_precedes_package_mutation(self) -> None:
+        bootstrap_lock = self.source.rindex("\nacquire_bootstrap_lock\n")
+        prerequisites = self.source.rindex("\nensure_prerequisites\n")
+        runtime_lock = self.source.rindex("\nacquire_lock\n")
+        self.assertLess(bootstrap_lock, prerequisites)
+        self.assertLess(prerequisites, runtime_lock)
+        self.assertIn("BOOTSTRAP_LOCK_DIR", self.source)
+
+    def test_setup_documents_only_fixed_automatic_engine(self) -> None:
+        self.assertIn("`auto-install.sh` is the only documented HostPanel installation entry point", self.setup)
+        self.assertIn(AUTO_COMMIT, self.setup)
+        self.assertIn(AUTO_BLOB, self.setup)
+        self.assertIn("descriptor is consumed", self.setup)
+        self.assertIn("marked `unverified`", self.setup)
         self.assertNotIn("install-one-line.sh", self.setup)
         self.assertNotIn("quick-install.sh", self.setup)
         self.assertNotIn("auto-install.sh?ref=main", self.setup)
 
-    def test_cloud_init_uses_external_secret_and_pinned_launcher(self) -> None:
+    def test_cloud_init_pins_and_verifies_launcher(self) -> None:
         self.assertIn("#cloud-config", self.cloud_init)
-        self.assertIn("/run/secrets/hostpanel_github_token", self.cloud_init)
-        self.assertIn(f"auto-install.sh?ref={LAUNCHER_COMMIT}", self.cloud_init)
+        self.assertIn(f"auto-install.sh?ref={AUTO_COMMIT}", self.cloud_init)
+        self.assertIn(AUTO_BLOB, self.cloud_init)
+        self.assertIn('git hash-object "$D/install"', self.cloud_init)
+        self.assertIn("curl -q --proto '=https'", self.cloud_init)
         self.assertNotIn("ref=main", self.cloud_init)
         self.assertNotRegex(self.cloud_init, r"github_pat_[A-Za-z0-9_]+")
 
-    def test_read_only_workflow_checks_automatic_installers(self) -> None:
+    def test_read_only_workflow_checks_installer_chain(self) -> None:
         self.assertIn("permissions:\n  contents: read", self.workflow)
         self.assertIn("persist-credentials: false", self.workflow)
-        self.assertIn("bash -n auto-install.sh", self.workflow)
-        self.assertIn("bash -n install-one-line.sh", self.workflow)
+        for path in ("auto-install.sh", "quick-install.sh", "install-one-line.sh"):
+            self.assertIn(f"bash -n {path}", self.workflow)
         self.assertIn("python3 -m unittest -v tests.test_auto_install tests.test_one_line_install", self.workflow)
         self.assertRegex(
             self.workflow,
-            re.compile(r"shellcheck .*auto-install\.sh .*install-one-line\.sh", re.DOTALL),
+            re.compile(r"shellcheck .*auto-install\.sh .*quick-install\.sh .*install-one-line\.sh", re.DOTALL),
         )
 
 
