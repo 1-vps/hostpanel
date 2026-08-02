@@ -75,8 +75,8 @@ class QuickInstallTests(unittest.TestCase):
 
 
     def test_documented_one_line_launcher_is_immutable_and_private_safe(self) -> None:
-        self.assertIn("c534a220ad775b4fe94e53ae297d1698444c1388", self.setup)
-        self.assertIn("contents/quick-install.sh?ref=c534a220ad775b4fe94e53ae297d1698444c1388", self.setup)
+        self.assertIn("7745b637d3a77664e385528838800100291d575c", self.setup)
+        self.assertIn("contents/quick-install.sh?ref=7745b637d3a77664e385528838800100291d575c", self.setup)
         self.assertIn("HP_GITHUB_TOKEN_FILE=\"$D/token\"", self.setup)
         self.assertIn("Authorization: Bearer %s", self.setup)
         self.assertNotIn("quick-install.sh?ref=main", self.setup)

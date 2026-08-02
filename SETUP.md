@@ -9,7 +9,7 @@ d50ccea35aa6356f7f815a606fa91f6186b66a6f
 The one-line launcher itself is pinned to immutable commit:
 
 ```text
-c534a220ad775b4fe94e53ae297d1698444c1388
+7745b637d3a77664e385528838800100291d575c
 ```
 
 The repository is private, so the launcher asks once for a short-lived GitHub
@@ -36,7 +36,7 @@ scheduled jobs, and customer data paths.
 Copy and run this exact line:
 
 ```bash
-sudo bash -c 'set -euo pipefail; umask 077; D=$(mktemp -d /tmp/hostpanel-link.XXXXXX); trap "rm -rf -- \"$D\"" EXIT; read -rsp "GitHub Contents:Read token: " T; echo; printf "%s" "$T" >"$D/token"; { printf "header = \"Accept: application/vnd.github.raw+json\"\\n"; printf "header = \"Authorization: Bearer %s\"\\n" "$T"; printf "header = \"X-GitHub-Api-Version: 2022-11-28\"\\n"; } >"$D/curl"; unset T; curl --proto "=https" --tlsv1.2 -fsSL --config "$D/curl" "https://api.github.com/repos/1-vps/hostpanel/contents/quick-install.sh?ref=c534a220ad775b4fe94e53ae297d1698444c1388" -o "$D/install"; chmod 700 "$D/install"; HP_GITHUB_TOKEN_FILE="$D/token" bash "$D/install"'
+sudo bash -c 'set -euo pipefail; umask 077; D=$(mktemp -d /tmp/hostpanel-link.XXXXXX); trap "rm -rf -- \"$D\"" EXIT; read -rsp "GitHub Contents:Read token: " T; echo; printf "%s" "$T" >"$D/token"; { printf "header = \"Accept: application/vnd.github.raw+json\"\\n"; printf "header = \"Authorization: Bearer %s\"\\n" "$T"; printf "header = \"X-GitHub-Api-Version: 2022-11-28\"\\n"; } >"$D/curl"; unset T; curl --proto "=https" --tlsv1.2 -fsSL --config "$D/curl" "https://api.github.com/repos/1-vps/hostpanel/contents/quick-install.sh?ref=7745b637d3a77664e385528838800100291d575c" -o "$D/install"; chmod 700 "$D/install"; HP_GITHUB_TOKEN_FILE="$D/token" bash "$D/install"'
 ```
 
 The launcher then asks for:
@@ -97,7 +97,7 @@ served unchanged from such an endpoint; it will still prompt for the private
 repository token and verify the pinned product commit.
 
 Do not serve `main` or another moving branch directly as a root installer.
-Publish the exact launcher bytes from commit `c534a220ad775b4fe94e53ae297d1698444c1388`.
+Publish the exact launcher bytes from commit `7745b637d3a77664e385528838800100291d575c`.
 
 ## Reinstall and rollback
 
