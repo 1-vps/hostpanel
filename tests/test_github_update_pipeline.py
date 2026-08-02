@@ -77,8 +77,14 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
 
     def test_generated_installer_enables_agent_after_health_checks(self) -> None:
         self.assertIn("signed GitHub update agent installation", self.hardener)
+        self.assertIn("EXPECTED_UPDATE_AGENT_BLOBS", self.hardener)
         self.assertIn(
-            'bash "$SOURCE_ROOT/tools/install-update-agent.sh" >>"$LOG" 2>&1',
+            "hostpanel-bootstrap.*/repository/tools/install-update-agent.sh",
+            self.hardener,
+        )
+        self.assertIn("git hash-object --no-filters", self.hardener)
+        self.assertIn(
+            'bash "$UPDATE_AGENT_ROOT/tools/install-update-agent.sh" >>"$LOG" 2>&1',
             self.hardener,
         )
         self.assertIn('for backup in "${TREE_ROLLBACK_BACKUPS[@]}"; do', self.hardener)
