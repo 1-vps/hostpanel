@@ -8,12 +8,30 @@ import hashlib
 import json
 import pathlib
 import re
+import stat
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+MAX_JSON_BYTES = 1024 * 1024
+MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
+
+
+def regular_file_size(path: pathlib.Path, label: str, maximum: int) -> int:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise SystemExit(f"could not inspect {label}: {exc}") from exc
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        raise SystemExit(f"unsafe {label}: expected one regular file link")
+    if metadata.st_size < 1 or metadata.st_size > maximum:
+        raise SystemExit(
+            f"unsafe {label} size: {metadata.st_size} bytes; maximum is {maximum}"
+        )
+    return metadata.st_size
 
 
 def load_object(path: pathlib.Path, label: str) -> dict[str, object]:
+    regular_file_size(path, label, MAX_JSON_BYTES)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -24,6 +42,7 @@ def load_object(path: pathlib.Path, label: str) -> dict[str, object]:
 
 
 def sha256_file(path: pathlib.Path) -> str:
+    regular_file_size(path, "release archive", MAX_ARCHIVE_BYTES)
     digest = hashlib.sha256()
     try:
         with path.open("rb") as handle:
