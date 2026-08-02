@@ -130,12 +130,24 @@ def exact_regular_files(directory: pathlib.Path) -> set[str]:
     return result
 
 
+def require_empty_output_directory(output_dir: pathlib.Path) -> None:
+    if output_dir.exists() or output_dir.is_symlink():
+        if output_dir.is_symlink() or not output_dir.is_dir():
+            raise ReleaseBundleError("release output path is not a safe directory")
+        if any(output_dir.iterdir()):
+            raise ReleaseBundleError("release output directory must be empty")
+    else:
+        output_dir.mkdir(parents=True, mode=0o755)
+
+
 def build(
     repository_root: pathlib.Path,
     commit: str,
     channel: str,
     output_dir: pathlib.Path,
 ) -> dict[str, object]:
+    require_empty_output_directory(output_dir)
+
     update_builder = load_module(
         "hostpanel_release_bundle_update_builder",
         repository_root / "tools" / "build-update-release.py",
@@ -149,20 +161,15 @@ def build(
         repository_root / "tools" / "verify-existing-release.py",
     )
     identity = update_builder.release_identity(repository_root)
-    resolved = update_builder.run_git(
-        repository_root, "rev-parse", f"{commit.lower()}^{{commit}}"
-    ).lower()
+    try:
+        resolved = update_builder.run_git(
+            repository_root, "rev-parse", f"{commit.lower()}^{{commit}}"
+        ).lower()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ReleaseBundleError("release commit could not be resolved") from exc
     if resolved != commit.lower() or update_builder.COMMIT_RE.fullmatch(resolved) is None:
         raise ReleaseBundleError("release commit does not resolve to the exact requested object")
     commit = resolved
-
-    if output_dir.exists():
-        if output_dir.is_symlink() or not output_dir.is_dir():
-            raise ReleaseBundleError("release output path is not a safe directory")
-        if any(output_dir.iterdir()):
-            raise ReleaseBundleError("release output directory must be empty")
-    else:
-        output_dir.mkdir(parents=True, mode=0o755)
 
     with tempfile.TemporaryDirectory(prefix="hostpanel-release-bundle.") as temporary_name:
         temporary = pathlib.Path(temporary_name)
@@ -183,9 +190,7 @@ def build(
                 str(source_dir),
             ]
         )
-        source_archive_name = (
-            f"hostpanel-v{identity.release_id}-source.tar.gz"
-        )
+        source_archive_name = f"hostpanel-v{identity.release_id}-source.tar.gz"
         write_source_checksums(source_dir, source_archive_name)
         try:
             source_verifier.verify(
@@ -212,9 +217,7 @@ def build(
                 str(update_dir),
             ]
         )
-        update_archive_name = (
-            f"hostpanel-v{identity.source_version}-update.tar.gz"
-        )
+        update_archive_name = f"hostpanel-v{identity.source_version}-update.tar.gz"
         try:
             existing_verifier.verify(
                 update_dir / "hostpanel-update-manifest.json",
@@ -247,10 +250,7 @@ def build(
         raise ReleaseBundleError(
             f"release output does not contain exactly the reviewed payload set: {sorted(actual_names)}"
         )
-    payloads = {
-        name: sha256_file(output_dir / name)
-        for name in sorted(expected_names)
-    }
+    payloads = {name: sha256_file(output_dir / name) for name in sorted(expected_names)}
     return {
         "schema": 1,
         "product": "hostpanel",
