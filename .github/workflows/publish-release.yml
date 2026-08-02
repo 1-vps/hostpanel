@@ -31,7 +31,10 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       github.event.issue.number == 7 ||
-      github.event.issue.number == 14
+      github.event.issue.number == 14 ||
+      github.event.issue.number == 115 ||
+      github.event.issue.number == 116 ||
+      github.event.issue.number == 118
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
@@ -55,10 +58,13 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
           if [[ "$GITHUB_EVENT_NAME" == issues ]]; then
             issue_number="$(jq -r '.issue.number // empty' "$GITHUB_EVENT_PATH")"
-            [[ "$issue_number" == 7 || "$issue_number" == 14 ]] || {
-              echo "Ignoring unrelated closed issue #${issue_number:-unknown}." >&2
-              exit 1
-            }
+            case "$issue_number" in
+              7|14|115|116|118) ;;
+              *)
+                echo "Ignoring unrelated closed issue #${issue_number:-unknown}." >&2
+                exit 1
+                ;;
+            esac
           fi
           current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
           [[ "$current_main" == "$GITHUB_SHA" ]] || {
@@ -133,13 +139,13 @@ jobs:
             printf 'publish=true\ncreate_tag=true\n' >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Enforce external release gates
+      - name: Enforce release gates
         if: steps.version.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for issue in 7 14; do
+          for issue in 7 14 115 116 118; do
             state="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" --jq .state)"
             [[ "$state" == closed ]] || {
               echo "Release gate issue #$issue is still $state." >&2
@@ -211,12 +217,12 @@ jobs:
           openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
             -in "$source_archive" -sigfile "$source_archive.sig"
 
-      - name: Recheck external release gates
+      - name: Recheck release gates
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for issue in 7 14; do
+          for issue in 7 14 115 116 118; do
             state="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" --jq .state)"
             [[ "$state" == closed ]] || {
               echo "Release gate issue #$issue was reopened or remains $state." >&2
