@@ -24,6 +24,25 @@ def load_entrypoint():
     return module
 
 
+def fake_attestations(calls: list[tuple] | None = None):
+    calls = calls if calls is not None else []
+
+    def generate(source_root, **kwargs):
+        calls.append(("generate", pathlib.Path(source_root), kwargs))
+
+    def verify(archive_path, **kwargs):
+        calls.append(("verify", pathlib.Path(archive_path), kwargs))
+
+    def copy(source_root, output_dir):
+        calls.append(("copy", pathlib.Path(source_root), pathlib.Path(output_dir)))
+
+    return types.SimpleNamespace(
+        generate_attestations=generate,
+        verify_archive_attestations=verify,
+        copy_attestations=copy,
+    )
+
+
 class SourceReleaseEntrypointTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -70,7 +89,7 @@ class SourceReleaseEntrypointTests(unittest.TestCase):
                 extract_tar_safely=extract,
                 write_deterministic_archive=lambda *_args: None,
             )
-            self.entrypoint.install_phase_isolation(builder)
+            self.entrypoint.install_phase_isolation(builder, fake_attestations())
             repository = temporary / "repository"
             repository.mkdir()
             generated = temporary / "overlay"
@@ -108,14 +127,53 @@ class SourceReleaseEntrypointTests(unittest.TestCase):
                 extract_tar_safely=lambda *_args, **_kwargs: (),
                 write_deterministic_archive=write_archive,
             )
-            self.entrypoint.install_phase_isolation(builder)
-            builder.write_deterministic_archive(source, pathlib.Path("out"), None, 0)
+            identity = types.SimpleNamespace(
+                source_version="3.4.1",
+                release_id="3.4.1-hardened-r1",
+                archive_root="hostpanel-v3.4.1-hardened-r1",
+            )
+            self.entrypoint.install_phase_isolation(builder, fake_attestations())
+            builder.write_deterministic_archive(
+                source,
+                pathlib.Path(temporary_name) / "out.tar.gz",
+                identity,
+                0,
+            )
 
             self.assertEqual(len(observed), 1)
             self.assertNotIn("tools/__pycache__", observed[0])
             self.assertFalse(any(path.endswith((".pyc", ".pyo")) for path in observed[0]))
             self.assertFalse(cache.exists())
             self.assertFalse(orphan.exists())
+
+    def test_attestations_wrap_the_archive_in_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = pathlib.Path(temporary_name)
+            source = root / "source"
+            source.mkdir()
+            archive = root / "candidate.tar.gz"
+            calls: list[tuple] = []
+
+            def write_archive(*_args):
+                calls.append(("archive",))
+
+            builder = types.SimpleNamespace(
+                run_git=lambda *_args: "",
+                run=lambda *_args, **_kwargs: types.SimpleNamespace(stdout=""),
+                extract_tar_safely=lambda *_args, **_kwargs: (),
+                write_deterministic_archive=write_archive,
+            )
+            identity = types.SimpleNamespace(
+                source_version="3.4.1",
+                release_id="3.4.1-hardened-r1",
+                archive_root="hostpanel-v3.4.1-hardened-r1",
+            )
+            self.entrypoint.install_phase_isolation(builder, fake_attestations(calls))
+            builder.write_deterministic_archive(source, archive, identity, 123)
+            self.assertEqual(
+                [call[0] for call in calls],
+                ["generate", "archive", "verify", "copy"],
+            )
 
     def test_python_cache_cleanup_rejects_unexpected_entries(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
