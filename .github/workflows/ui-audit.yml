@@ -6,10 +6,14 @@ on:
       - .github/workflows/ui-audit.yml
       - app/static/panel-redesign.css
       - app/static/panel-redesign.js
+      - app/static/hostpanel-brand.css
+      - app/static/hostpanel-mark.svg
+      - app/static/hostpanel-logo.svg
       - localization-overlay/**
       - tools/patch_panel_ui.py
       - bootstrap-install.sh
       - tests/test_panel_redesign.py
+      - tests/test_hostpanel_brand.py
       - tests/test_panel_future_locales.py
       - tests/test_panel_patcher_section_bounds.py
       - tests/test_playwright_browser_compat.py
@@ -27,10 +31,14 @@ on:
       - .github/workflows/ui-audit.yml
       - app/static/panel-redesign.css
       - app/static/panel-redesign.js
+      - app/static/hostpanel-brand.css
+      - app/static/hostpanel-mark.svg
+      - app/static/hostpanel-logo.svg
       - localization-overlay/**
       - tools/patch_panel_ui.py
       - bootstrap-install.sh
       - tests/test_panel_redesign.py
+      - tests/test_hostpanel_brand.py
       - tests/test_panel_future_locales.py
       - tests/test_panel_patcher_section_bounds.py
       - tests/test_playwright_browser_compat.py
@@ -108,6 +116,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_panel_redesign.py' -v
+          python3 -m unittest discover -s tests -p 'test_hostpanel_brand.py' -v
           python3 -m unittest discover -s tests -p 'test_panel_future_locales.py' -v
           python3 -m unittest discover -s tests -p 'test_panel_patcher_section_bounds.py' -v
           python3 -m unittest discover -s tests -p 'test_playwright_browser_compat.py' -v
@@ -155,6 +164,9 @@ jobs:
           UI_ROOT="$(cat /tmp/hostpanel-ui-root)"
           install -m 0644 app/static/panel-redesign.css "$UI_ROOT/app/static/panel-redesign.css"
           install -m 0644 app/static/panel-redesign.js "$UI_ROOT/app/static/panel-redesign.js"
+          install -m 0644 app/static/hostpanel-brand.css "$UI_ROOT/app/static/hostpanel-brand.css"
+          install -m 0644 app/static/hostpanel-mark.svg "$UI_ROOT/app/static/hostpanel-mark.svg"
+          install -m 0644 app/static/hostpanel-logo.svg "$UI_ROOT/app/static/hostpanel-logo.svg"
           python3 tools/patch_panel_ui.py "$UI_ROOT/app/templates/panel.html"
           python3 localization-overlay/apply_localization_overlay_reviewed.py \
             "$UI_ROOT" localization-overlay
