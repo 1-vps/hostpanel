@@ -1,12 +1,12 @@
 name: Archive and clean working branches
 
 on:
-  issues:
-    types: [opened]
-  workflow_dispatch:
+  pull_request_target:
+    types: [closed]
 
 permissions:
   contents: write
+  pull-requests: read
 
 concurrency:
   group: cleanup-integrated-branches
@@ -16,9 +16,10 @@ jobs:
   cleanup:
     if: >-
       github.repository == '1-vps/hostpanel' &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'issues' &&
-        github.event.issue.title == 'Run recoverable branch cleanup 838d9298-20260802'))
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.title == 'Run recoverable branch cleanup 838d9298-20260802-final' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
