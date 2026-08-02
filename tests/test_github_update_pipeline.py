@@ -60,13 +60,18 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
         self.assertIn("hostpanel-v*-source.tar.gz.sig", self.workflow)
         self.assertIn("SHA256SUMS", self.workflow)
         self.assertIn("tools/build-update-release.py", self.workflow)
+        self.assertIn("tools/build-release-bundle.py", self.workflow)
+        self.assertIn("tools/verify-source-release-bundle.py", self.workflow)
         self.assertIn("HOSTPANEL_RELEASE_PRIVATE_KEY", self.workflow)
         self.assertIn("openssl pkeyutl -sign", self.workflow)
         self.assertIn(
             "openssl pkeyutl -verify -pubin -inkey releases/update.pub",
             self.workflow,
         )
-        self.assertIn("release-build.json.sig", self.workflow)
+        self.assertIn('expected_names+=("$payload" "$payload.sig")', self.workflow)
+        self.assertIn('expected_assets+=("$payload" "$payload.sig")', self.workflow)
+        self.assertIn('[[ "${#payloads[@]}" -eq 9 ]]', self.workflow)
+        self.assertIn('[[ "${#actual_assets[@]}" -eq 18 ]]', self.workflow)
         self.assertIn("gh release create", self.workflow)
         self.assertNotIn("BEGIN PRIVATE KEY", self.workflow)
 
