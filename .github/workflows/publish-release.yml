@@ -3,6 +3,10 @@ name: Publish signed HostPanel release
 on:
   push:
     branches: [main]
+    paths:
+      - 'hostpanel-v*-source.tar.gz'
+      - 'hostpanel-v*-source.tar.gz.sig'
+      - SHA256SUMS
   workflow_dispatch:
 
 permissions:
