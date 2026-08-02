@@ -8,21 +8,17 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "auto-install.sh"
-ENTRY = ROOT / "install-one-line.sh"
 SETUP = ROOT / "SETUP.md"
 CLOUD_INIT = ROOT / "examples" / "cloud-init-hostpanel.yaml"
 WORKFLOW = ROOT / ".github" / "workflows" / "automatic-installer.yml"
 LAUNCHER_COMMIT = "a88be462efa38e479070b89e0a4c90b4b7b202da"
 LAUNCHER_BLOB = "4fa5e025c1516ebaaff260177b572f3253a61aa1"
-ENTRY_COMMIT = "d0689bc880a8c43af637622c52b931de87b91d61"
-ENTRY_BLOB = "fd3806cd58118e30b0ef2a680bfacdd50f191421"
 
 
 class AutomaticInstallTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = INSTALLER.read_text(encoding="utf-8")
-        cls.entry = ENTRY.read_text(encoding="utf-8")
         cls.setup = SETUP.read_text(encoding="utf-8")
         cls.cloud_init = CLOUD_INIT.read_text(encoding="utf-8")
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -77,23 +73,23 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn("hostpanel-doctor --quiet", self.source)
         self.assertIn("secrets.token_hex(8)", self.source)
 
-    def test_documented_entry_and_engine_are_immutable(self) -> None:
-        for value in (LAUNCHER_COMMIT, LAUNCHER_BLOB, ENTRY_COMMIT, ENTRY_BLOB):
-            self.assertIn(value, self.setup)
-        self.assertIn('bash install-one-line.sh example.com', self.setup)
-        self.assertIn('printf \'%s\' "$HOSTPANEL_GITHUB_TOKEN" | sudo', self.setup)
-        self.assertIn('SSH_CONNECTION="${SSH_CONNECTION:-}"', self.setup)
+    def test_setup_documents_only_the_automatic_engine(self) -> None:
+        self.assertIn(
+            "`auto-install.sh` is the only documented HostPanel installation entry point",
+            self.setup,
+        )
+        self.assertIn(
+            "the full cloud-init, Terraform, image-builder, and unattended VPS engine",
+            self.setup,
+        )
+        self.assertIn(LAUNCHER_COMMIT, self.setup)
+        self.assertIn(LAUNCHER_BLOB, self.setup)
+        self.assertIn("bash auto-install.sh", self.setup)
+        self.assertIn("HP_GITHUB_TOKEN_FD=3", self.setup)
+        self.assertIn("HP_GITHUB_TOKEN_FILE=/run/secrets/hostpanel_github_token", self.setup)
+        self.assertNotIn("install-one-line.sh", self.setup)
+        self.assertNotIn("quick-install.sh", self.setup)
         self.assertNotIn("auto-install.sh?ref=main", self.setup)
-        self.assertNotIn("install-one-line.sh?ref=main", self.setup)
-
-    def test_one_line_entry_keeps_secret_out_of_url_and_root_environment(self) -> None:
-        self.assertIn("read_token_from_stdin", self.entry)
-        self.assertNotRegex(self.entry.lower(), r"[?&]token=")
-        self.assertNotIn("HOSTPANEL_GITHUB_TOKEN=", self.entry)
-        self.assertIn('printf \'header = "Authorization: Bearer %s"\\n\' "$TOKEN"', self.entry)
-        self.assertIn("chmod 0600", self.entry)
-        self.assertIn('rm -f -- "$AUTH_FILE"', self.entry)
-        self.assertIn('exec 3<<<"$TOKEN"', self.entry)
 
     def test_cloud_init_uses_external_secret_and_pinned_launcher(self) -> None:
         self.assertIn("#cloud-config", self.cloud_init)
