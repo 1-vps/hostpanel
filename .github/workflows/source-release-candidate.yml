@@ -51,19 +51,20 @@ jobs:
       - name: Run source-builder regressions
         run: |
           set -euo pipefail
-          python3 -m py_compile tools/build-source-release.py
+          python3 -m py_compile tools/build-source-release.py tools/run-source-release-builder.py
           python3 -m unittest discover -s tests -p 'test_source_release_builder.py' -v
-          [[ "$(python3 tools/build-source-release.py --repository-root . --print-version)" == "3.4.1" ]]
+          python3 -m unittest discover -s tests -p 'test_source_release_entrypoint.py' -v
+          [[ "$(python3 tools/run-source-release-builder.py --repository-root . --print-version)" == "3.4.1" ]]
 
       - name: Build the candidate twice
         run: |
           set -euo pipefail
           mkdir -p dist-a dist-b
-          python3 tools/build-source-release.py \
+          python3 tools/run-source-release-builder.py \
             --repository-root . \
             --commit "$REVIEWED_COMMIT" \
             --output-dir dist-a
-          python3 tools/build-source-release.py \
+          python3 tools/run-source-release-builder.py \
             --repository-root . \
             --commit "$REVIEWED_COMMIT" \
             --output-dir dist-b
