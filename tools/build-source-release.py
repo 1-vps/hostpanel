@@ -41,7 +41,7 @@ MAX_MEMBERS = 50_000
 MAX_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_SIGNATURE_BYTES = 64 * 1024
-POLICY_KEYS = {"schema", "overlay_paths", "required_paths"}
+POLICY_KEYS = {"schema", "overlay_paths", "late_overlay_paths", "required_paths"}
 
 
 class ReleaseBuildError(RuntimeError):
@@ -65,6 +65,7 @@ class ReleaseIdentity:
 @dataclass(frozen=True)
 class SourcePolicy:
     overlay_paths: tuple[str, ...]
+    late_overlay_paths: tuple[str, ...]
     required_paths: tuple[str, ...]
 
 
@@ -183,8 +184,16 @@ def load_policy(path: pathlib.Path) -> SourcePolicy:
             raise ReleaseBuildError(f"policy field {key} must be sorted")
         return parsed
 
+    overlay_paths = parse_list("overlay_paths")
+    late_overlay_paths = parse_list("late_overlay_paths")
+    overlap = set(overlay_paths) & set(late_overlay_paths)
+    if overlap:
+        raise ReleaseBuildError(
+            f"source-release policy phases overlap: {sorted(overlap)}"
+        )
     return SourcePolicy(
-        overlay_paths=parse_list("overlay_paths"),
+        overlay_paths=overlay_paths,
+        late_overlay_paths=late_overlay_paths,
         required_paths=parse_list("required_paths"),
     )
 
@@ -324,10 +333,10 @@ def verify_commit(root: pathlib.Path, commit: str) -> str:
 def export_overlay(
     root: pathlib.Path,
     commit: str,
-    policy: SourcePolicy,
+    paths: Sequence[str],
     destination: pathlib.Path,
 ) -> None:
-    for path in policy.overlay_paths:
+    for path in paths:
         run_git(root, "cat-file", "-e", f"{commit}:{path}")
     archive_path = destination.parent / "overlay.tar"
     with archive_path.open("xb") as output:
@@ -340,7 +349,7 @@ def export_overlay(
                 "--format=tar",
                 commit,
                 "--",
-                *policy.overlay_paths,
+                *paths,
             ],
             stdout=output,
         )
@@ -562,9 +571,12 @@ def build(root: pathlib.Path, commit: str, output_dir: pathlib.Path, policy_path
         if not source_root.is_dir():
             raise ReleaseBuildError("baseline top-level root is not a directory")
         overlay_root = temporary / "overlay"
-        export_overlay(root, commit, policy, overlay_root)
+        export_overlay(root, commit, policy.overlay_paths, overlay_root)
         copy_overlay(overlay_root, source_root)
         run_post_processing(source_root, root, identity)
+        late_overlay_root = temporary / "late-overlay"
+        export_overlay(root, commit, policy.late_overlay_paths, late_overlay_root)
+        copy_overlay(late_overlay_root, source_root)
         validate_required_paths(source_root, policy)
 
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -589,6 +601,7 @@ def build(root: pathlib.Path, commit: str, output_dir: pathlib.Path, policy_path
                 "sha256": archive_digest,
             },
             "overlay_paths": list(policy.overlay_paths),
+            "late_overlay_paths": list(policy.late_overlay_paths),
         }
         metadata_path = output_dir / "source-build.json"
         if metadata_path.exists():
