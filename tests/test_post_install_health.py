@@ -12,7 +12,7 @@ PATCHER = ROOT / "tools" / "patch_cli_runtime_env.py"
 MATRIX = ROOT / "test-matrix.sh"
 BASE = ROOT / "install.base.sh"
 EXPECTED_IMPL_BLOB = "ac1a86fba8dd6bace70cd844a61bfccdda55d916"
-EXPECTED_PATCHER_BLOB = "a20ce7252351179fa225a9a0b168b5fa9568883c"
+EXPECTED_PATCHER_BLOB = "eaa64717db43e77e6a5a8e93ef6d0b81c8536985"
 
 
 def git_blob_sha(path: pathlib.Path) -> str:
@@ -198,11 +198,23 @@ class PostInstallHealthTests(unittest.TestCase):
             'expected.update({"lsws": True, service("apache"): False})',
             self.patched_doctor,
         )
-        self.assertIn(
+        self.assertNotIn(
             '"lsws": Path("/usr/local/lsws/bin/lswsctrl").is_file()',
             self.patched_doctor,
         )
-        self.assertIn('service("apache"): False', self.patched_doctor)
+        self.assertIn('expected[service("apache")] = False', self.patched_doctor)
+        self.assertIn(
+            'if Path("/usr/local/lsws/bin/lswsctrl").is_file():',
+            self.patched_doctor,
+        )
+        self.assertIn('expected["lsws"] = True', self.patched_doctor)
+        apache = self.patched_doctor.index('expected[service("apache")] = False')
+        probe = self.patched_doctor.index(
+            'if Path("/usr/local/lsws/bin/lswsctrl").is_file():', apache
+        )
+        requirement = self.patched_doctor.index('expected["lsws"] = True', probe)
+        self.assertLess(apache, probe)
+        self.assertLess(probe, requirement)
 
     def test_unused_postsrsd_package_is_not_installed(self):
         self.assertIn(
