@@ -71,7 +71,7 @@ jobs:
           [[ "$(python3 tools/run-source-release-builder.py --repository-root . --print-version)" == "3.4.1" ]]
           [[ "$(python3 tools/build-update-release.py --repository-root . --print-version)" == "3.4.1" ]]
 
-      - name: Build and verify the candidate twice
+      - name: Build and verify the source candidate twice
         run: |
           set -euo pipefail
           mkdir -p dist-a dist-b
@@ -171,6 +171,41 @@ jobs:
               raise SystemExit("source file manifest scope mismatch")
           PY
 
+      - name: Build and verify the complete release bundle twice
+        run: |
+          set -euo pipefail
+          python3 tools/build-release-bundle.py \
+            --repository-root . \
+            --commit "$REVIEWED_COMMIT" \
+            --channel stable \
+            --output-dir release-a \
+            --summary release-a-summary.json
+          python3 tools/build-release-bundle.py \
+            --repository-root . \
+            --commit "$REVIEWED_COMMIT" \
+            --channel stable \
+            --output-dir release-b \
+            --summary release-b-summary.json
+          cmp -- release-a-summary.json release-b-summary.json
+          jq -e \
+            --arg commit "$REVIEWED_COMMIT" \
+            '.schema == 1 and .product == "hostpanel" and .channel == "stable" and
+             .version == "3.4.1" and .release_id == "3.4.1-hardened-r1" and
+             .tag == "v3.4.1" and .commit == $commit and (.payloads | length) == 9' \
+            release-a-summary.json >/dev/null
+          mapfile -t payloads < <(jq -r '.payloads | keys[]' release-a-summary.json)
+          [[ "${#payloads[@]}" -eq 9 ]]
+          for payload in "${payloads[@]}"; do
+            expected_digest="$(jq -r --arg payload "$payload" '.payloads[$payload]' release-a-summary.json)"
+            [[ "$(sha256sum "release-a/$payload" | awk '{print $1}')" == "$expected_digest" ]]
+            [[ "$(sha256sum "release-b/$payload" | awk '{print $1}')" == "$expected_digest" ]]
+            cmp -- "release-a/$payload" "release-b/$payload"
+          done
+          mapfile -t release_a_files < <(find release-a -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort)
+          mapfile -t release_b_files < <(find release-b -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort)
+          [[ "${#release_a_files[@]}" -eq 9 ]]
+          [[ "$(printf '%s\n' "${release_a_files[@]}")" == "$(printf '%s\n' "${release_b_files[@]}")" ]]
+
       - name: Upload unsigned source candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -182,6 +217,19 @@ jobs:
             dist-a/dependency-lock-attestation.json
             dist-a/source-file-manifest.json
             dist-a/SOURCE-CANDIDATE-SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: false
+
+      - name: Upload unsigned complete release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hostpanel-release-bundle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            release-a/*
+            release-a-summary.json
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
