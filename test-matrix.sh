@@ -64,7 +64,8 @@ mkdir -p "$LOG_DIR"
 validate_bundle(){
   local generated
   generated="$(mktemp "$LOG_DIR/install.generated.XXXXXX")"
-  if ! python3 "$SCRIPT_DIR/tools/harden_install.py" \
+  if ! HP_HARDENER_SOURCE_ROOT="$SCRIPT_DIR" \
+      python3 "$SCRIPT_DIR/tools/harden_install.py" \
       "$SCRIPT_DIR/install.base.sh" "$generated"; then
     rm -f -- "$generated"
     return 1
@@ -106,6 +107,9 @@ copy_bundle(){
   docker cp "$SCRIPT_DIR/tools/harden_install.py" "$cid:/root/hostpanel/tools/harden_install.py" >/dev/null
   docker cp "$SCRIPT_DIR/tools/harden_install_impl.py" "$cid:/root/hostpanel/tools/harden_install_impl.py" >/dev/null
   docker cp "$SCRIPT_DIR/tools/harden_install_runtime.py" "$cid:/root/hostpanel/tools/harden_install_runtime.py" >/dev/null
+  docker exec "$cid" chown -R 0:0 /root/hostpanel
+  docker exec "$cid" find /root/hostpanel -xdev -type d -exec chmod go-w {} +
+  docker exec "$cid" find /root/hostpanel -xdev -type f -exec chmod go-w {} +
 }
 
 run_expect_success(){
@@ -135,7 +139,8 @@ run_container_test(){
 
   if ! run_expect_success "$cid" "$os_name-generate" sh -ceu '
     cd /root/hostpanel
-    python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh
+    HP_HARDENER_SOURCE_ROOT=/root/hostpanel \
+      python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh
     bash -n install.sh
     bash -n /tmp/install.generated.sh
   '; then
