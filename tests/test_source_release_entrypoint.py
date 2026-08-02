@@ -68,6 +68,7 @@ class SourceReleaseEntrypointTests(unittest.TestCase):
                 run_git=run_git,
                 run=run,
                 extract_tar_safely=extract,
+                write_deterministic_archive=lambda *_args: None,
             )
             self.entrypoint.install_phase_isolation(builder)
             repository = temporary / "repository"
@@ -84,6 +85,46 @@ class SourceReleaseEntrypointTests(unittest.TestCase):
             )
             self.assertTrue((temporary / "overlay.tar").is_file())
             self.assertTrue((temporary / "late-overlay.tar").is_file())
+
+    def test_python_bytecode_is_removed_before_archiving(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            source = pathlib.Path(temporary_name) / "source"
+            cache = source / "tools" / "__pycache__"
+            cache.mkdir(parents=True)
+            (cache / "module.cpython-312.pyc").write_bytes(b"bytecode-a")
+            (cache / "runtime.cpython-312.pyo").write_bytes(b"bytecode-b")
+            orphan = source / "orphan.pyc"
+            orphan.write_bytes(b"orphan")
+            observed: list[list[str]] = []
+
+            def write_archive(source_root, *_args):
+                observed.append(
+                    sorted(path.relative_to(source_root).as_posix() for path in source_root.rglob("*"))
+                )
+
+            builder = types.SimpleNamespace(
+                run_git=lambda *_args: "",
+                run=lambda *_args, **_kwargs: types.SimpleNamespace(stdout=""),
+                extract_tar_safely=lambda *_args, **_kwargs: (),
+                write_deterministic_archive=write_archive,
+            )
+            self.entrypoint.install_phase_isolation(builder)
+            builder.write_deterministic_archive(source, pathlib.Path("out"), None, 0)
+
+            self.assertEqual(len(observed), 1)
+            self.assertNotIn("tools/__pycache__", observed[0])
+            self.assertFalse(any(path.endswith((".pyc", ".pyo")) for path in observed[0]))
+            self.assertFalse(cache.exists())
+            self.assertFalse(orphan.exists())
+
+    def test_python_cache_cleanup_rejects_unexpected_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            source = pathlib.Path(temporary_name)
+            cache = source / "__pycache__"
+            cache.mkdir()
+            (cache / "unexpected.txt").write_text("not bytecode", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "unexpected Python cache entry"):
+                self.entrypoint.remove_python_bytecode(source)
 
     def test_source_compiles(self) -> None:
         compile(
