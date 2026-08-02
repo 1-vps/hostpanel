@@ -12,10 +12,10 @@ QUICK = ROOT / "quick-install.sh"
 SETUP = ROOT / "SETUP.md"
 CLOUD_INIT = ROOT / "examples" / "cloud-init-hostpanel.yaml"
 WORKFLOW = ROOT / ".github" / "workflows" / "automatic-installer.yml"
-AUTO_COMMIT = "cb15cca3e1e4d8f2525d7989428c02771bd96331"
-AUTO_BLOB = "d3dd590c8e0c673b3fb40e156c01ae0ccf49b43c"
-QUICK_COMMIT = "2164c28f9dcce9beee3b33a9fd8c476f2dbac21b"
-QUICK_BLOB = "b934377222910cae9ec223d666a09aebaf28c21f"
+AUTO_COMMIT = "9fedefce0bd5d9506983cff8cb060816bfe5dbaa"
+AUTO_BLOB = "8950754a20a3ba478a6dbfa48b070d8ce1428b0d"
+QUICK_COMMIT = "9ad09d87d2006b5fc2ed3c5a67149f444f7c3e9e"
+QUICK_BLOB = "2d3c504048821a395c819948dfdbf50cb05a202d"
 
 
 class AutomaticInstallTests(unittest.TestCase):
@@ -69,9 +69,23 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn('[[ "$CHECK_ONLY" == no ]] || return 0', self.source)
         self.assertIn('bash "$WORK_DIR/bootstrap-install.sh" --check', self.quick)
         check_exit = self.quick.index('if [[ "$CHECK_ONLY" == yes ]]')
+        repo_enable = self.quick.index('\nensure_litespeed_repository\n', check_exit)
         root_install = self.quick.index('install -o root -g root -m 0700 "$WORK_DIR/bootstrap-install.sh"')
-        self.assertLess(check_exit, root_install)
+        self.assertLess(check_exit, repo_enable)
+        self.assertLess(repo_enable, root_install)
         self.assertIn("No packages or persistent installer files were changed", self.source)
+
+    def test_web_role_enables_and_verifies_litespeed_repository(self) -> None:
+        self.assertIn('LITESPEED_REPO_MODE="${HP_LITESPEED_REPO:-auto}"', self.quick)
+        self.assertIn("web_role_selected", self.quick)
+        self.assertIn("ensure_litespeed_repository", self.quick)
+        self.assertIn("https://repo.litespeed.sh", self.quick)
+        self.assertIn("apt-cache policy openlitespeed", self.quick)
+        self.assertIn("dnf -q list --available openlitespeed", self.quick)
+        self.assertIn("The official LiteSpeed repository does not publish openlitespeed", self.quick)
+        self.assertIn("HP_LITESPEED_REPO=auto", self.setup)
+        self.assertIn("HP_LITESPEED_REPO=auto", self.cloud_init)
+        self.assertNotIn("curl --proto '=https' --tlsv1.2", self.quick)
 
     def test_explicit_domain_is_authoritative_and_fails_closed(self) -> None:
         domain_branch = self.source.index('elif [[ -n "$PANEL_DOMAIN" ]]')
@@ -110,6 +124,7 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn(AUTO_BLOB, self.setup)
         self.assertIn("descriptor is consumed", self.setup)
         self.assertIn("marked `unverified`", self.setup)
+        self.assertIn("apt-cache policy openlitespeed", self.setup)
         self.assertNotIn("install-one-line.sh", self.setup)
         self.assertNotIn("quick-install.sh", self.setup)
         self.assertNotIn("auto-install.sh?ref=main", self.setup)

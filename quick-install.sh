@@ -17,6 +17,7 @@ readonly REPOSITORY_API="https://api.github.com/repos/1-vps/hostpanel"
 PANEL_HOST="${HP_PANEL_HOST:-}"
 ADMIN_CIDR="${HP_PANEL_ADMIN_CIDR:-}"
 MTA="${HP_MTA:-postfix}"
+LITESPEED_REPO_MODE="${HP_LITESPEED_REPO:-auto}"
 REINSTALL=no
 CHECK_ONLY=no
 ASSUME_YES=no
@@ -51,6 +52,11 @@ Authentication:
   Automation may provide a root-owned mode-0600 token file through
   HP_GITHUB_TOKEN_FILE, or a numeric inherited descriptor through
   HP_GITHUB_TOKEN_FD. The token is never placed in a URL or command argument.
+
+Repository control:
+  HP_LITESPEED_REPO=auto enables the official LiteSpeed repository when the web
+  role needs OpenLiteSpeed. Set HP_LITESPEED_REPO=off only when an equivalent
+  repository is already configured by the operator.
 HELP
 }
 
@@ -266,6 +272,10 @@ prompt_inputs(){
     postfix|exim) ;;
     *) die "MTA must be postfix or exim" ;;
   esac
+  case "$LITESPEED_REPO_MODE" in
+    auto|off) ;;
+    *) die "HP_LITESPEED_REPO must be auto or off" ;;
+  esac
 
   local role
   for role in "${ROLES[@]}"; do
@@ -303,6 +313,65 @@ download_reviewed_file(){
     --config "$AUTH_FILE" \
     "${REPOSITORY_API}/contents/${repository_path}?ref=${REVIEWED_COMMIT_SHA}" \
     -o "$destination"
+}
+
+web_role_selected(){
+  local role
+  ((${#ROLES[@]} == 0)) && return 0
+  for role in "${ROLES[@]}"; do
+    [[ "$role" == web ]] && return 0
+  done
+  return 1
+}
+
+litespeed_package_available(){
+  local candidate=""
+  if command -v apt-get >/dev/null 2>&1; then
+    candidate="$(apt-cache policy openlitespeed 2>/dev/null | awk '/^[[:space:]]*Candidate:/ {print $2; exit}')"
+    [[ -n "$candidate" && "$candidate" != "(none)" ]]
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf -q list --available openlitespeed >/dev/null 2>&1 \
+      || dnf -q list --installed openlitespeed >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
+
+ensure_litespeed_repository(){
+  local repository_script
+  web_role_selected || return 0
+  litespeed_package_available && return 0
+  [[ "$LITESPEED_REPO_MODE" != off ]] \
+    || die "OpenLiteSpeed is unavailable and HP_LITESPEED_REPO=off prevents enabling its repository"
+
+  say "Enabling the official LiteSpeed repository"
+  repository_script="$WORK_DIR/litespeed-repo.sh"
+  curl -q --proto '=https' --tlsv1.2 \
+    --fail --location --silent --show-error \
+    --retry 5 --retry-all-errors --connect-timeout 15 --max-time 180 \
+    https://repo.litespeed.sh -o "$repository_script" \
+    || die "Could not download the official LiteSpeed repository installer"
+  [[ -s "$repository_script" ]] || die "The LiteSpeed repository installer is empty"
+  bash -n "$repository_script" \
+    || die "The LiteSpeed repository installer has invalid Bash syntax"
+  bash "$repository_script" \
+    || die "Could not enable the official LiteSpeed repository"
+  rm -f -- "$repository_script"
+
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3 update -qq \
+      || die "Could not refresh APT metadata after enabling the LiteSpeed repository"
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf -q --setopt=timeout=60 --setopt=retries=5 makecache \
+      || die "Could not refresh DNF metadata after enabling the LiteSpeed repository"
+  else
+    die "No supported package manager is available for OpenLiteSpeed"
+  fi
+
+  litespeed_package_available \
+    || die "The official LiteSpeed repository does not publish openlitespeed for this OS or architecture"
+  printf '  ok OpenLiteSpeed package is available from the official repository\n'
 }
 
 ensure_prerequisites
@@ -361,6 +430,7 @@ if [[ "$CHECK_ONLY" == yes ]]; then
   exit 0
 fi
 
+ensure_litespeed_repository
 install -o root -g root -m 0700 "$WORK_DIR/bootstrap-install.sh" /root/bootstrap-install.sh
 install -o root -g root -m 0700 "$WORK_DIR/validate-production-vm.sh" /root/validate-production-vm.sh
 

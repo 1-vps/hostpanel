@@ -7,13 +7,13 @@ It installs HostPanel version `3.4.1` from reviewed, immutable Git objects. The
 installer is pinned to commit:
 
 ```text
-cb15cca3e1e4d8f2525d7989428c02771bd96331
+9fedefce0bd5d9506983cff8cb060816bfe5dbaa
 ```
 
 Its verified Git blob is:
 
 ```text
-d3dd590c8e0c673b3fb40e156c01ae0ccf49b43c
+8950754a20a3ba478a6dbfa48b070d8ce1428b0d
 ```
 
 ## Requirements
@@ -31,9 +31,9 @@ Create a provider snapshot and retain console access before installation.
 ## Obtain the installer
 
 Obtain the exact `auto-install.sh` bytes from immutable commit
-`cb15cca3e1e4d8f2525d7989428c02771bd96331` through an authenticated checkout or
+`9fedefce0bd5d9506983cff8cb060816bfe5dbaa` through an authenticated checkout or
 reviewed file transfer. Verify that its Git blob is
-`d3dd590c8e0c673b3fb40e156c01ae0ccf49b43c`.
+`8950754a20a3ba478a6dbfa48b070d8ce1428b0d`.
 
 Do not execute a moving `main` branch as root.
 
@@ -134,6 +134,7 @@ HP_PANEL_DOMAIN=example.com
 HP_PANEL_ADMIN_CIDR=192.0.2.10/32
 HP_MTA=postfix
 HP_ROLES="control web database mail dns backup edge"
+HP_LITESPEED_REPO=auto
 HP_REINSTALL=yes
 HP_CHECK_ONLY=yes
 HP_POST_INSTALL_CHECK=no
@@ -144,10 +145,17 @@ HP_GITHUB_TOKEN_FD=3
 Omitting `HP_ROLES` installs all roles. Supported roles are `control`, `web`,
 `database`, `mail`, `dns`, `backup`, and `edge`.
 
+For the web role, `HP_LITESPEED_REPO=auto` enables the official LiteSpeed
+repository only when `openlitespeed` is not already available. The installer
+refreshes package metadata and verifies that APT or DNF exposes a real package
+candidate before the reviewed product installer begins. Set
+`HP_LITESPEED_REPO=off` only when an equivalent repository is already configured.
+
 `HP_CHECK_ONLY=yes` runs preflight without installing missing operating-system
-packages, copying persistent installer files into `/root`, or writing the
-HostPanel status file. Required commands must already be installed. Temporary
-files and runtime locks are removed when the command exits.
+packages, enabling the LiteSpeed repository, copying persistent installer files
+into `/root`, or writing the HostPanel status file. Required commands must
+already be installed. Temporary files and runtime locks are removed when the
+command exits.
 
 `HP_REINSTALL=yes` is required for an explicit replacement of an existing
 installation.
@@ -179,10 +187,25 @@ public automatically.
 4. verifies the immutable automatic launcher, bootstrap, and production validator;
 5. ignores user curl configuration for authenticated downloads;
 6. runs the complete preflight before installation;
-7. installs all roles with Postfix by default;
-8. verifies version `3.4.1`;
-9. requires the production validator and `hostpanel-doctor` unless explicitly skipped;
-10. writes machine-readable status to `/var/lib/hostpanel/auto-install-status.json`.
+7. enables the official LiteSpeed repository for the web role when needed and verifies the `openlitespeed` package candidate;
+8. installs all roles with Postfix by default;
+9. verifies version `3.4.1`;
+10. requires the production validator and `hostpanel-doctor` unless explicitly skipped;
+11. writes machine-readable status to `/var/lib/hostpanel/auto-install-status.json`.
+
+## Retry after an interrupted package installation
+
+If an earlier run stopped during an APT transaction, repair Debian package state
+before rerunning the fixed immutable installer:
+
+```bash
+sudo dpkg --configure -a
+sudo apt-get -f install
+```
+
+Then rerun the normal `auto-install.sh` command above. The fixed launcher enables
+the official LiteSpeed repository and refuses to start the product installation
+until `apt-cache policy openlitespeed` exposes a usable candidate.
 
 ## Idempotence and status
 

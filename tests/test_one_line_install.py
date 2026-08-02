@@ -9,8 +9,8 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ENTRY = ROOT / "install-one-line.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "automatic-installer.yml"
-AUTO_COMMIT = "cb15cca3e1e4d8f2525d7989428c02771bd96331"
-AUTO_BLOB = "d3dd590c8e0c673b3fb40e156c01ae0ccf49b43c"
+AUTO_COMMIT = "9fedefce0bd5d9506983cff8cb060816bfe5dbaa"
+AUTO_BLOB = "8950754a20a3ba478a6dbfa48b070d8ce1428b0d"
 
 
 class OneLineInstallTests(unittest.TestCase):

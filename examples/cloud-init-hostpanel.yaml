@@ -11,6 +11,7 @@ write_files:
       HP_PANEL_HOST=panel.example.com
       HP_PANEL_ADMIN_CIDR=192.0.2.10/32
       HP_MTA=postfix
+      HP_LITESPEED_REPO=auto
       HP_GITHUB_TOKEN_FILE=/run/secrets/hostpanel_github_token
 
 runcmd:
@@ -42,10 +43,10 @@ runcmd:
     chmod 0600 "$D/curl"
     curl -q --proto '=https' --tlsv1.2 -fsSL --retry 5 \
       --config "$D/curl" \
-      'https://api.github.com/repos/1-vps/hostpanel/contents/auto-install.sh?ref=cb15cca3e1e4d8f2525d7989428c02771bd96331' \
+      'https://api.github.com/repos/1-vps/hostpanel/contents/auto-install.sh?ref=9fedefce0bd5d9506983cff8cb060816bfe5dbaa' \
       -o "$D/install"
     rm -f -- "$D/curl"
-    [[ "$(git hash-object "$D/install")" == d3dd590c8e0c673b3fb40e156c01ae0ccf49b43c ]]
+    [[ "$(git hash-object "$D/install")" == 8950754a20a3ba478a6dbfa48b070d8ce1428b0d ]]
     chmod 0700 "$D/install"
     bash "$D/install"
 
