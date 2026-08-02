@@ -216,6 +216,14 @@ sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''.replace(
         "__EXPECTED_CLI_PATCHER_BLOB__", EXPECTED_CLI_PATCHER_BLOB
     )
 
+    update_agent_old = r'''for backup in "${TREE_ROLLBACK_BACKUPS[@]}"; do'''
+    update_agent_new = r'''if [[ -x "$SOURCE_ROOT/tools/install-update-agent.sh" ]]; then
+  say "Installing signed GitHub update agent"
+  bash "$SOURCE_ROOT/tools/install-update-agent.sh" >>"$LOG" 2>&1 \
+    || die "Could not install the signed GitHub update agent"
+fi
+for backup in "${TREE_ROLLBACK_BACKUPS[@]}"; do'''
+
     text = path.read_text(encoding="utf-8")
     updated = replace_reviewed_shape(
         text, health_old, health_new, "post-install health"
@@ -243,6 +251,12 @@ sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''.replace(
     )
     updated = replace_reviewed_shape(
         updated, runtime_old, runtime_new, "CLI runtime environment injection"
+    )
+    updated = replace_reviewed_shape(
+        updated,
+        update_agent_old,
+        update_agent_new,
+        "signed GitHub update agent installation",
     )
 
     mode = stat.S_IMODE(path.stat().st_mode)
