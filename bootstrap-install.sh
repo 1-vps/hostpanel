@@ -4,6 +4,11 @@
 # against the full Git object ID, and run the hardened installer from the complete source tree.
 set -euo pipefail
 
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
+unset PYTHONPATH PYTHONHOME BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH
+
 REPO="${HP_REPO:-https://github.com/1-vps/hostpanel.git}"
 REF="${HP_REPO_REF:-}"
 WORK_DIR=""
@@ -20,6 +25,17 @@ EOF
 
 say(){ printf '\n==> %s\n' "$*"; }
 die(){ printf '\nError: %s\n' "$*" >&2; exit 1; }
+clear_git_auth_environment(){
+  local name
+  while IFS= read -r name; do unset "$name"; done < <(
+    compgen -A variable GIT_CONFIG_KEY_ || true
+  )
+  while IFS= read -r name; do unset "$name"; done < <(
+    compgen -A variable GIT_CONFIG_VALUE_ || true
+  )
+  unset GIT_CONFIG_COUNT GIT_TERMINAL_PROMPT
+  unset GH_READ_TOKEN GH_TOKEN GITHUB_TOKEN GIT_AUTH_HEADER
+}
 cleanup(){
   [[ -z "$PG_URL_FILE" ]] || rm -f -- "$PG_URL_FILE"
   [[ -z "$WORK_DIR" ]] || rm -rf -- "$WORK_DIR"
@@ -147,8 +163,8 @@ PYPGREPAIR
   [[ "$result" != repaired ]] || printf '  ok preserved local PostgreSQL role, database and password reconciled\n'
 }
 
-[[ "$REPO" =~ ^https://[^[:space:]]+$ ]] \
-  || die "HP_REPO must be an HTTPS Git repository URL"
+[[ "$REPO" == "https://github.com/1-vps/hostpanel.git" ]] \
+  || die "HP_REPO must be the canonical HostPanel repository"
 [[ "$REF" =~ ^[0-9a-fA-F]{40}$ ]] \
   || die "Set HP_REPO_REF to the reviewed full 40-character Git commit SHA"
 
@@ -160,6 +176,12 @@ done
 WORK_DIR="$(mktemp -d /tmp/hostpanel-bootstrap.XXXXXX)" \
   || die "Could not create a private bootstrap directory"
 chmod 700 "$WORK_DIR"
+GIT_HOME="$WORK_DIR/git-home"
+mkdir -m 700 "$GIT_HOME"
+reviewed_git(){
+  env HOME="$GIT_HOME" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+    git "$@"
+}
 CHECKOUT="$WORK_DIR/repository"
 EXTRACT_ROOT="$WORK_DIR/release"
 PUBLIC_KEY="$WORK_DIR/trusted-release.pub"
@@ -168,18 +190,19 @@ printf '%s\n' "$TRUSTED_RELEASE_PUBLIC_KEY" >"$PUBLIC_KEY"
 chmod 600 "$PUBLIC_KEY"
 
 say "Fetching reviewed HostPanel commit $REF"
-git -C "$CHECKOUT" init -q \
+reviewed_git -C "$CHECKOUT" init -q \
   || die "Could not initialise the temporary Git checkout"
-git -C "$CHECKOUT" remote add origin "$REPO" \
+reviewed_git -C "$CHECKOUT" remote add origin "$REPO" \
   || die "Could not configure the reviewed Git repository"
-git -C "$CHECKOUT" fetch --depth 1 origin "$REF" \
-  || die "Could not fetch reviewed commit $REF from $REPO"
-FETCHED_COMMIT="$(git -C "$CHECKOUT" rev-parse --verify 'FETCH_HEAD^{commit}')" \
+reviewed_git -C "$CHECKOUT" fetch --depth 1 origin "$REF" \
+  || die "Could not fetch the reviewed commit from the canonical repository"
+FETCHED_COMMIT="$(reviewed_git -C "$CHECKOUT" rev-parse --verify 'FETCH_HEAD^{commit}')" \
   || die "Could not resolve the fetched Git commit"
 [[ "${FETCHED_COMMIT,,}" == "${REF,,}" ]] \
   || die "Fetched Git commit does not match HP_REPO_REF"
-git -C "$CHECKOUT" checkout -q --detach "$FETCHED_COMMIT" \
+reviewed_git -C "$CHECKOUT" checkout -q --detach "$FETCHED_COMMIT" \
   || die "Could not check out reviewed commit $REF"
+clear_git_auth_environment
 
 CHECKSUMS="$CHECKOUT/SHA256SUMS"
 [[ -s "$CHECKSUMS" ]] || die "Reviewed commit is missing SHA256SUMS"
@@ -257,9 +280,9 @@ SOURCE_VERSION="$(tr -d '[:space:]' <"$SOURCE_ROOT/VERSION")"
 RELEASE_VERSION_FILE="$CHECKOUT/RELEASE_VERSION"
 [[ -f "$RELEASE_VERSION_FILE" && ! -L "$RELEASE_VERSION_FILE" ]] \
   || die "Reviewed commit is missing a safe RELEASE_VERSION"
-RELEASE_VERSION_EXPECTED="$(git -C "$CHECKOUT" rev-parse "$FETCHED_COMMIT:RELEASE_VERSION" 2>/dev/null)" \
+RELEASE_VERSION_EXPECTED="$(reviewed_git -C "$CHECKOUT" rev-parse "$FETCHED_COMMIT:RELEASE_VERSION" 2>/dev/null)" \
   || die "Reviewed commit does not contain RELEASE_VERSION"
-RELEASE_VERSION_ACTUAL="$(git -C "$CHECKOUT" hash-object "$RELEASE_VERSION_FILE")" \
+RELEASE_VERSION_ACTUAL="$(reviewed_git -C "$CHECKOUT" hash-object "$RELEASE_VERSION_FILE")" \
   || die "Could not hash reviewed RELEASE_VERSION"
 [[ "$RELEASE_VERSION_ACTUAL" == "$RELEASE_VERSION_EXPECTED" ]] \
   || die "RELEASE_VERSION does not match its reviewed Git object"
@@ -287,9 +310,9 @@ verify_commit_file(){
   local path="$1" expected actual
   [[ -f "$CHECKOUT/$path" && ! -L "$CHECKOUT/$path" ]] \
     || die "Reviewed commit contains an unsafe overlay path: $path"
-  expected="$(git -C "$CHECKOUT" rev-parse "$FETCHED_COMMIT:$path" 2>/dev/null)" \
+  expected="$(reviewed_git -C "$CHECKOUT" rev-parse "$FETCHED_COMMIT:$path" 2>/dev/null)" \
     || die "Reviewed commit does not contain $path"
-  actual="$(git -C "$CHECKOUT" hash-object "$CHECKOUT/$path")" \
+  actual="$(reviewed_git -C "$CHECKOUT" hash-object "$CHECKOUT/$path")" \
     || die "Could not hash reviewed overlay $path"
   [[ "$actual" == "$expected" ]] \
     || die "Reviewed overlay does not match its Git object: $path"
@@ -300,8 +323,16 @@ OVERLAY_FILES=(
   install.sh
   install.base.sh
   tools/harden_install.py
+  tools/harden_install_impl.py
   tools/harden_install_runtime.py
+  tools/patch_cli_runtime_env.py
   tools/patch_panel_ui.py
+  tools/hostpanel-update.py
+  tools/install-update-agent.sh
+  packaging/systemd/hostpanel-update.service
+  packaging/systemd/hostpanel-update.timer
+  releases/update.pub
+  releases/update-keyring.json
   app/static/panel-redesign.css
   app/static/panel-redesign.js
   app/static/hostpanel-brand.css
@@ -311,10 +342,22 @@ OVERLAY_FILES=(
 for overlay in "${OVERLAY_FILES[@]}"; do verify_commit_file "$overlay"; done
 install -m 0755 "$CHECKOUT/install.sh" "$SOURCE_ROOT/install.sh"
 install -m 0755 "$CHECKOUT/install.base.sh" "$SOURCE_ROOT/install.base.sh"
-install -d -m 0755 "$SOURCE_ROOT/tools" "$SOURCE_ROOT/app/static"
+install -d -m 0755 "$SOURCE_ROOT/tools" "$SOURCE_ROOT/app/static" \
+  "$SOURCE_ROOT/packaging/systemd" "$SOURCE_ROOT/releases"
 install -m 0755 "$CHECKOUT/tools/harden_install.py" "$SOURCE_ROOT/tools/harden_install.py"
+install -m 0644 "$CHECKOUT/tools/harden_install_impl.py" "$SOURCE_ROOT/tools/harden_install_impl.py"
 install -m 0755 "$CHECKOUT/tools/harden_install_runtime.py" "$SOURCE_ROOT/tools/harden_install_runtime.py"
+install -m 0755 "$CHECKOUT/tools/patch_cli_runtime_env.py" "$SOURCE_ROOT/tools/patch_cli_runtime_env.py"
 install -m 0755 "$CHECKOUT/tools/patch_panel_ui.py" "$SOURCE_ROOT/tools/patch_panel_ui.py"
+install -m 0755 "$CHECKOUT/tools/hostpanel-update.py" "$SOURCE_ROOT/tools/hostpanel-update.py"
+install -m 0755 "$CHECKOUT/tools/install-update-agent.sh" "$SOURCE_ROOT/tools/install-update-agent.sh"
+install -m 0644 "$CHECKOUT/packaging/systemd/hostpanel-update.service" \
+  "$SOURCE_ROOT/packaging/systemd/hostpanel-update.service"
+install -m 0644 "$CHECKOUT/packaging/systemd/hostpanel-update.timer" \
+  "$SOURCE_ROOT/packaging/systemd/hostpanel-update.timer"
+install -m 0644 "$CHECKOUT/releases/update.pub" "$SOURCE_ROOT/releases/update.pub"
+install -m 0644 "$CHECKOUT/releases/update-keyring.json" \
+  "$SOURCE_ROOT/releases/update-keyring.json"
 install -m 0644 "$CHECKOUT/app/static/panel-redesign.css" "$SOURCE_ROOT/app/static/panel-redesign.css"
 install -m 0644 "$CHECKOUT/app/static/panel-redesign.js" "$SOURCE_ROOT/app/static/panel-redesign.js"
 install -m 0644 "$CHECKOUT/app/static/hostpanel-brand.css" "$SOURCE_ROOT/app/static/hostpanel-brand.css"
@@ -372,6 +415,7 @@ python3 "$SOURCE_ROOT/tools/review_locales.py" \
 
 # Validate the exact generated root installer before any server mutation.
 GENERATED_CHECK="$WORK_DIR/install.generated.sh"
+HP_HARDENER_SOURCE_ROOT="$CHECKOUT" \
 python3 "$SOURCE_ROOT/tools/harden_install.py" \
   "$SOURCE_ROOT/install.base.sh" "$GENERATED_CHECK" \
   || die "Could not derive the hardened installer during bootstrap validation"

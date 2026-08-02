@@ -6,6 +6,20 @@
 # syntax-checks it, and only then runs it from the complete source tree.
 set -euo pipefail
 
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
+unset PYTHONPATH PYTHONHOME BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH
+unset HP_HARDENER_SOURCE_ROOT
+while IFS= read -r inherited_name; do unset "$inherited_name"; done < <(
+  compgen -A variable GIT_CONFIG_KEY_ || true
+)
+while IFS= read -r inherited_name; do unset "$inherited_name"; done < <(
+  compgen -A variable GIT_CONFIG_VALUE_ || true
+)
+unset GIT_CONFIG_COUNT GIT_TERMINAL_PROMPT
+unset GH_READ_TOKEN GH_TOKEN GITHUB_TOKEN GIT_AUTH_HEADER
+
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 BASE_INSTALLER="$SCRIPT_DIR/install.base.sh"
 HARDENER="$SCRIPT_DIR/tools/harden_install.py"

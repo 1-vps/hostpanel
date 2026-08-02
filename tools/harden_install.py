@@ -54,27 +54,94 @@ def git_blob_sha(path: pathlib.Path) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def valid_implementation(path: pathlib.Path) -> bool:
-    return path.is_file() and not path.is_symlink() and git_blob_sha(path) == EXPECTED_IMPL_BLOB
+def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev,
+        left.st_ino,
+        left.st_mode,
+        left.st_uid,
+        left.st_gid,
+        left.st_nlink,
+        left.st_size,
+        left.st_mtime_ns,
+    ) == (
+        right.st_dev,
+        right.st_ino,
+        right.st_mode,
+        right.st_uid,
+        right.st_gid,
+        right.st_nlink,
+        right.st_size,
+        right.st_mtime_ns,
+    )
+
+
+def trusted_source_file(
+    source_root: pathlib.Path, relative: pathlib.PurePosixPath, expected_blob: str
+) -> pathlib.Path:
+    if not source_root.is_absolute() or ".." in relative.parts:
+        raise SystemExit("the hardener source root is not canonical")
+    expected_uid = os.geteuid()
+    root_before = source_root.lstat()
+    if (
+        not stat.S_ISDIR(root_before.st_mode)
+        or stat.S_ISLNK(root_before.st_mode)
+        or root_before.st_uid != expected_uid
+        or stat.S_IMODE(root_before.st_mode) & 0o022
+    ):
+        raise SystemExit("the hardener source root is not private and trusted")
+
+    current = source_root
+    for component in relative.parts[:-1]:
+        current = current / component
+        metadata = current.lstat()
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != expected_uid
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            raise SystemExit("the hardener source path contains an unsafe directory")
+
+    candidate = source_root.joinpath(*relative.parts)
+    before = candidate.lstat()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or stat.S_ISLNK(before.st_mode)
+        or before.st_uid != expected_uid
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) & 0o022
+    ):
+        raise SystemExit("the hardener implementation is not a trusted regular file")
+    if git_blob_sha(candidate) != expected_blob:
+        raise SystemExit("the hardener implementation does not match its reviewed blob")
+    after = candidate.lstat()
+    root_after = source_root.lstat()
+    if not _same_file(before, after) or not _same_file(root_before, root_after):
+        raise SystemExit("the hardener source changed during validation")
+    return candidate
 
 
 def resolve_implementation() -> pathlib.Path:
-    adjacent = pathlib.Path(__file__).with_name(IMPLEMENTATION_NAME)
-    if valid_implementation(adjacent):
-        return adjacent
+    entrypoint = pathlib.Path(__file__).absolute()
+    adjacent_root = entrypoint.parent.parent
+    try:
+        return trusted_source_file(
+            adjacent_root,
+            pathlib.PurePosixPath("tools") / IMPLEMENTATION_NAME,
+            EXPECTED_IMPL_BLOB,
+        )
+    except (FileNotFoundError, OSError, SystemExit):
+        pass
 
-    candidates = sorted(
-        path
-        for path in pathlib.Path("/tmp").glob(
-            f"hostpanel-bootstrap.*/repository/tools/{IMPLEMENTATION_NAME}"
-        )
-        if valid_implementation(path)
+    explicit_root = os.environ.pop("HP_HARDENER_SOURCE_ROOT", "")
+    if not explicit_root:
+        raise SystemExit("a unique trusted hardener source root is required")
+    return trusted_source_file(
+        pathlib.Path(explicit_root),
+        pathlib.PurePosixPath("tools") / IMPLEMENTATION_NAME,
+        EXPECTED_IMPL_BLOB,
     )
-    if len(candidates) != 1:
-        raise SystemExit(
-            "could not resolve exactly one blob-verified hardener implementation"
-        )
-    return candidates[0]
 
 
 def load_implementation(path: pathlib.Path):
@@ -198,15 +265,6 @@ chmod 711 /var/lib/hostpanel/wp-sso'''
 
     runtime_old = r'''sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''
     runtime_new = r'''CLI_RUNTIME_PATCHER="$SOURCE_ROOT/tools/patch_cli_runtime_env.py"
-if [[ ! -f "$CLI_RUNTIME_PATCHER" || -L "$CLI_RUNTIME_PATCHER" ]]; then
-  mapfile -t CLI_RUNTIME_PATCHERS < <(
-    find /tmp -path '/tmp/hostpanel-bootstrap.*/repository/tools/patch_cli_runtime_env.py' \
-      -type f ! -type l -print 2>/dev/null
-  )
-  ((${#CLI_RUNTIME_PATCHERS[@]} == 1)) \
-    || die "Could not resolve exactly one reviewed CLI runtime environment patcher"
-  CLI_RUNTIME_PATCHER="${CLI_RUNTIME_PATCHERS[0]}"
-fi
 [[ -f "$CLI_RUNTIME_PATCHER" && ! -L "$CLI_RUNTIME_PATCHER" ]] \
   || die "The reviewed CLI runtime environment patcher is missing or unsafe"
 CLI_RUNTIME_PATCHER_BLOB="$(git hash-object --no-filters "$CLI_RUNTIME_PATCHER")" \
@@ -226,16 +284,9 @@ sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''.replace(
 
     update_agent_old = r'''for backup in "${TREE_ROLLBACK_BACKUPS[@]}"; do'''
     update_agent_new = r'''UPDATE_AGENT_ROOT="$SOURCE_ROOT"
-if [[ ! -f "$UPDATE_AGENT_ROOT/tools/install-update-agent.sh" \
-      || -L "$UPDATE_AGENT_ROOT/tools/install-update-agent.sh" ]]; then
-  mapfile -t UPDATE_AGENT_INSTALLERS < <(
-    find /tmp -path '/tmp/hostpanel-bootstrap.*/repository/tools/install-update-agent.sh' \
-      -type f ! -type l -print 2>/dev/null
-  )
-  ((${#UPDATE_AGENT_INSTALLERS[@]} == 1)) \
-    || die "Could not resolve exactly one reviewed GitHub update agent"
-  UPDATE_AGENT_ROOT="$(CDPATH= cd -- "$(dirname -- "${UPDATE_AGENT_INSTALLERS[0]}")/.." && pwd -P)"
-fi
+[[ -f "$UPDATE_AGENT_ROOT/tools/install-update-agent.sh" \
+    && ! -L "$UPDATE_AGENT_ROOT/tools/install-update-agent.sh" ]] \
+  || die "Could not resolve exactly one reviewed GitHub update agent from the trusted source root"
 UPDATE_AGENT_PATHS=(
 __UPDATE_AGENT_PATHS__
 )
