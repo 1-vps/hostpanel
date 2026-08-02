@@ -21,7 +21,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "publish-release.yml"
 SERVICE = ROOT / "packaging" / "systemd" / "hostpanel-update.service"
 TIMER = ROOT / "packaging" / "systemd" / "hostpanel-update.timer"
 PUBLIC_KEY = ROOT / "releases" / "update.pub"
-RELEASE_GATE_ISSUES = (7, 14, 115, 116, 118)
+RELEASE_GATE_ISSUES = (7, 14, 115, 116, 118, 119)
 
 
 def load_module(path: pathlib.Path, name: str):
@@ -86,7 +86,7 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
         self.assertIn("issues:\n    types: [closed]", self.workflow)
         for issue in RELEASE_GATE_ISSUES:
             self.assertIn(f"github.event.issue.number == {issue}", self.workflow)
-        self.assertIn("7|14|115|116|118", self.workflow)
+        self.assertIn("7|14|115|116|118|119", self.workflow)
         self.assertGreaterEqual(
             self.workflow.count(
                 'gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha'
@@ -97,7 +97,7 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
         self.assertIn("Refusing to publish stale commit", self.workflow)
 
     def test_release_workflow_enforces_all_gates_and_safe_resume(self) -> None:
-        gate_loop = "for issue in 7 14 115 116 118; do"
+        gate_loop = "for issue in 7 14 115 116 118 119; do"
         self.assertEqual(self.workflow.count(gate_loop), 2)
         for issue in RELEASE_GATE_ISSUES:
             self.assertIn(str(issue), gate_loop)
