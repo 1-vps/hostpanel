@@ -4,17 +4,21 @@ on:
   pull_request:
     paths:
       - auto-install.sh
+      - install-one-line.sh
       - SETUP.md
       - examples/cloud-init-hostpanel.yaml
       - tests/test_auto_install.py
+      - tests/test_one_line_install.py
       - .github/workflows/automatic-installer.yml
   push:
     branches: [main]
     paths:
       - auto-install.sh
+      - install-one-line.sh
       - SETUP.md
       - examples/cloud-init-hostpanel.yaml
       - tests/test_auto_install.py
+      - tests/test_one_line_install.py
       - .github/workflows/automatic-installer.yml
   workflow_dispatch:
 
@@ -29,12 +33,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - name: Parse automatic installer
-        run: bash -n auto-install.sh
+      - name: Parse automatic installers
+        run: |
+          bash -n auto-install.sh
+          bash -n install-one-line.sh
       - name: Run automatic installer regressions
-        run: python3 -m unittest -v tests.test_auto_install
-      - name: ShellCheck automatic installer
+        run: python3 -m unittest -v tests.test_auto_install tests.test_one_line_install
+      - name: ShellCheck automatic installers
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
-          shellcheck -S error auto-install.sh
+          shellcheck -S error auto-install.sh install-one-line.sh
