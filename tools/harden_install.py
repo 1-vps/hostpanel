@@ -14,7 +14,7 @@ EXPECTED_CLI_PATCHER_BLOB = "eaa64717db43e77e6a5a8e93ef6d0b81c8536985"
 EXPECTED_UPDATE_AGENT_BLOBS = {
     "tools/hostpanel-update.py": "2e854ed6fde55dd722f8d07cb932ffca598bad5c",
     "tools/install-update-agent.sh": "1a95da641b806a6fbf77e3d6a5a3f6d3c9295a12",
-    "packaging/systemd/hostpanel-update.service": "0765212276f54ec9b473d07cda672296a2b7ea39",
+    "packaging/systemd/hostpanel-update.service": "d3f6c665f2a59567b38628a36f8cf13f9f4ea93f",
     "packaging/systemd/hostpanel-update.timer": "a91c65aadd280ed932762c31e2e4af7ad93654cc",
     "releases/update.pub": "4d76490a7d13fe103995137974f0a79dba0b63ee",
 }
