@@ -72,9 +72,12 @@ check_systemd(){
   [[ "$(cat /proc/1/comm 2>/dev/null || true)" == systemd ]] && pass 'systemd is PID 1' || fail 'systemd is not PID 1'
   failed="$(systemctl --failed --no-legend --plain 2>/dev/null || true)"
   if [[ -z "$failed" ]]; then pass 'no failed systemd units'; else fail 'systemd has failed units'; printf '%s\n' "$failed"; fi
-  for unit in hostpanel nginx apache2 httpd postgresql redis-server redis dovecot rspamd postfix exim4 named bind9 fail2ban firewalld; do
+  for unit in hostpanel nginx apache2 httpd lsws postgresql redis-server redis dovecot rspamd postfix exim4 named bind9 fail2ban firewalld; do
     check_unit "$unit"
   done
+  if [[ -x /usr/local/lsws/bin/openlitespeed ]] && ! unit_exists lsws; then
+    fail 'OpenLiteSpeed is installed but lsws.service is missing'
+  fi
 }
 
 check_os(){

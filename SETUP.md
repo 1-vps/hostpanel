@@ -1,80 +1,72 @@
 # HostPanel setup
 
 This guide installs the `3.4.0-hardened-r6` working release from the signed
-`3.4.0-hardened-r5` base release through the QEMU-validated installer overlay
-commit:
+`3.4.0-hardened-r5` base release through reviewed installer overlay commit:
 
 ```text
 9c38d0095563ea33efd14124babfd29556c0da46
 ```
 
-That implementation was squash-merged to `main` as:
-
-```text
-6a2b8f76ece798408ef7b04586e73be8c3041750
-```
-
-The same full reviewed overlay SHA must be used in the download URL and in
-`HP_REPO_REF`. The signed source archive writes `3.4.0` to
-`/opt/hostpanel/VERSION`; the `hardened-r5` and `hardened-r6` identifiers are
-signed-package and installer-overlay revision labels.
+The signed application writes `3.4.0` to `/opt/hostpanel/VERSION`. The
+`hardened-r5` and `hardened-r6` values are signed-package and installer-overlay
+revision labels.
 
 ## Security model
 
-The bootstrap does not trust a public key fetched beside the archive it verifies.
-It contains the release verification key directly and uses it to authenticate
-the signed `3.4.0-hardened-r5` base archive. It separately verifies each
-installer overlay file against the operator-supplied full Git commit object.
-The overlay derives the `3.4.0-hardened-r6` working release while preserving the
-signed source archive's installed application version `3.4.0`.
+The bootstrap contains the long-lived release verification key and uses it to
+authenticate the signed base archive. It separately verifies every installer
+overlay file against the operator-supplied full Git commit object. The generated
+root installer is derived deterministically from a preserved base installer and
+fails closed when an expected replacement or Git object does not match.
 
-The installed root script is derived deterministically from a preserved base
-installer. Every expected replacement must match exactly once; otherwise the
-hardener exits before any server mutation.
+This repository is private. Anonymous `raw.githubusercontent.com` downloads are
+not a supported installation path. Use a short-lived, repository-scoped GitHub
+fine-grained token or GitHub App installation token with only **Contents:
+Read-only** permission. Never put the token in a URL or command-line argument.
 
 HostPanel changes packages, firewall rules, web and mail services, databases,
-DNS, scheduled jobs, and customer data paths. Validate the selected roles on a
-fresh disposable server first and keep provider-console access available.
+DNS, scheduled jobs, and customer data paths. Validate on a disposable server,
+retain provider-console access, and create a provider snapshot before production
+changes.
 
 ## Requirements
 
 - Ubuntu 22.04, 24.04, or 26.04; Debian 12 or 13; Rocky Linux 9 or 10; or AlmaLinux 9 or 10
 - x86-64/AMD64 or ARM64/AArch64
-- at least 2 GB RAM
-- at least 10 GB free on `/`
-- root or passwordless sudo access
+- at least 2 GB RAM and 10 GB free on `/`
+- root access
 - a valid panel hostname such as `panel.example.com`
-- an administrative IP or CIDR when the installer is not launched from SSH
+- an administrative IP or CIDR
+- a short-lived GitHub read-only token for this repository
 
 Ubuntu 26.04 uses distribution-provided PHP 8.5 and Rspamd packages. Automatic
-third-party repository setup is disabled on every platform: the installer never
-executes a mutable repository bootstrap script as root. Preconfigure a reviewed
-repository yourself when additional packages are required, and keep
-`HP_MULTI_PHP_REPO=off` and `HP_RSPAMD_REPO=off` during installation.
+third-party repository setup is disabled. Preconfigure reviewed repositories
+when required and keep `HP_MULTI_PHP_REPO=off` and `HP_RSPAMD_REPO=off` during
+installation.
 
-A full installation selects all roles unless `--role` is supplied:
-`control`, `web`, `database`, `mail`, `dns`, `backup`, and `edge`.
+A full installation selects all roles unless `--role` is supplied: `control`,
+`web`, `database`, `mail`, `dns`, `backup`, and `edge`.
 
-## 1. Prepare DNS and administrative access
+## 1. Prepare DNS, access, and recovery
 
-Create an `A` record for the panel hostname pointing to the server. Add an
-`AAAA` record only when IPv6 is configured and protected by the same firewall
-policy.
+Create an `A` record for the panel hostname. Add an `AAAA` record only when IPv6
+is configured and protected by the same firewall policy.
 
 ```bash
 getent ahosts panel.example.com
 ```
 
-Determine the source IP or network that must retain panel access. Examples:
+Identify the source address or network that must retain panel access, for
+example:
 
 ```text
 192.0.2.10/32
 2001:db8:100::/64
 ```
 
-The installer detects the active SSH port from `SSH_CONNECTION` and `sshd -T`.
-It opens those ports before enabling a default-deny firewall and schedules a
-five-minute automatic rollback until installation completes successfully.
+The installer detects the active SSH port, opens required management access
+before enabling a default-deny firewall, and schedules a timed rollback until
+installation completes. Keep provider-console access and a provider snapshot.
 
 ## 2. Install bootstrap prerequisites
 
@@ -91,92 +83,145 @@ Rocky Linux or AlmaLinux:
 sudo dnf install -y ca-certificates curl git openssl python3
 ```
 
-## 3. Download the validated bootstrap
+## 3. Create the authenticated installer driver
 
-Do not run an unpinned branch URL as root.
+Review the block before running it. Set `PANEL_HOST`, `ADMIN_CIDR`, `MTA`, and
+`REINSTALL` at the top. The script prompts without echo for the short-lived
+read-only token, downloads two files from the exact reviewed commit through the
+GitHub Contents API, verifies their Git blob IDs, installs HostPanel, and removes
+all authentication state on success or failure.
 
 ```bash
+sudo tee /root/install-hostpanel-private.sh >/dev/null <<'SCRIPT'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
 REVIEWED_COMMIT_SHA=9c38d0095563ea33efd14124babfd29556c0da46
+BOOTSTRAP_BLOB=eae493681ce5eecd5ea61491f8e08e1f40938e08
+VALIDATOR_BLOB=2672271aacc0d85013765b3a7887fdec95518643
+REPOSITORY_API=https://api.github.com/repos/1-vps/hostpanel
 
-sudo curl -fsSL \
-  "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/bootstrap-install.sh" \
+PANEL_HOST=panel.example.com
+ADMIN_CIDR=192.0.2.10/32
+MTA=postfix
+REINSTALL=no
+
+[[ "$EUID" -eq 0 ]] || {
+  echo 'Run this script as root.' >&2
+  exit 1
+}
+case "$MTA" in
+  postfix|exim) ;;
+  *) echo 'MTA must be postfix or exim.' >&2; exit 1 ;;
+esac
+case "$REINSTALL" in
+  yes|no) ;;
+  *) echo 'REINSTALL must be yes or no.' >&2; exit 1 ;;
+esac
+
+AUTH_FILE=""
+cleanup_auth(){
+  local status=$?
+  [[ -z "${AUTH_FILE:-}" ]] || rm -f -- "$AUTH_FILE"
+  unset GH_READ_TOKEN GIT_AUTH_HEADER
+  unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
+  return "$status"
+}
+trap cleanup_auth EXIT
+
+read -r -s -p 'GitHub Contents:Read token: ' GH_READ_TOKEN
+printf '\n'
+[[ -n "$GH_READ_TOKEN" \
+   && "$GH_READ_TOKEN" != *$'\n'* \
+   && "$GH_READ_TOKEN" != *$'\r'* \
+   && "$GH_READ_TOKEN" != *'"'* ]] || {
+  echo 'Invalid token input.' >&2
+  exit 1
+}
+
+AUTH_FILE="$(mktemp /root/hostpanel-github-auth.XXXXXX)"
+{
+  printf 'header = "Accept: application/vnd.github.raw+json"\n'
+  printf 'header = "Authorization: Bearer %s"\n' "$GH_READ_TOKEN"
+  printf 'header = "X-GitHub-Api-Version: 2022-11-28"\n'
+} > "$AUTH_FILE"
+chmod 600 "$AUTH_FILE"
+
+curl --fail --location --silent --show-error \
+  --config "$AUTH_FILE" \
+  "${REPOSITORY_API}/contents/bootstrap-install.sh?ref=${REVIEWED_COMMIT_SHA}" \
   -o /root/bootstrap-install.sh
-sudo chmod 700 /root/bootstrap-install.sh
-sudo bash -n /root/bootstrap-install.sh
+curl --fail --location --silent --show-error \
+  --config "$AUTH_FILE" \
+  "${REPOSITORY_API}/contents/tools/validate-production-vm.sh?ref=${REVIEWED_COMMIT_SHA}" \
+  -o /root/validate-production-vm.sh
+
+rm -f -- "$AUTH_FILE"
+AUTH_FILE=""
+chmod 700 /root/bootstrap-install.sh /root/validate-production-vm.sh
+
+[[ "$(git hash-object /root/bootstrap-install.sh)" == "$BOOTSTRAP_BLOB" ]] || {
+  echo 'Bootstrap Git blob mismatch.' >&2
+  exit 1
+}
+[[ "$(git hash-object /root/validate-production-vm.sh)" == "$VALIDATOR_BLOB" ]] || {
+  echo 'Validator Git blob mismatch.' >&2
+  exit 1
+}
+bash -n /root/bootstrap-install.sh
+bash -n /root/validate-production-vm.sh
+
+GIT_AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_READ_TOKEN" | base64 | tr -d '\r\n')"
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0='http.https://github.com/.extraheader'
+export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $GIT_AUTH_HEADER"
+export GIT_TERMINAL_PROMPT=0
+unset GH_READ_TOKEN GIT_AUTH_HEADER
+
+install_args=(--mta "$MTA")
+if [[ "$REINSTALL" == yes ]]; then
+  install_args=(--reinstall "${install_args[@]}")
+fi
+common_env=(
+  HP_REPO_REF="$REVIEWED_COMMIT_SHA"
+  HP_PANEL_HOST="$PANEL_HOST"
+  HP_PANEL_ADMIN_CIDR="$ADMIN_CIDR"
+  HP_MULTI_PHP_REPO=off
+  HP_RSPAMD_REPO=off
+)
+
+env "${common_env[@]}" \
+  bash /root/bootstrap-install.sh --check "${install_args[@]}"
+env "${common_env[@]}" \
+  bash /root/bootstrap-install.sh "${install_args[@]}"
+
+cleanup_auth
+trap - EXIT
+printf 'HostPanel installation completed from reviewed commit %s.\n' \
+  "$REVIEWED_COMMIT_SHA"
+SCRIPT
+sudo chmod 700 /root/install-hostpanel-private.sh
+sudo /root/install-hostpanel-private.sh
 ```
 
-This exact commit passed deterministic installer generation, Bash syntax,
-ShellCheck, all nine supported-OS preflight jobs, signed-archive verification,
-the Ubuntu 26.04/Python 3.14 locked-runtime installation test, the production VM
-validation harness, and the full secretless QEMU install/reboot acceptance run.
-
-## 4. Run the preflight
+Delete the driver after reviewing the installation result. It contains no token,
+but removing one-off root scripts reduces future ambiguity.
 
 ```bash
-sudo env \
-  HP_REPO_REF="$REVIEWED_COMMIT_SHA" \
-  HP_PANEL_HOST=panel.example.com \
-  HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
-  HP_MULTI_PHP_REPO=off \
-  HP_RSPAMD_REPO=off \
-  bash /root/bootstrap-install.sh --check --mta postfix
+sudo rm -f /root/install-hostpanel-private.sh
 ```
 
-A successful preflight prints:
+The preflight validates inputs, host capacity, ports, roles, and MTA without
+installing packages or changing services. The mutating command runs only after
+the same preflight succeeds.
 
-```text
-Preflight passed. No changes were made.
-```
+## 4. Reinstall or interrupted-run recovery
 
-Preflight validates the OS, architecture, memory, disk, hostname, ports, roles,
-and MTA. It does not install packages, configure repositories, modify the
-firewall, build the Python runtime, or start services.
-
-## 5. Fresh installation
+Set this line in the reviewed driver before running it:
 
 ```bash
-sudo env \
-  HP_REPO_REF="$REVIEWED_COMMIT_SHA" \
-  HP_PANEL_HOST=panel.example.com \
-  HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
-  HP_MULTI_PHP_REPO=off \
-  HP_RSPAMD_REPO=off \
-  bash /root/bootstrap-install.sh --mta postfix
-```
-
-When installation is performed over SSH, the client address is used when
-`HP_PANEL_ADMIN_CIDR` is omitted. Without either source, installation fails
-closed. `HP_ALLOW_PUBLIC_PANEL=yes` is an explicit override for controlled test
-environments and opens the panel port publicly.
-
-A fresh installation creates the `admin` account and prints its generated
-password once. The password is passed to the initialization process through
-standard input, not command-line arguments.
-
-## 6. Safe reinstall or interrupted-run recovery
-
-Run the reinstall preflight first:
-
-```bash
-sudo env \
-  HP_REPO_REF="$REVIEWED_COMMIT_SHA" \
-  HP_PANEL_HOST=panel.example.com \
-  HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
-  HP_MULTI_PHP_REPO=off \
-  HP_RSPAMD_REPO=off \
-  bash /root/bootstrap-install.sh --reinstall --check --mta postfix
-```
-
-Then run the reinstall:
-
-```bash
-sudo env \
-  HP_REPO_REF="$REVIEWED_COMMIT_SHA" \
-  HP_PANEL_HOST=panel.example.com \
-  HP_PANEL_ADMIN_CIDR=192.0.2.10/32 \
-  HP_MULTI_PHP_REPO=off \
-  HP_RSPAMD_REPO=off \
-  bash /root/bootstrap-install.sh --reinstall --mta postfix
+REINSTALL=yes
 ```
 
 Every mutating run creates a root-owned safety snapshot under:
@@ -186,32 +231,11 @@ Every mutating run creates a root-owned safety snapshot under:
 ```
 
 The directory is mode `0700`; archives and absence manifests are mode `0600`.
-It is separate from `/var/backups/hostpanel`, which can contain panel-managed
-customer backups. The snapshot includes managed service configuration, package
-repository configuration, firewall state, `/etc/fstab`, credentials, runtime
-metadata, and relevant application trees. The installer tracks newly installed
-packages and removes them on a failed run when possible.
+It is separate from panel-managed customer backups. Rollback is best-effort
+because package scripts and external service effects cannot be fully
+transactional.
 
-Rollback is best-effort because operating-system package scripts and external
-service side effects cannot be made fully transactional. A disposable VM test
-and a provider-level snapshot remain mandatory before production upgrades.
-
-## 7. Redis and service validation
-
-When Redis is selected, the installer disables its unauthenticated `default`
-ACL user, creates a named `hostpanel` user, writes a root-controlled credential,
-and configures Rspamd to authenticate. Required Redis, Dovecot, PostgreSQL,
-Apache, Rspamd, Postfix/Exim, and final `hostpanel-doctor` failures stop the
-installation instead of being reported as success.
-
-PHP branches are accepted only after required modules are visible to the loaded
-CLI runtime. Unavailable optional module packages are recorded in:
-
-```text
-/etc/hostpanel/php-skipped-packages
-```
-
-## 8. Verify after installation
+## 5. Verify after installation
 
 ```bash
 cat /opt/hostpanel/VERSION
@@ -228,62 +252,69 @@ Expected installed application version:
 3.4.0
 ```
 
-The repository working-release label remains `3.4.0-hardened-r6`. Do not infer
-the installed `VERSION` value from the signed archive filename or overlay label.
-
 Inspect the root-only installer log:
 
 ```text
 /var/log/hostpanel-install.log
 ```
 
-Download and syntax-check the production VM validator from the same reviewed
-commit:
+The validator was downloaded and blob-verified before installation. Run its
+non-destructive checks:
 
 ```bash
-sudo curl -fsSL \
-  "https://raw.githubusercontent.com/1-vps/hostpanel/${REVIEWED_COMMIT_SHA}/tools/validate-production-vm.sh" \
-  -o /root/validate-production-vm.sh
-sudo chmod 700 /root/validate-production-vm.sh
-sudo bash -n /root/validate-production-vm.sh
+sudo env \
+  HP_EXPECTED_VERSION=3.4.0 \
+  HP_PANEL_HOST=panel.example.com \
+  HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
+  bash /root/validate-production-vm.sh --check
 ```
 
-Run its non-destructive checks before and after a verified reboot as described in
-[`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md).
+Then follow [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md) for reboot and
+external acceptance.
 
-## 9. Run the secretless QEMU acceptance workflow
+## 6. Least-privilege QEMU acceptance
 
-Maintainers and contributors can reproduce the repository's real-systemd
-acceptance without provider credentials. The workflow boots a checksum-pinned
-Ubuntu 24.04 cloud image, provisions an ephemeral SSH key, installs the reviewed
-commit, runs pre-reboot validation and doctor, performs a real reboot, requires
-stable post-reboot backend readiness, reruns validation, and collects only
-bounded non-sensitive evidence.
+The QEMU workflow boots a checksum-pinned Ubuntu 24.04 image, provisions an
+ephemeral SSH key, installs the reviewed commit, validates services, performs a
+real reboot, and collects bounded non-sensitive evidence.
 
-Run it from the repository Actions UI or with GitHub CLI:
+For the private repository, GitHub's per-run read-only token is exposed only to
+the installation step. The plain and encoded runner variables are removed before
+QEMU starts; transient guest Git authentication is deleted after fetch on
+success and failure. No repository-defined secret is required.
+
+Run it from the Actions UI or with GitHub CLI:
 
 ```bash
 gh workflow run qemu-vm-acceptance.yml -f mta=postfix
 gh run watch
 ```
 
-Use `mta=exim` for the Exim path. The workflow requires no GitHub secrets and
-uses read-only repository permissions. The full VM job is intentionally skipped
-for pull requests from forks.
+Use `mta=exim` for the Exim path. The full VM job is skipped for pull requests
+from forks.
 
-The QEMU workflow validates systemd lifecycle, services, firewall behavior,
-panel response, local DNS, Redis ACLs, and forwarded web/mail listeners. It does
-not replace provider-backed validation of public IPv4/IPv6, inbound Internet
-reachability, reverse DNS, or trusted public certificate issuance.
+## 7. Provider-backed acceptance
 
-## 10. Production acceptance
+The manual `vps-acceptance` workflow is environment-gated and destructive. It:
+
+- requires the exact confirmation phrase and a provider-snapshot secret;
+- checks out the hard-pinned reviewed commit rather than the dispatch ref;
+- verifies checkout `HEAD` before any VPS connection and before installation;
+- uses strict SSH host verification;
+- copies the blob-reviewed bootstrap and validator from that checkout;
+- removes transient runner and remote Git authentication on all exit paths;
+- reboots the VM and gathers bounded acceptance evidence.
+
+Use it only with a disposable VM and protected `vps-acceptance` environment.
+
+## 8. Production acceptance
 
 Before serving customers:
 
 1. install on a disposable systemd VM of the exact target OS;
-2. run the production VM validator before and after reboot;
-3. test panel login, web, database, DNS, mail, backup, and restore paths selected for the node;
-4. confirm quota behavior on the actual customer-data filesystem;
+2. run the validator before and after a verified reboot;
+3. test panel login, web, database, DNS, mail, backup, and restore paths;
+4. verify quota enforcement on the actual customer-data filesystem;
 5. replace self-signed certificates with trusted certificates;
-6. configure reverse DNS, SPF, DKIM, and DMARC for production mail;
-7. retain a tested provider-level recovery path.
+6. configure reverse DNS, SPF, DKIM, and DMARC;
+7. retain and test a provider-level recovery path.

@@ -1,3 +1,4 @@
+import ast
 import pathlib
 import tarfile
 import unittest
@@ -79,6 +80,10 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         for path in (
             "tools/harden_install_impl.py",
             "tools/patch_cli_runtime_env.py",
+            "tools/patch_panel_ui.py",
+            "app/static/panel-redesign.css",
+            "app/static/panel-redesign.js",
+            "tests/test_panel_redesign.py",
             "tests/test_post_install_health.py",
         ):
             self.assertIn(f"      - {path}", self.workflow)
@@ -122,10 +127,124 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertIn("hostpanel-qemu-post-reboot.sh", self.harness)
         self.assertIn("hostpanel-qemu-post-reboot.sh", self.guest_installer)
 
-    def test_guest_inputs_are_escaped_and_checked_before_root_use(self):
+    def test_guest_inputs_are_escaped_and_promoted_before_root_use(self):
+        def same_statement(node: ast.stmt, source: str) -> bool:
+            expected = ast.parse(source).body[0]
+            return ast.dump(node, include_attributes=False) == ast.dump(
+                expected,
+                include_attributes=False,
+            )
+
+        def same_expression(node: ast.AST, source: str) -> bool:
+            expected = ast.parse(source, mode="eval").body
+            return ast.dump(node, include_attributes=False) == ast.dump(
+                expected,
+                include_attributes=False,
+            )
+
         self.assertIn("printf 'HP_PANEL_HOST=%q\\n'", self.harness)
-        self.assertIn('test ! -L "$path"', self.harness)
-        self.assertIn('test "$(stat -c %h "$path")" = 1', self.harness)
+        promotion_marker = 'sudo python3 - "$(id -u)" <<PYROOT\n'
+        self.assertIn(promotion_marker, self.harness)
+        promotion_script = self.harness.split(promotion_marker, 1)[1].split(
+            "\nPYROOT\n", 1
+        )[0]
+        promotion_tree = ast.parse(promotion_script)
+
+        replace_candidates = [
+            (node, index)
+            for node in ast.walk(promotion_tree)
+            if isinstance(node, ast.Try)
+            for index, statement in enumerate(node.body)
+            if same_statement(statement, "os.replace(temp_name, path)")
+        ]
+        self.assertEqual(len(replace_candidates), 1)
+        promotion_try, replace_index = replace_candidates[0]
+
+        promoted_candidates = [
+            index
+            for index, statement in enumerate(promotion_try.body)
+            if index > replace_index
+            and same_statement(statement, "promoted = path.lstat()")
+        ]
+        self.assertEqual(len(promoted_candidates), 1)
+        promoted_index = promoted_candidates[0]
+
+        validation_candidates = [
+            index
+            for index, statement in enumerate(promotion_try.body)
+            if index > promoted_index
+            and isinstance(statement, ast.If)
+            and any(
+                isinstance(descendant, ast.Constant)
+                and isinstance(descendant.value, str)
+                and "QEMU guest input promotion failed" in descendant.value
+                for descendant in ast.walk(statement)
+            )
+        ]
+        self.assertEqual(len(validation_candidates), 1)
+        validation_index = validation_candidates[0]
+        self.assertLess(replace_index, promoted_index)
+        self.assertLess(promoted_index, validation_index)
+
+        promoted_validation = promotion_try.body[validation_index]
+        validation_nodes = list(ast.walk(promoted_validation.test))
+        for predicate in (
+            "not stat.S_ISREG(promoted.st_mode)",
+            "promoted.st_uid != 0",
+            "promoted.st_gid != 0",
+            "promoted.st_nlink != 1",
+            "stat.S_IMODE(promoted.st_mode) != mode",
+        ):
+            with self.subTest(predicate=predicate):
+                self.assertTrue(
+                    any(same_expression(node, predicate) for node in validation_nodes),
+                    predicate,
+                )
+
+        promotion = self.harness.index(promotion_marker)
+        open_descriptor = self.harness.index("os.open(path,", promotion)
+        no_follow = self.harness.index("os.O_NOFOLLOW", open_descriptor)
+        descriptor_check = self.harness.index("metadata = os.fstat(source_fd)", no_follow)
+        source_regular = self.harness.index(
+            "not stat.S_ISREG(metadata.st_mode)",
+            descriptor_check,
+        )
+        ownership_check = self.harness.index(
+            "metadata.st_uid != expected_uid or metadata.st_nlink != 1",
+            source_regular,
+        )
+        size_limit = self.harness.index(
+            "metadata.st_size > MAX_INPUT_BYTES",
+            ownership_check,
+        )
+        descriptor_copy = self.harness.index("os.dup(source_fd)", size_limit)
+        observed_size = self.harness.index("remaining = metadata.st_size", descriptor_copy)
+        bounded_read = self.harness.index(
+            "source.read(min(1024 * 1024, remaining))",
+            observed_size,
+        )
+        extra_byte_check = self.harness.index("if source.read(1):", bounded_read)
+        atomic_replace = self.harness.index("os.replace(temp_name, path)", extra_byte_check)
+        promoted_metadata = self.harness.index("promoted = path.lstat()", atomic_replace)
+        promotion_end = self.harness.index("\nPYROOT\n", promoted_metadata)
+        guest_start = self.harness.index("sudo /tmp/qemu-guest-install.sh", promotion_end)
+        self.assertLess(promotion, open_descriptor)
+        self.assertLess(open_descriptor, no_follow)
+        self.assertLess(no_follow, descriptor_check)
+        self.assertLess(descriptor_check, source_regular)
+        self.assertLess(source_regular, ownership_check)
+        self.assertLess(ownership_check, size_limit)
+        self.assertLess(size_limit, descriptor_copy)
+        self.assertLess(descriptor_copy, observed_size)
+        self.assertLess(observed_size, bounded_read)
+        self.assertLess(bounded_read, extra_byte_check)
+        self.assertLess(extra_byte_check, atomic_replace)
+        self.assertLess(atomic_replace, promoted_metadata)
+        self.assertLess(promoted_metadata, promotion_end)
+        self.assertLess(promotion_end, guest_start)
+        self.assertNotIn("shutil.copyfileobj(source, target)", self.harness)
+        self.assertNotIn("sudo chown root:root /tmp/bootstrap-install.sh", self.harness)
+        self.assertNotIn("sudo chmod 700 /tmp/bootstrap-install.sh", self.harness)
         self.assertIn('[[ -f "$input" && ! -L "$input" ]]', self.guest_installer)
         self.assertIn("0:600:1", self.guest_installer)
         self.assertIn("/root/hostpanel-qemu.env", self.guest_installer)

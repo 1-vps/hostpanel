@@ -71,10 +71,9 @@ import osrelease'''
 DOCTOR_LSWS_OLD = '''    if "web" in roles:
         expected.update({"lsws": True, service("apache"): False})'''
 DOCTOR_LSWS_NEW = '''    if "web" in roles:
-        expected.update({
-            "lsws": Path("/usr/local/lsws/bin/lswsctrl").is_file(),
-            service("apache"): False,
-        })'''
+        expected[service("apache")] = False
+        if Path("/usr/local/lsws/bin/lswsctrl").is_file():
+            expected["lsws"] = True'''
 
 MYSQL_ADMIN_OLD = '''    prelude = "SET SESSION local_infile=0;\\nSET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\\n"'''
 MYSQL_ADMIN_NEW = '''    prelude = "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\\n"'''

@@ -10,12 +10,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: installer-hardening-${{ github.sha }}
-  cancel-in-progress: false
+  group: installer-hardening-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   deterministic-and-static:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -43,10 +44,13 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
           python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh
-          shellcheck -S error install.sh bootstrap-install.sh test-matrix.sh run-full-test-matrix.sh /tmp/install.generated.sh
+          shellcheck -S error \
+            install.sh bootstrap-install.sh test-matrix.sh \
+            run-full-test-matrix.sh /tmp/install.generated.sh
 
   supported-os-preflight:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     needs: deterministic-and-static
     strategy:
       fail-fast: false
@@ -70,7 +74,8 @@ jobs:
         run: ./test-matrix.sh --os '${{ matrix.os }}'
 
   ubuntu-2604-runtime-lock:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     needs: deterministic-and-static
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -107,10 +112,16 @@ jobs:
               contrib=$(apt-cache policy postgresql-contrib | awk "/Candidate:/ {print \$2; exit}")
               test -z "$contrib" || test "$contrib" = "(none)"
 
-              archive=$(awk "\$2 ~ /-source\\.tar\\.gz\$/ {print \$2}" SHA256SUMS)
-              test -n "$archive"
-              test -s "$archive.sig"
-              grep "  $archive$" SHA256SUMS | sha256sum -c -
+              test -f SHA256SUMS
+              test ! -L SHA256SUMS
+              mapfile -t archives < <(awk "\$2 ~ /-source\\.tar\\.gz\$/ {print \$2}" SHA256SUMS)
+              test "${#archives[@]}" -eq 1
+              archive="${archives[0]}"
+              test -f "$archive"
+              test ! -L "$archive"
+              test -f "$archive.sig"
+              test ! -L "$archive.sig"
+              awk -v target="$archive" "\$2 == target {print}" SHA256SUMS | sha256sum -c -
               printf "%s\n" \
                 "-----BEGIN PUBLIC KEY-----" \
                 "MCowBQYDK2VwAyEAJonL5vK2NRcFkXvKZUs64ISOs+FfhwL8gQVmFO4C0qk=" \
@@ -120,10 +131,53 @@ jobs:
                 -inkey /tmp/hostpanel-release.pub -rawin \
                 -in "$archive" -sigfile "$archive.sig"
 
-              mkdir /tmp/release
-              tar -xzf "$archive" -C /tmp/release
-              release_root=$(find /tmp/release -mindepth 1 -maxdepth 1 -type d -print -quit)
+              python3 - "$archive" <<PY
+          import inspect
+          import pathlib
+          import shutil
+          import sys
+          import tarfile
+
+          archive = pathlib.Path(sys.argv[1])
+          destination = pathlib.Path("/tmp/release")
+          if destination.exists():
+              shutil.rmtree(destination)
+          destination.mkdir(mode=0o700)
+          with tarfile.open(archive, "r:gz") as handle:
+              members = handle.getmembers()
+              if not members or len(members) > 20000:
+                  raise SystemExit("source archive member count is unsafe")
+              roots = set()
+              total = 0
+              for member in members:
+                  path = pathlib.PurePosixPath(member.name)
+                  if path.is_absolute() or ".." in path.parts or not path.parts:
+                      raise SystemExit(f"unsafe source archive member: {member.name}")
+                  if member.issym() or member.islnk():
+                      raise SystemExit(f"linked source archive member: {member.name}")
+                  if not (member.isdir() or member.isfile()):
+                      raise SystemExit(f"unsupported source archive member: {member.name}")
+                  roots.add(path.parts[0])
+                  total += max(member.size, 0)
+                  if total > 200 * 1024 * 1024:
+                      raise SystemExit("source archive expands beyond the safety limit")
+              if len(roots) != 1:
+                  raise SystemExit("source archive must contain one top-level root")
+              options = {}
+              if "filter" in inspect.signature(handle.extractall).parameters:
+                  options["filter"] = "fully_trusted"
+              handle.extractall(destination, members=members, **options)
+          root = destination / next(iter(roots))
+          if not root.is_dir() or root.is_symlink():
+              raise SystemExit("source archive root is unsafe")
+          pathlib.Path("/tmp/hostpanel-release-root").write_text(
+              str(root),
+              encoding="utf-8",
+          )
+          PY
+              release_root=$(cat /tmp/hostpanel-release-root)
               test -s "$release_root/requirements.lock"
+
               python3 -m venv /tmp/hostpanel-lock-test
               /tmp/hostpanel-lock-test/bin/pip install --quiet --upgrade "pip==25.1.1"
               /tmp/hostpanel-lock-test/bin/pip install --quiet --require-hashes \

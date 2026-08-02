@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Fetch a reviewed HostPanel commit, verify the signed source archive with the
-# embedded release trust root, verify every executable overlay against the full
-# Git object ID, and run the hardened installer from the complete source tree.
+# embedded release trust root, verify every installer and localization overlay
+# against the full Git object ID, and run the hardened installer from the complete source tree.
 set -euo pipefail
 
 REPO="${HP_REPO:-https://github.com/1-vps/hostpanel.git}"
 REF="${HP_REPO_REF:-}"
 WORK_DIR=""
 PG_URL_FILE=""
+INSTALLER_PID=""
 
 # Long-lived release verification key. The adjacent key file in a fetched
 # commit is deliberately not trusted to verify the archive from that commit.
@@ -23,7 +24,21 @@ cleanup(){
   [[ -z "$PG_URL_FILE" ]] || rm -f -- "$PG_URL_FILE"
   [[ -z "$WORK_DIR" ]] || rm -rf -- "$WORK_DIR"
 }
-trap cleanup EXIT HUP INT TERM
+signal_exit(){
+  local status="$1"
+  trap - EXIT HUP INT TERM
+  if [[ "$INSTALLER_PID" =~ ^[0-9]+$ ]]; then
+    kill -TERM "$INSTALLER_PID" 2>/dev/null || true
+    wait "$INSTALLER_PID" 2>/dev/null || true
+    INSTALLER_PID=""
+  fi
+  cleanup
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'signal_exit 129' HUP
+trap 'signal_exit 130' INT
+trap 'signal_exit 143' TERM
 
 postgres_diagnostics(){
   printf '\n--- PostgreSQL diagnostics ---\n' >&2
@@ -257,13 +272,74 @@ OVERLAY_FILES=(
   install.base.sh
   tools/harden_install.py
   tools/harden_install_runtime.py
+  tools/patch_panel_ui.py
+  app/static/panel-redesign.css
+  app/static/panel-redesign.js
+  app/static/hostpanel-brand.css
+  app/static/hostpanel-mark.svg
+  app/static/hostpanel-logo.svg
 )
 for overlay in "${OVERLAY_FILES[@]}"; do verify_commit_file "$overlay"; done
 install -m 0755 "$CHECKOUT/install.sh" "$SOURCE_ROOT/install.sh"
 install -m 0755 "$CHECKOUT/install.base.sh" "$SOURCE_ROOT/install.base.sh"
-install -d -m 0755 "$SOURCE_ROOT/tools"
+install -d -m 0755 "$SOURCE_ROOT/tools" "$SOURCE_ROOT/app/static"
 install -m 0755 "$CHECKOUT/tools/harden_install.py" "$SOURCE_ROOT/tools/harden_install.py"
 install -m 0755 "$CHECKOUT/tools/harden_install_runtime.py" "$SOURCE_ROOT/tools/harden_install_runtime.py"
+install -m 0755 "$CHECKOUT/tools/patch_panel_ui.py" "$SOURCE_ROOT/tools/patch_panel_ui.py"
+install -m 0644 "$CHECKOUT/app/static/panel-redesign.css" "$SOURCE_ROOT/app/static/panel-redesign.css"
+install -m 0644 "$CHECKOUT/app/static/panel-redesign.js" "$SOURCE_ROOT/app/static/panel-redesign.js"
+install -m 0644 "$CHECKOUT/app/static/hostpanel-brand.css" "$SOURCE_ROOT/app/static/hostpanel-brand.css"
+install -m 0644 "$CHECKOUT/app/static/hostpanel-mark.svg" "$SOURCE_ROOT/app/static/hostpanel-mark.svg"
+install -m 0644 "$CHECKOUT/app/static/hostpanel-logo.svg" "$SOURCE_ROOT/app/static/hostpanel-logo.svg"
+python3 "$SOURCE_ROOT/tools/patch_panel_ui.py" "$SOURCE_ROOT/app/templates/panel.html" \
+  || die "Could not apply the reviewed control-panel UI overlay"
+
+LOCALIZATION_ROOT="$CHECKOUT/localization-overlay"
+LOCALIZATION_FILES=(
+  localization-overlay/apply_localization_overlay.py
+  localization-overlay/apply_localization_overlay_reviewed.py
+  localization-overlay/review_locales.py
+  localization-overlay/LOCALIZATION.md
+  localization-overlay/LOCALIZATION-REVIEW-v3.4.0-overlay.md
+  localization-overlay/login-messages.json
+  localization-overlay/catalog-overrides.json
+  localization-overlay/catalog-final-overrides.ja-01.json
+  localization-overlay/catalog-final-overrides.ja-02.json
+  localization-overlay/catalog-final-overrides.pt-01.json
+  localization-overlay/catalog-final-overrides.zh-01.json
+  localization-overlay/catalog-final-overrides.zh-02.json
+  localization-overlay/catalog-overrides.json.gz.b64.chunk01
+  localization-overlay/catalog-overrides.json.gz.b64.chunk02
+  localization-overlay/catalog-overrides.json.gz.b64.chunk03
+  localization-overlay/catalog-overrides.json.gz.b64.chunk04a
+  localization-overlay/catalog-overrides.json.gz.b64.chunk04b
+  localization-overlay/catalog-overrides.json.gz.b64.chunk04c
+  localization-overlay/catalog-overrides.json.gz.b64.chunk04d
+  localization-overlay/catalog-overrides.json.gz.b64.chunk05
+  localization-overlay/catalog-overrides.json.gz.b64.chunk06
+  localization-overlay/catalog-overrides.json.gz.b64.chunk07a
+  localization-overlay/catalog-overrides.json.gz.b64.chunk07b
+  localization-overlay/catalog-overrides.json.gz.b64.chunk07c
+  localization-overlay/catalog-overrides.json.gz.b64.chunk07d
+  localization-overlay/catalog-overrides.json.gz.b64.chunk08a
+  localization-overlay/catalog-overrides.json.gz.b64.chunk08b
+  localization-overlay/catalog-overrides.json.gz.b64.chunk08c
+  localization-overlay/catalog-overrides.json.gz.b64.chunk08d
+  localization-overlay/existing-catalog-corrections.json
+  localization-overlay/existing-catalog-corrections.sv-ui-1.json
+  localization-overlay/existing-catalog-corrections.sv-ui-2.json
+  localization-overlay/catalogs/i18n.ja.json
+  localization-overlay/catalogs/i18n.pt.json
+  localization-overlay/catalogs/i18n.zh.json
+)
+for overlay in "${LOCALIZATION_FILES[@]}"; do verify_commit_file "$overlay"; done
+python3 "$LOCALIZATION_ROOT/apply_localization_overlay_reviewed.py" \
+  "$SOURCE_ROOT" "$LOCALIZATION_ROOT" \
+  || die "Could not apply the reviewed localization overlay"
+python3 "$SOURCE_ROOT/tools/audit_locales.py" \
+  || die "Localization structural audit failed after applying the overlay"
+python3 "$SOURCE_ROOT/tools/review_locales.py" \
+  || die "Localization editorial audit failed after applying the overlay"
 
 # Validate the exact generated root installer before any server mutation.
 GENERATED_CHECK="$WORK_DIR/install.generated.sh"
@@ -287,8 +363,11 @@ fi
 
 say "Starting the verified hardened HostPanel installer"
 set +e
-bash "$SOURCE_ROOT/install.sh" "$@"
+bash "$SOURCE_ROOT/install.sh" "$@" &
+INSTALLER_PID=$!
+wait "$INSTALLER_PID"
 status=$?
+INSTALLER_PID=""
 set -e
 if ((status != 0)) && [[ -r /var/log/hostpanel-install.log ]]; then
   printf '\n--- Final HostPanel installer log lines ---\n' >&2

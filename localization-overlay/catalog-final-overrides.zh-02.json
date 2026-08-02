@@ -1,0 +1,1 @@
+{"zh":{"ui.without.dkim.your.outgoing.mail.will.usually.be.treated.as.spam.genera":"如果没有 DKIM，外发邮件通常会被视为垃圾邮件。生成密钥后发布 TXT 记录；如果此服务器托管您的 DNS，则会自动发布，否则请将该值复制到您的 DNS 提供商。"}}

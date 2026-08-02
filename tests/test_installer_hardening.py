@@ -107,8 +107,41 @@ class InstallerHardeningTests(unittest.TestCase):
 
     def test_php_modules_are_checked_after_install(self):
         self.assertIn('/etc/hostpanel/php-skipped-packages', self.installer)
-        self.assertIn('PHP $version is missing required loaded module', self.installer)
+        self.assertIn('/etc/hostpanel/php-recommended-missing', self.installer)
+        self.assertIn('PHP $version CLI is missing required loaded module', self.installer)
+        self.assertIn('PHP $version FPM is missing required loaded module', self.installer)
         self.assertIn("PHP_BRANCHES=(8.5 8.4 8.3 8.2 8.1)", self.installer)
+        for module in (
+            'curl', 'dom', 'exif', 'fileinfo', 'intl', 'mbstring', 'openssl',
+            'pdo_mysql', 'pdo_pgsql', 'pdo_sqlite', 'sodium', 'xmlreader',
+            'xmlwriter', 'zip', 'mysqli',
+        ):
+            self.assertIn(module, self.installer)
+
+    def test_php_recommended_and_full_profiles_are_expanded(self):
+        self.assertIn('zstd xsl enchant odbc)', self.installer)
+        self.assertIn('uuid event)', self.installer)
+        for module in ('apcu', 'imagick', 'redis', 'memcached', 'pcntl', 'sockets', 'xsl', 'yaml'):
+            self.assertIn(module, self.installer)
+
+    def test_php_crypto_and_https_runtime_capabilities_fail_closed(self):
+        self.assertIn('PASSWORD_BCRYPT', self.installer)
+        self.assertIn('["cost" => 12]', self.installer)
+        self.assertIn('password_verify($password, $hash)', self.installer)
+        self.assertIn('curl_version()', self.installer)
+        self.assertIn('in_array("https"', self.installer)
+        self.assertIn('sodium_crypto_pwhash', self.installer)
+        self.assertIn('random_bytes', self.installer)
+        self.assertIn('failed bcrypt, cURL HTTPS, sodium, or CSPRNG runtime validation', self.installer)
+
+    def test_operator_baseline_tools_are_installed_and_validated(self):
+        self.assertIn('hostname btop nano plocate)', self.installer)
+        self.assertIn("if pkg_available mlocate; then printf 'mlocate'; else printf 'plocate'; fi", self.installer)
+        self.assertIn('pkg_map needrestart smartmontools prometheus-node-exporter podman-compose btop', self.installer)
+        for utility in ('locate', 'updatedb', 'nano'):
+            self.assertIn(f'command -v "$utility"', self.installer)
+        self.assertIn('command -v btop', self.installer)
+        self.assertIn('role packages installed and operator utilities validated', self.installer)
 
     def test_bootstrap_has_independent_trust_root(self):
         self.assertIn('TRUSTED_RELEASE_PUBLIC_KEY', self.bootstrap)

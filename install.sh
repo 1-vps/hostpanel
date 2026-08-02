@@ -11,11 +11,26 @@ BASE_INSTALLER="$SCRIPT_DIR/install.base.sh"
 HARDENER="$SCRIPT_DIR/tools/harden_install.py"
 EXPECTED_BASE_BLOB="17424f62d177706a096d1f600e5a702c9ce99498"
 GENERATED_INSTALLER=""
+INSTALLER_PID=""
 
 cleanup(){
   [[ -z "$GENERATED_INSTALLER" ]] || rm -f -- "$GENERATED_INSTALLER"
 }
-trap cleanup EXIT HUP INT TERM
+signal_exit(){
+  local status="$1"
+  trap - EXIT HUP INT TERM
+  if [[ "$INSTALLER_PID" =~ ^[0-9]+$ ]]; then
+    kill -TERM "$INSTALLER_PID" 2>/dev/null || true
+    wait "$INSTALLER_PID" 2>/dev/null || true
+    INSTALLER_PID=""
+  fi
+  cleanup
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'signal_exit 129' HUP
+trap 'signal_exit 130' INT
+trap 'signal_exit 143' TERM
 
 die(){ printf 'Error: %s\n' "$*" >&2; exit 1; }
 
@@ -391,7 +406,10 @@ bash -n "$GENERATED_INSTALLER" \
   || die "The derived installer failed Bash syntax validation"
 
 set +e
-bash "$GENERATED_INSTALLER" "$@"
+bash "$GENERATED_INSTALLER" "$@" &
+INSTALLER_PID=$!
+wait "$INSTALLER_PID"
 status=$?
+INSTALLER_PID=""
 set -e
 exit "$status"

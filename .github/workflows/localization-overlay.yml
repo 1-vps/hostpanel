@@ -1,0 +1,217 @@
+name: Localization overlay
+
+on:
+  pull_request:
+    paths:
+      - bootstrap-install.sh
+      - localization-overlay/**
+      - tests/test_existing_catalog_corrections.py
+      - tests/test_high_risk_locale_overrides.py
+      - tests/test_portuguese_ui_overrides.py
+      - tests/localization_invariants.py
+      - tests/test_localization_bootstrap_wiring.py
+      - tests/test_localization_workflow_security.py
+      - tests/test_panel_future_locales.py
+      - LOCALIZATION-OVERLAY.md
+      - .github/workflows/localization-overlay.yml
+  push:
+    branches: [main]
+    paths:
+      - bootstrap-install.sh
+      - localization-overlay/**
+      - tests/test_existing_catalog_corrections.py
+      - tests/test_high_risk_locale_overrides.py
+      - tests/test_portuguese_ui_overrides.py
+      - tests/localization_invariants.py
+      - tests/test_localization_bootstrap_wiring.py
+      - tests/test_localization_workflow_security.py
+      - tests/test_panel_future_locales.py
+      - LOCALIZATION-OVERLAY.md
+      - .github/workflows/localization-overlay.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: localization-overlay-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify signed source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=hostpanel-v3.4.0-hardened-r5-source.tar.gz
+          test -f "$archive"
+          test -f "$archive.sig"
+          test ! -L "$archive"
+          test ! -L "$archive.sig"
+          python3 - "$archive" <<'PY'
+          import hashlib
+          import pathlib
+          import re
+          import sys
+
+          archive = pathlib.Path(sys.argv[1])
+          matches = []
+          for line in pathlib.Path("SHA256SUMS").read_text(encoding="utf-8").splitlines():
+              match = re.fullmatch(r"([0-9a-f]{64})  (.+)", line)
+              if match and match.group(2) == archive.name:
+                  matches.append(match.group(1))
+          if len(matches) != 1:
+              raise SystemExit(
+                  f"expected one checksum for {archive.name}, found {len(matches)}"
+              )
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          if digest != matches[0]:
+              raise SystemExit(
+                  f"source archive checksum mismatch: {digest} != {matches[0]}"
+              )
+          PY
+          cat >/tmp/hostpanel-release.pub <<'KEY'
+          -----BEGIN PUBLIC KEY-----
+          MCowBQYDK2VwAyEAJonL5vK2NRcFkXvKZUs64ISOs+FfhwL8gQVmFO4C0qk=
+          -----END PUBLIC KEY-----
+          KEY
+          openssl pkeyutl -verify -pubin \
+            -inkey /tmp/hostpanel-release.pub -rawin \
+            -in "$archive" -sigfile "$archive.sig"
+          rm -f /tmp/hostpanel-release.pub
+
+      - name: Verify reviewed locale override layers
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            localization-overlay/apply_localization_overlay.py \
+            localization-overlay/apply_localization_overlay_reviewed.py \
+            tests/localization_invariants.py \
+            tests/test_existing_catalog_corrections.py \
+            tests/test_high_risk_locale_overrides.py \
+            tests/test_portuguese_ui_overrides.py \
+            tests/test_localization_bootstrap_wiring.py \
+            tests/test_localization_workflow_security.py \
+            tests/test_panel_future_locales.py
+          python3 -m unittest discover -s tests -p 'test_existing_catalog_corrections.py' -v
+          python3 -m unittest discover -s tests -p 'test_high_risk_locale_overrides.py' -v
+          python3 -m unittest discover -s tests -p 'test_portuguese_ui_overrides.py' -v
+          python3 -m unittest discover -s tests -p 'test_localization_bootstrap_wiring.py' -v
+          python3 -m unittest discover -s tests -p 'test_localization_workflow_security.py' -v
+          python3 -m unittest discover -s tests -p 'test_panel_future_locales.py' -v
+
+      - name: Safely extract signed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import inspect
+          import os
+          import pathlib
+          import stat
+          import tarfile
+
+          archive_path = pathlib.Path("hostpanel-v3.4.0-hardened-r5-source.tar.gz")
+          destination = pathlib.Path("localization-source")
+          if destination.exists() or destination.is_symlink():
+              raise SystemExit("localization extraction destination already exists")
+          destination.mkdir(mode=0o700)
+
+          max_members = 20000
+          max_total_size = 200 * 1024 * 1024
+          with tarfile.open(archive_path, "r:gz") as archive:
+              members = archive.getmembers()
+              if not members or len(members) > max_members:
+                  raise SystemExit("signed source archive member count is unsafe")
+              total_size = 0
+              roots = set()
+              for member in members:
+                  path = pathlib.PurePosixPath(member.name)
+                  if path.is_absolute() or not path.parts or ".." in path.parts:
+                      raise SystemExit(f"unsafe source archive path: {member.name}")
+                  roots.add(path.parts[0])
+                  if member.issym() or member.islnk() or member.isdev() or member.isfifo():
+                      raise SystemExit(f"unsupported source archive member: {member.name}")
+                  if not (member.isdir() or member.isfile()):
+                      raise SystemExit(f"unsupported source archive type: {member.name}")
+                  total_size += max(member.size, 0)
+                  if total_size > max_total_size:
+                      raise SystemExit("signed source archive exceeds extraction size limit")
+              if len(roots) != 1:
+                  raise SystemExit(f"source archive must contain one root, found {sorted(roots)}")
+              options = {}
+              if "filter" in inspect.signature(archive.extractall).parameters:
+                  options["filter"] = "fully_trusted"
+              archive.extractall(destination, members=members, **options)
+
+          root = destination / next(iter(roots))
+          if not root.is_dir() or root.is_symlink():
+              raise SystemExit("extracted source root is unsafe or missing")
+          os.chmod(destination, stat.S_IRWXU)
+          pathlib.Path("/tmp/hostpanel-localization-root").write_text(
+              str(root.resolve()), encoding="utf-8"
+          )
+          PY
+
+      - name: Apply and audit reviewed localization overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_ROOT="$(cat /tmp/hostpanel-localization-root)"
+          test -d "$SOURCE_ROOT"
+          test ! -L "$SOURCE_ROOT"
+          python3 localization-overlay/apply_localization_overlay_reviewed.py \
+            "$SOURCE_ROOT" localization-overlay
+          python3 "$SOURCE_ROOT/tools/audit_locales.py"
+          python3 "$SOURCE_ROOT/tools/review_locales.py"
+          python3 -m py_compile \
+            "$SOURCE_ROOT/app/main.py" \
+            "$SOURCE_ROOT/tools/audit_locales.py" \
+            "$SOURCE_ROOT/tools/review_locales.py"
+          python3 -m venv /tmp/hostpanel-localization-venv
+          /tmp/hostpanel-localization-venv/bin/python -m pip install \
+            --disable-pip-version-check \
+            'beautifulsoup4==4.13.4' 'jinja2==3.1.6'
+          TERM=xterm /tmp/hostpanel-localization-venv/bin/python \
+            "$SOURCE_ROOT/tests/test_ui_ux_remediation.py"
+          node --check "$SOURCE_ROOT/app/static/login.js"
+          node --check "$SOURCE_ROOT/app/static/panel-i18n.js"
+          bash -n bootstrap-install.sh
+
+      - name: Verify thirteen selectors and catalogs
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_ROOT="$(cat /tmp/hostpanel-localization-root)"
+          python3 - "$SOURCE_ROOT" <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          locales = ("da", "de", "en", "es", "fi", "fr", "ja", "nb", "nl", "pl", "pt", "sv", "zh")
+          english = json.loads((root / "app/static/i18n.en.json").read_text(encoding="utf-8"))
+          for locale in locales:
+              catalog = json.loads((root / f"app/static/i18n.{locale}.json").read_text(encoding="utf-8"))
+              if list(catalog) != list(english):
+                  raise SystemExit(f"{locale}: catalog key/order mismatch")
+          login = (root / "app/templates/login.html").read_text(encoding="utf-8")
+          panel = (root / "app/templates/panel.html").read_text(encoding="utf-8")
+          for locale in locales:
+              if f'value="{locale}"' not in login or f'value="{locale}"' not in panel:
+                  raise SystemExit(f"{locale}: missing selector option")
+          messages_source = (root / "app/static/login.js").read_text(encoding="utf-8")
+          match = re.search(r"const LOGIN_MESSAGES=(\{.*?\});\nfunction formatLoginMessage", messages_source, re.S)
+          if not match or tuple(json.loads(match.group(1))) != locales:
+              raise SystemExit("login message registry mismatch")
+          print(f"{len(locales)} locales × {len(english)} keys verified")
+          PY

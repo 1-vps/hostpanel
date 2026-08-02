@@ -9,8 +9,15 @@ import stat
 import subprocess
 import sys
 
-EXPECTED_IMPL_BLOB = "7b3749f00908545e106fdb1a305c243e03135d88"
-EXPECTED_CLI_PATCHER_BLOB = "a20ce7252351179fa225a9a0b168b5fa9568883c"
+EXPECTED_IMPL_BLOB = "ac1a86fba8dd6bace70cd844a61bfccdda55d916"
+EXPECTED_CLI_PATCHER_BLOB = "eaa64717db43e77e6a5a8e93ef6d0b81c8536985"
+EXPECTED_UPDATE_AGENT_BLOBS = {
+    "tools/hostpanel-update.py": "2e854ed6fde55dd722f8d07cb932ffca598bad5c",
+    "tools/install-update-agent.sh": "1a95da641b806a6fbf77e3d6a5a3f6d3c9295a12",
+    "packaging/systemd/hostpanel-update.service": "d3f6c665f2a59567b38628a36f8cf13f9f4ea93f",
+    "packaging/systemd/hostpanel-update.timer": "a91c65aadd280ed932762c31e2e4af7ad93654cc",
+    "releases/update.pub": "4d76490a7d13fe103995137974f0a79dba0b63ee",
+}
 IMPLEMENTATION_NAME = "harden_install_impl.py"
 
 # Compatibility markers remain visible in this audited entrypoint because the
@@ -216,6 +223,48 @@ sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''.replace(
         "__EXPECTED_CLI_PATCHER_BLOB__", EXPECTED_CLI_PATCHER_BLOB
     )
 
+    update_agent_old = r'''for backup in "${TREE_ROLLBACK_BACKUPS[@]}"; do'''
+    update_agent_new = r'''UPDATE_AGENT_ROOT="$SOURCE_ROOT"
+if [[ ! -f "$UPDATE_AGENT_ROOT/tools/install-update-agent.sh" \
+      || -L "$UPDATE_AGENT_ROOT/tools/install-update-agent.sh" ]]; then
+  mapfile -t UPDATE_AGENT_INSTALLERS < <(
+    find /tmp -path '/tmp/hostpanel-bootstrap.*/repository/tools/install-update-agent.sh' \
+      -type f ! -type l -print 2>/dev/null
+  )
+  ((${#UPDATE_AGENT_INSTALLERS[@]} == 1)) \
+    || die "Could not resolve exactly one reviewed GitHub update agent"
+  UPDATE_AGENT_ROOT="$(CDPATH= cd -- "$(dirname -- "${UPDATE_AGENT_INSTALLERS[0]}")/.." && pwd -P)"
+fi
+UPDATE_AGENT_PATHS=(
+__UPDATE_AGENT_PATHS__
+)
+UPDATE_AGENT_BLOBS=(
+__UPDATE_AGENT_BLOBS__
+)
+for ((update_index=0; update_index<${#UPDATE_AGENT_PATHS[@]}; update_index++)); do
+  update_path="${UPDATE_AGENT_PATHS[$update_index]}"
+  update_input="$UPDATE_AGENT_ROOT/$update_path"
+  [[ -f "$update_input" && ! -L "$update_input" ]] \
+    || die "The reviewed GitHub update input is missing or unsafe: $update_path"
+  update_blob="$(git hash-object --no-filters "$update_input")" \
+    || die "Could not hash the reviewed GitHub update input: $update_path"
+  [[ "$update_blob" == "${UPDATE_AGENT_BLOBS[$update_index]}" ]] \
+    || die "The GitHub update input does not match the reviewed Git blob: $update_path"
+done
+say "Installing signed GitHub update agent"
+bash "$UPDATE_AGENT_ROOT/tools/install-update-agent.sh" >>"$LOG" 2>&1 \
+  || die "Could not install the signed GitHub update agent"
+for backup in "${TREE_ROLLBACK_BACKUPS[@]}"; do'''
+    update_agent_paths = "\n".join(
+        f'  "{name}"' for name in EXPECTED_UPDATE_AGENT_BLOBS
+    )
+    update_agent_blobs = "\n".join(
+        f'  "{digest}"' for digest in EXPECTED_UPDATE_AGENT_BLOBS.values()
+    )
+    update_agent_new = update_agent_new.replace(
+        "__UPDATE_AGENT_PATHS__", update_agent_paths
+    ).replace("__UPDATE_AGENT_BLOBS__", update_agent_blobs)
+
     text = path.read_text(encoding="utf-8")
     updated = replace_reviewed_shape(
         text, health_old, health_new, "post-install health"
@@ -243,6 +292,12 @@ sync_optional_tree "$SOURCE_ROOT/releases" "$PANEL_DIR/releases"'''.replace(
     )
     updated = replace_reviewed_shape(
         updated, runtime_old, runtime_new, "CLI runtime environment injection"
+    )
+    updated = replace_reviewed_shape(
+        updated,
+        update_agent_old,
+        update_agent_new,
+        "signed GitHub update agent installation",
     )
 
     mode = stat.S_IMODE(path.stat().st_mode)

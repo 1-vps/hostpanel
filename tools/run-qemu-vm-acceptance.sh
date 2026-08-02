@@ -13,6 +13,7 @@ IMAGE_SHA256="${HP_QEMU_IMAGE_SHA256:-d1940f7d69d343355e183dff1e08a59852d32e7309
 REVIEWED_COMMIT_SHA="${HP_QEMU_REVIEWED_COMMIT_SHA:-}"
 EXPECTED_VERSION="${HP_QEMU_EXPECTED_VERSION:-3.4.0}"
 MTA="${HP_QEMU_MTA:-postfix}"
+REPO_TOKEN="${HP_QEMU_REPO_TOKEN:-}"
 SSH_PORT="${HP_QEMU_SSH_PORT:-22022}"
 PANEL_FORWARD_PORT="${HP_QEMU_PANEL_FORWARD_PORT:-32222}"
 VM_MEMORY_MB="${HP_QEMU_MEMORY_MB:-8192}"
@@ -41,6 +42,9 @@ mkdir -p "$ARTIFACT_DIR"
   || die 'artifact directories changed during setup'
 chmod 700 "$WORK_DIR" "$ARTIFACT_DIR"
 find "$ARTIFACT_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+# Keep the token as shell-only state before any long-lived child process starts.
+# Process substitutions inherit only exported variables, so tee cannot retain it.
+export -n HP_QEMU_REPO_TOKEN REPO_TOKEN 2>/dev/null || true
 exec > >(tee "$ARTIFACT_DIR/runner.log") 2>&1
 
 qemu_pid_is_ours(){
@@ -124,6 +128,9 @@ PY
 
 collect_evidence(){
   set +e
+  if [[ -n "$WORK_DIR" && -d "$WORK_DIR" && ! -L "$WORK_DIR" ]]; then
+    rm -f -- "$WORK_DIR/guest.env"
+  fi
   if qemu_pid_is_ours; then
     ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
       'sudo tar -C /root -czf - hostpanel-qemu-evidence 2>/dev/null' \
@@ -148,13 +155,19 @@ collect_evidence(){
 }
 trap collect_evidence EXIT
 
-for command in curl qemu-img qemu-system-x86_64 cloud-localds ssh scp ssh-keygen nc python3 sha256sum; do
+for command in base64 curl qemu-img qemu-system-x86_64 cloud-localds ssh scp ssh-keygen nc python3 sha256sum tr; do
   require "$command"
 done
 [[ "$REVIEWED_COMMIT_SHA" =~ ^[0-9a-fA-F]{40}$ ]] \
   || die 'HP_QEMU_REVIEWED_COMMIT_SHA must be a reviewed full 40-character commit SHA'
 [[ "$EXPECTED_VERSION" =~ ^[0-9]+(\.[0-9]+){2}([-+][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] \
   || die 'HP_QEMU_EXPECTED_VERSION must be a release version'
+[[ -n "$REPO_TOKEN" ]] \
+  || die 'HP_QEMU_REPO_TOKEN is required to fetch the reviewed private commit'
+[[ "$REPO_TOKEN" != *$'\n'* && "$REPO_TOKEN" != *$'\r'* ]] \
+  || die 'HP_QEMU_REPO_TOKEN contains an invalid line break'
+unset HP_QEMU_REPO_TOKEN
+export -n REPO_TOKEN 2>/dev/null || true
 case "$MTA" in postfix|exim) ;; *) die "unsupported MTA: $MTA" ;; esac
 HOST_FORWARD_PORTS=(
   "$SSH_PORT" "$PANEL_FORWARD_PORT" 30025 30143 30993 30080 30443
@@ -198,11 +211,11 @@ qemu-img resize "$WORK_DIR/disk.qcow2" "$VM_DISK_SIZE"
 
 ssh-keygen -q -t ed25519 -N '' -f "$WORK_DIR/id_ed25519"
 SSH_PUBLIC_KEY="$(cat "$WORK_DIR/id_ed25519.pub")"
-cat > "$WORK_DIR/meta-data" <<EOF
+cat > "$WORK_DIR/meta-data" <<EOF_META
 instance-id: hostpanel-qemu-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}
 local-hostname: hostpanel-qemu
-EOF
-cat > "$WORK_DIR/user-data" <<EOF
+EOF_META
+cat > "$WORK_DIR/user-data" <<EOF_USER
 #cloud-config
 manage_etc_hosts: true
 users:
@@ -222,7 +235,7 @@ growpart:
   mode: auto
   devices: ['/']
 resize_rootfs: true
-EOF
+EOF_USER
 cloud-localds "$WORK_DIR/seed.img" "$WORK_DIR/user-data" "$WORK_DIR/meta-data"
 
 accel_args=(-accel tcg,thread=multi -cpu max)
@@ -230,7 +243,7 @@ if [[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]]; then
   accel_args=(-enable-kvm -cpu host)
 fi
 printf 'QEMU acceleration: %s\n' "${accel_args[*]}"
-qemu-system-x86_64 \
+env -u HP_QEMU_REPO_TOKEN -u REPO_TOKEN qemu-system-x86_64 \
   -name hostpanel-acceptance \
   "${accel_args[@]}" \
   -machine type=q35 \
@@ -266,6 +279,7 @@ ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
   'test "$(cat /proc/1/comm)" = systemd; cat /etc/os-release; uname -a; df -hT; free -h' \
   | tee "$ARTIFACT_DIR/pre-install-inventory.txt"
 
+REPO_AUTH_HEADER="$(printf 'x-access-token:%s' "$REPO_TOKEN" | base64 | tr -d '\r\n')"
 {
   printf 'HP_REVIEWED_COMMIT_SHA=%q\n' "$REVIEWED_COMMIT_SHA"
   printf 'HP_EXPECTED_VERSION=%q\n' "$EXPECTED_VERSION"
@@ -273,25 +287,81 @@ ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 \
   printf 'HP_EXPECTED_PUBLIC_IP=%q\n' "$GUEST_IP"
   printf 'HP_PANEL_ADMIN_CIDR=%q\n' "$ADMIN_CIDR"
   printf 'HP_MTA=%q\n' "$MTA"
+  printf 'export GIT_CONFIG_COUNT=1\n'
+  printf 'export GIT_CONFIG_KEY_0=%q\n' 'http.https://github.com/.extraheader'
+  printf 'export GIT_CONFIG_VALUE_0=%q\n' "AUTHORIZATION: basic $REPO_AUTH_HEADER"
+  printf 'export GIT_TERMINAL_PROMPT=0\n'
 } > "$WORK_DIR/guest.env"
 chmod 600 "$WORK_DIR/guest.env"
+unset REPO_TOKEN REPO_AUTH_HEADER
+
 scp "${scp_opts[@]}" \
   "$REPO_ROOT/bootstrap-install.sh" \
   "$REPO_ROOT/tools/validate-production-vm.sh" \
   "$REPO_ROOT/tools/qemu-guest-install.sh" \
   "$WORK_DIR/guest.env" \
   hostpanel@127.0.0.1:/tmp/
+rm -f -- "$WORK_DIR/guest.env"
 ssh "${ssh_opts[@]}" hostpanel@127.0.0.1 '
 set -eu
-for path in /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh /tmp/guest.env; do
-  test -f "$path"
-  test ! -L "$path"
-  test "$(stat -c %u "$path")" = "$(id -u)"
-  test "$(stat -c %h "$path")" = 1
-done
-sudo chown root:root /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh /tmp/guest.env
-sudo chmod 700 /tmp/bootstrap-install.sh /tmp/validate-production-vm.sh /tmp/qemu-guest-install.sh
-sudo chmod 600 /tmp/guest.env
+sudo python3 - "$(id -u)" <<PYROOT
+import os
+import pathlib
+import stat
+import sys
+import tempfile
+
+MAX_INPUT_BYTES = 16 * 1024 * 1024
+expected_uid = int(sys.argv[1])
+inputs = (
+    (pathlib.Path("/tmp/bootstrap-install.sh"), 0o700),
+    (pathlib.Path("/tmp/validate-production-vm.sh"), 0o700),
+    (pathlib.Path("/tmp/qemu-guest-install.sh"), 0o700),
+    (pathlib.Path("/tmp/guest.env"), 0o600),
+)
+for path, mode in inputs:
+    source_fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    temp_name = None
+    try:
+        metadata = os.fstat(source_fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise SystemExit(f"QEMU guest input is not regular: {path}")
+        if metadata.st_uid != expected_uid or metadata.st_nlink != 1:
+            raise SystemExit(f"QEMU guest input ownership or link count is unsafe: {path}")
+        if metadata.st_size > MAX_INPUT_BYTES:
+            raise SystemExit(f"QEMU guest input is unexpectedly large: {path}")
+
+        temp_fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        with os.fdopen(os.dup(source_fd), "rb") as source, os.fdopen(temp_fd, "wb") as target:
+            remaining = metadata.st_size
+            while remaining:
+                chunk = source.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise SystemExit(f"QEMU guest input changed while copying: {path}")
+                target.write(chunk)
+                remaining -= len(chunk)
+            if source.read(1):
+                raise SystemExit(f"QEMU guest input grew while copying: {path}")
+            target.flush()
+            os.fsync(target.fileno())
+        os.chmod(temp_name, mode)
+        os.replace(temp_name, path)
+        temp_name = None
+
+        promoted = path.lstat()
+        if (
+            not stat.S_ISREG(promoted.st_mode)
+            or promoted.st_uid != 0
+            or promoted.st_gid != 0
+            or promoted.st_nlink != 1
+            or stat.S_IMODE(promoted.st_mode) != mode
+        ):
+            raise SystemExit(f"QEMU guest input promotion failed: {path}")
+    finally:
+        os.close(source_fd)
+        if temp_name is not None:
+            pathlib.Path(temp_name).unlink(missing_ok=True)
+PYROOT
 sudo /tmp/qemu-guest-install.sh
 '
 
