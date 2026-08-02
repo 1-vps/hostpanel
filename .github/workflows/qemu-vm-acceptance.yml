@@ -15,6 +15,7 @@ on:
     paths:
       - .github/workflows/qemu-vm-acceptance.yml
       - .github/workflows/publish-release.yml
+      - .github/workflows/source-release-candidate.yml
       - SOURCE_VERSION
       - RELEASE_VERSION
       - releases/source-release-policy.json
@@ -34,7 +35,10 @@ on:
       - tools/build-source-release.py
       - tools/run-source-release-builder.py
       - tools/generate-source-attestations.py
+      - tools/verify-source-release-bundle.py
       - tools/build-update-release.py
+      - tools/verify-existing-release.py
+      - tools/build-release-bundle.py
       - tools/hostpanel-update.py
       - tools/install-update-agent.sh
       - tools/harden_install.py
@@ -61,6 +65,8 @@ on:
       - tests/test_localization_workflow_security.py
       - tests/test_full_stack_review_fixes.py
       - tests/test_github_update_pipeline.py
+      - tests/test_source_release_bundle_verifier.py
+      - tests/test_release_bundle_builder.py
       - tests/test_qemu_vm_acceptance.py
       - tests/test_qemu_source_candidate.py
       - tests/test_qemu_token_scope.py
@@ -148,7 +154,10 @@ jobs:
             tools/build-source-release.py \
             tools/run-source-release-builder.py \
             tools/generate-source-attestations.py \
+            tools/verify-source-release-bundle.py \
             tools/build-update-release.py \
+            tools/verify-existing-release.py \
+            tools/build-release-bundle.py \
             tools/hostpanel-update.py
           python3 -m unittest discover -s tests -p 'test_existing_catalog_corrections.py' -v
           python3 -m unittest discover -s tests -p 'test_high_risk_locale_overrides.py' -v
@@ -157,6 +166,8 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_localization_workflow_security.py' -v
           python3 -m unittest discover -s tests -p 'test_full_stack_review_fixes.py' -v
           python3 -m unittest discover -s tests -p 'test_github_update_pipeline.py' -v
+          python3 -m unittest discover -s tests -p 'test_source_release_bundle_verifier.py' -v
+          python3 -m unittest discover -s tests -p 'test_release_bundle_builder.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_source_candidate.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_token_scope.py' -v
