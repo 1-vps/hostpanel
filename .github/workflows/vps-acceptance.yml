@@ -65,7 +65,6 @@ jobs:
       SNAPSHOT_ID: ${{ inputs.snapshot_id }}
       SNAPSHOT_CREATED_AT_UTC: ${{ inputs.snapshot_created_at_utc }}
       SNAPSHOT_CONFIRMATION: ${{ inputs.snapshot_confirmation }}
-      EXPECTED_VERSION: 3.4.0
       PANEL_HOST_INPUT: ${{ inputs.panel_host }}
       REINSTALL: ${{ inputs.reinstall }}
       MTA: ${{ inputs.mta }}
@@ -79,6 +78,17 @@ jobs:
           ref: ${{ inputs.reviewed_commit_sha }}
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Bind expected version to reviewed release
+        run: |
+          set -euo pipefail
+          EXPECTED_VERSION="$(tr -d '[:space:]' < RELEASE_VERSION)"
+          [[ "$EXPECTED_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo 'RELEASE_VERSION must be a final strict semantic version.' >&2
+            exit 1
+          }
+          printf 'EXPECTED_VERSION=%s
+' "$EXPECTED_VERSION" >> "$GITHUB_ENV"
 
       - name: Prepare fail-closed provider evidence
         if: always()

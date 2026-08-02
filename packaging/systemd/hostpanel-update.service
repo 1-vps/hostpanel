@@ -5,14 +5,14 @@ After=network-online.target
 Wants=network-online.target
 ConditionPathExists=/opt/hostpanel/tools/hostpanel-update
 ConditionPathExists=/etc/hostpanel/update.pub
+ConditionPathExists=/etc/hostpanel/update-keyring.json
 
 [Service]
 Type=oneshot
 User=root
 Group=root
-EnvironmentFile=-/etc/hostpanel/update-agent.conf
-ExecStartPre=/bin/sh -ec 'p=/etc/hostpanel/github-update.token; [ ! -e "$p" ] || { [ -f "$p" ] && [ ! -L "$p" ] && [ "$(stat -c "%%u:%%a:%%h" "$p")" = "0:600:1" ]; }'
 ExecStart=/opt/hostpanel/tools/hostpanel-update --apply --auto
+SuccessExitStatus=10 75
 UMask=0077
 PrivateTmp=yes
 ProtectKernelTunables=yes

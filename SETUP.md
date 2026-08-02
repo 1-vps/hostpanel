@@ -98,8 +98,8 @@ set -Eeuo pipefail
 umask 077
 
 REVIEWED_COMMIT_SHA=9c38d0095563ea33efd14124babfd29556c0da46
-BOOTSTRAP_BLOB=eae493681ce5eecd5ea61491f8e08e1f40938e08
-VALIDATOR_BLOB=2672271aacc0d85013765b3a7887fdec95518643
+BOOTSTRAP_BLOB=5d5bd1af8742703396e911a34163cd2992581737
+VALIDATOR_BLOB=2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9
 REPOSITORY_API=https://api.github.com/repos/1-vps/hostpanel
 
 PANEL_HOST=panel.example.com
@@ -263,7 +263,7 @@ non-destructive checks:
 
 ```bash
 sudo env \
-  HP_EXPECTED_VERSION=3.4.0 \
+  HP_EXPECTED_VERSION=3.4.1 \
   HP_PANEL_HOST=panel.example.com \
   HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
   bash /root/validate-production-vm.sh --check
@@ -318,3 +318,5 @@ Before serving customers:
 5. replace self-signed certificates with trusted certificates;
 6. configure reverse DNS, SPF, DKIM, and DMARC;
 7. retain and test a provider-level recovery path.
+
+Current deployable overlay release: **3.4.1** (signed base source: `3.4.0`).

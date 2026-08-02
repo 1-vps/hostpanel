@@ -254,6 +254,35 @@ SOURCE_VERSION="$(tr -d '[:space:]' <"$SOURCE_ROOT/VERSION")"
 [[ "${SOURCE_VERSION%%[-+]*}" == "${ARCHIVE_RELEASE_ID%%[-+]*}" ]] \
   || die "Verified source archive VERSION is incompatible with its signed filename"
 
+RELEASE_VERSION_FILE="$CHECKOUT/RELEASE_VERSION"
+[[ -f "$RELEASE_VERSION_FILE" && ! -L "$RELEASE_VERSION_FILE" ]] \
+  || die "Reviewed commit is missing a safe RELEASE_VERSION"
+RELEASE_VERSION_EXPECTED="$(git -C "$CHECKOUT" rev-parse "$FETCHED_COMMIT:RELEASE_VERSION" 2>/dev/null)" \
+  || die "Reviewed commit does not contain RELEASE_VERSION"
+RELEASE_VERSION_ACTUAL="$(git -C "$CHECKOUT" hash-object "$RELEASE_VERSION_FILE")" \
+  || die "Could not hash reviewed RELEASE_VERSION"
+[[ "$RELEASE_VERSION_ACTUAL" == "$RELEASE_VERSION_EXPECTED" ]] \
+  || die "RELEASE_VERSION does not match its reviewed Git object"
+DEPLOY_VERSION="$(tr -d '[:space:]' <"$RELEASE_VERSION_FILE")"
+[[ "$DEPLOY_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+  || die "RELEASE_VERSION must be a final strict semantic version"
+python3 - "$SOURCE_VERSION" "$DEPLOY_VERSION" <<'PYVERSION'
+import re
+import sys
+
+pattern = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+source_match = pattern.fullmatch(sys.argv[1])
+deploy_match = pattern.fullmatch(sys.argv[2])
+if source_match is None or deploy_match is None:
+    raise SystemExit("base and deploy versions must be final strict semantic versions")
+source = tuple(int(part) for part in source_match.groups())
+deploy = tuple(int(part) for part in deploy_match.groups())
+if not source < deploy:
+    raise SystemExit("RELEASE_VERSION must be greater than the signed source VERSION")
+PYVERSION
+printf '%s\n' "$DEPLOY_VERSION" >"$SOURCE_ROOT/VERSION"
+chmod 0644 "$SOURCE_ROOT/VERSION"
+
 verify_commit_file(){
   local path="$1" expected actual
   [[ -f "$CHECKOUT/$path" && ! -L "$CHECKOUT/$path" ]] \

@@ -1,0 +1,11 @@
+{
+  "keys": [
+    {
+      "activate_from": "0.0.0",
+      "file": "update.pub",
+      "id": "sha256:8d3e5f2cd3210b4ab6b5eb45326fc666e5f34a4c01ef45756499ed94511babbc",
+      "retire_after": null
+    }
+  ],
+  "schema": 1
+}

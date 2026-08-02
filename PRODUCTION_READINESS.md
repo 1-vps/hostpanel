@@ -33,8 +33,8 @@ Follow [`SETUP.md`](SETUP.md) to:
 Required reviewed Git blobs:
 
 ```text
-bootstrap-install.sh                  eae493681ce5eecd5ea61491f8e08e1f40938e08
-tools/validate-production-vm.sh      2672271aacc0d85013765b3a7887fdec95518643
+bootstrap-install.sh                  5d5bd1af8742703396e911a34163cd2992581737
+tools/validate-production-vm.sh      2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9
 ```
 
 ## Prepare a disposable VM
@@ -190,3 +190,5 @@ Retain:
 
 A release is not production-ready until every selected role and recovery path
 passes on the exact operating system and infrastructure intended for deployment.
+
+Current deployable overlay release: **3.4.1** (signed base source: `3.4.0`).

@@ -10,11 +10,13 @@ on:
       - SHA256SUMS
       - app/**
       - bootstrap-install.sh
+      - RELEASE_VERSION
       - install.sh
       - install.base.sh
       - localization-overlay/**
       - packaging/**
       - releases/update.pub
+      - releases/update-keyring.json
       - tools/**
   issues:
     types: [closed]

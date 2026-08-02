@@ -16,13 +16,65 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+from dataclasses import dataclass
 
 SEMVER_RE = re.compile(
     r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
-    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+MAX_VERSION_BYTES = 128
+
+
+@dataclass(frozen=True)
+class Version:
+    major: int
+    minor: int
+    patch: int
+    prerelease: tuple[str, ...] = ()
+
+    @classmethod
+    def parse(cls, value: str) -> "Version":
+        if not value or len(value.encode("utf-8")) > MAX_VERSION_BYTES:
+            raise SystemExit(f"release version is invalid: {value!r}")
+        match = SEMVER_RE.fullmatch(value)
+        if match is None:
+            raise SystemExit(f"release version is not strict semantic versioning: {value!r}")
+        prerelease = tuple(match.group(4).split(".")) if match.group(4) else ()
+        if len(prerelease) > 32:
+            raise SystemExit("release version has too many prerelease identifiers")
+        for identifier in prerelease:
+            if len(identifier) > 64:
+                raise SystemExit("release version prerelease identifier is too long")
+            if identifier.isdigit() and len(identifier) > 1 and identifier.startswith("0"):
+                raise SystemExit("release version contains a leading-zero numeric identifier")
+        return cls(
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3)),
+            prerelease,
+        )
+
+    def __lt__(self, other: "Version") -> bool:
+        core = (self.major, self.minor, self.patch)
+        other_core = (other.major, other.minor, other.patch)
+        if core != other_core:
+            return core < other_core
+        if not self.prerelease:
+            return False
+        if not other.prerelease:
+            return True
+        for left, right in zip(self.prerelease, other.prerelease):
+            if left == right:
+                continue
+            left_numeric = left.isdigit()
+            right_numeric = right.isdigit()
+            if left_numeric and right_numeric:
+                return (len(left), left) < (len(right), right)
+            if left_numeric != right_numeric:
+                return left_numeric
+            return left < right
+        return len(self.prerelease) < len(other.prerelease)
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -62,9 +114,27 @@ def signed_source_version(root: pathlib.Path) -> str:
         if handle is None:
             raise SystemExit("could not read signed source VERSION")
         version = handle.read().decode("utf-8", errors="strict").strip()
-    if SEMVER_RE.fullmatch(version) is None:
-        raise SystemExit(f"signed source VERSION is not semantic: {version!r}")
+    Version.parse(version)
     return version
+
+
+def deployable_release_version(root: pathlib.Path, source_version: str, channel: str) -> str:
+    path = root / "RELEASE_VERSION"
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit("RELEASE_VERSION must be a regular reviewed file")
+    value = path.read_text(encoding="utf-8").strip()
+    parsed = Version.parse(value)
+    source = Version.parse(source_version)
+    if not source < parsed:
+        raise SystemExit(
+            "RELEASE_VERSION must be greater than the signed base source VERSION; "
+            "bump it for every deployable overlay revision"
+        )
+    if channel == "stable" and parsed.prerelease:
+        raise SystemExit("stable releases require a final RELEASE_VERSION")
+    if channel == "beta" and not parsed.prerelease:
+        raise SystemExit("beta releases require a prerelease RELEASE_VERSION")
+    return value
 
 
 def extract_git_archive(root: pathlib.Path, commit: str, destination: pathlib.Path) -> None:
@@ -165,12 +235,14 @@ def validate_archive(path: pathlib.Path, version: str) -> None:
     roots: set[str] = set()
     required = {
         f"{expected_root}/VERSION",
+        f"{expected_root}/RELEASE_VERSION",
         f"{expected_root}/install.sh",
         f"{expected_root}/install.base.sh",
         f"{expected_root}/bootstrap-install.sh",
         f"{expected_root}/tools/harden_install.py",
         f"{expected_root}/tools/hostpanel-update.py",
         f"{expected_root}/tools/install-update-agent.sh",
+        f"{expected_root}/releases/update-keyring.json",
     }
     discovered: set[str] = set()
     with tarfile.open(path, "r:gz") as archive:
@@ -190,6 +262,10 @@ def validate_archive(path: pathlib.Path, version: str) -> None:
     missing = required - discovered
     if missing:
         raise SystemExit(f"release archive is missing required files: {sorted(missing)}")
+    with tarfile.open(path, "r:gz") as archive:
+        version_member = archive.extractfile(f"{expected_root}/VERSION")
+        if version_member is None or version_member.read().decode().strip() != version:
+            raise SystemExit("release archive VERSION is not the deployable RELEASE_VERSION")
 
 
 def canonical_manifest(
@@ -231,7 +307,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     root = pathlib.Path(args.repository_root).resolve()
-    version = signed_source_version(root)
+    source_version = signed_source_version(root)
+    version = deployable_release_version(root, source_version, args.channel)
     if args.print_version:
         print(version)
         return 0
