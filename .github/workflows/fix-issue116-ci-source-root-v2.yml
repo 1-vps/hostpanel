@@ -1,0 +1,117 @@
+name: Fix issue 116 CI source root v2
+
+on:
+  pull_request:
+    types: [synchronize]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.repository == '1-vps/hostpanel' && github.event.pull_request.head.ref == 'agent/issue116-bootstrap-trust'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: agent/issue116-bootstrap-trust
+          fetch-depth: 0
+
+      - name: Promote CI inputs to trusted source roots
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one reviewed shape, found {count}')
+              return text.replace(old, new, 1)
+
+          matrix_path = Path('test-matrix.sh')
+          matrix = matrix_path.read_text(encoding='utf-8')
+          matrix = replace_once(
+              matrix,
+              'if ! python3 "$SCRIPT_DIR/tools/harden_install.py" \\\n      "$SCRIPT_DIR/install.base.sh" "$generated"; then',
+              'if ! HP_HARDENER_SOURCE_ROOT="$SCRIPT_DIR" \\\n      python3 "$SCRIPT_DIR/tools/harden_install.py" \\\n      "$SCRIPT_DIR/install.base.sh" "$generated"; then',
+              'host deterministic generation',
+          )
+          matrix = replace_once(
+              matrix,
+              '  docker cp "$SCRIPT_DIR/tools/harden_install_runtime.py" "$cid:/root/hostpanel/tools/harden_install_runtime.py" >/dev/null\n}',
+              '  docker cp "$SCRIPT_DIR/tools/harden_install_runtime.py" "$cid:/root/hostpanel/tools/harden_install_runtime.py" >/dev/null\n'
+              '  docker exec "$cid" chown -R 0:0 /root/hostpanel\n'
+              '  docker exec "$cid" find /root/hostpanel -xdev -type d -exec chmod go-w {} +\n'
+              '  docker exec "$cid" find /root/hostpanel -xdev -type f -exec chmod go-w {} +\n}',
+              'container trusted copy',
+          )
+          matrix = replace_once(
+              matrix,
+              '    python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh',
+              '    HP_HARDENER_SOURCE_ROOT=/root/hostpanel \\\n      python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh',
+              'container generation',
+          )
+          matrix_path.write_text(matrix, encoding='utf-8')
+
+          workflow_path = Path('.github/workflows/installer-hardening.yml')
+          workflow = workflow_path.read_text(encoding='utf-8')
+          marker = '  ubuntu-2604-runtime-lock:'
+          if workflow.count(marker) != 1:
+              raise SystemExit('Ubuntu runtime job marker is ambiguous')
+          prefix, ubuntu = workflow.split(marker, 1)
+          ubuntu = replace_once(
+              ubuntu,
+              '              python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh',
+              '              install -d -m 0700 /root/hostpanel-source\n'
+              '              cp -a /repo/. /root/hostpanel-source/\n'
+              '              chown -R 0:0 /root/hostpanel-source\n'
+              '              find /root/hostpanel-source -xdev -type d -exec chmod go-w {} +\n'
+              '              find /root/hostpanel-source -xdev -type f -exec chmod go-w {} +\n'
+              '              cd /root/hostpanel-source\n\n'
+              '              python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh',
+              'Ubuntu trusted source promotion',
+          )
+          workflow_path.write_text(prefix + marker + ubuntu, encoding='utf-8')
+
+          tests_path = Path('tests/test_issue116_bootstrap_security.py')
+          tests = tests_path.read_text(encoding='utf-8')
+          tests = replace_once(
+              tests,
+              'HARDENER = (ROOT / "tools/harden_install.py").read_text(encoding="utf-8")\n',
+              'HARDENER = (ROOT / "tools/harden_install.py").read_text(encoding="utf-8")\n'
+              'MATRIX = (ROOT / "test-matrix.sh").read_text(encoding="utf-8")\n'
+              'INSTALLER_WORKFLOW = (ROOT / ".github/workflows/installer-hardening.yml").read_text(encoding="utf-8")\n',
+              'test fixtures',
+          )
+          tests = replace_once(
+              tests,
+              '    def test_noncanonical_repository_fails_before_fetch(self) -> None:\n',
+              '    def test_ci_promotes_inputs_to_owner_bound_source_roots(self) -> None:\n'
+              '        self.assertIn(\'HP_HARDENER_SOURCE_ROOT="$SCRIPT_DIR"\', MATRIX)\n'
+              '        self.assertIn(\'chown -R 0:0 /root/hostpanel\', MATRIX)\n'
+              '        self.assertIn(\'HP_HARDENER_SOURCE_ROOT=/root/hostpanel\', MATRIX)\n'
+              '        self.assertIn(\'install -d -m 0700 /root/hostpanel-source\', INSTALLER_WORKFLOW)\n'
+              '        self.assertIn(\'chown -R 0:0 /root/hostpanel-source\', INSTALLER_WORKFLOW)\n'
+              '        self.assertIn(\'cd /root/hostpanel-source\', INSTALLER_WORKFLOW)\n\n'
+              '    def test_noncanonical_repository_fails_before_fetch(self) -> None:\n',
+              'CI source-root regression',
+          )
+          tests_path.write_text(tests, encoding='utf-8')
+          PY
+          bash -n test-matrix.sh
+          python3 -m unittest -v tests.test_issue116_bootstrap_security
+          ./test-matrix.sh --check-only
+          rm -f \
+            .github/workflows/fix-issue116-ci-source-root.yml \
+            .github/workflows/fix-issue116-ci-source-root-v2.yml
+          find . -type d -name __pycache__ -prune -exec rm -rf {} +
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Bind CI hardener generation to trusted source roots'
+          git push origin HEAD:agent/issue116-bootstrap-trust
