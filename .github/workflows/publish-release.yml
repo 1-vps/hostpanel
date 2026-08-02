@@ -421,6 +421,18 @@ jobs:
           CREATE_TAG: ${{ needs.verify.outputs.create_tag }}
         run: |
           set -euo pipefail
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          [[ "$current_main" == "$GITHUB_SHA" ]] || {
+            echo "Refusing to tag stale commit $GITHUB_SHA; current main is $current_main." >&2
+            exit 1
+          }
+          for gate_issue in 7 14 115 116 118 119 120 121; do
+            gate_state="$(gh api "repos/$GITHUB_REPOSITORY/issues/$gate_issue" --jq .state)"
+            [[ "$gate_state" == closed ]] || {
+              echo "Release gate issue #$gate_issue changed before tag creation: $gate_state." >&2
+              exit 1
+            }
+          done
           if [[ "$CREATE_TAG" == true ]]; then
             gh api "repos/$GITHUB_REPOSITORY/git/refs" \
               --method POST \
