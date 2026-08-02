@@ -9,8 +9,8 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ENTRY = ROOT / "install-one-line.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "automatic-installer.yml"
-AUTO_COMMIT = "a88be462efa38e479070b89e0a4c90b4b7b202da"
-AUTO_BLOB = "4fa5e025c1516ebaaff260177b572f3253a61aa1"
+AUTO_COMMIT = "cb15cca3e1e4d8f2525d7989428c02771bd96331"
+AUTO_BLOB = "d3dd590c8e0c673b3fb40e156c01ae0ccf49b43c"
 
 
 class OneLineInstallTests(unittest.TestCase):
@@ -47,9 +47,9 @@ class OneLineInstallTests(unittest.TestCase):
         self.assertNotIn("/dev/tty", self.source)
         self.assertNotIn("HP_GITHUB_TOKEN=", self.source)
 
-    def test_private_download_is_https_and_blob_verified(self) -> None:
+    def test_private_download_is_https_blob_verified_and_config_free(self) -> None:
         self.assertIn('REPOSITORY_API="https://api.github.com/repos/1-vps/hostpanel"', self.source)
-        self.assertIn("--proto '=https' --tlsv1.2", self.source)
+        self.assertIn("curl -q --proto '=https' --tlsv1.2", self.source)
         self.assertIn("application/vnd.github.raw+json", self.source)
         self.assertIn('git hash-object "$WORK_DIR/auto-install.sh"', self.source)
         self.assertIn('rm -f -- "$AUTH_FILE"', self.source)
@@ -58,12 +58,16 @@ class OneLineInstallTests(unittest.TestCase):
             self.source.index('bash "$WORK_DIR/auto-install.sh"'),
         )
 
-    def test_secret_handoff_uses_inherited_descriptor(self) -> None:
+    def test_secret_handoff_is_scoped_and_descriptor_is_closed(self) -> None:
         self.assertIn('exec 3<<<"$TOKEN"', self.source)
-        self.assertIn("TOKEN=\"\"", self.source)
-        self.assertIn("unset TOKEN", self.source)
-        self.assertIn("HP_GITHUB_TOKEN_FD=3", self.source)
+        self.assertIn('HP_GITHUB_TOKEN_FD=3 bash "$WORK_DIR/auto-install.sh"', self.source)
+        self.assertIn('exec 3<&-', self.source)
+        self.assertNotIn("export HP_GITHUB_TOKEN_FD=3", self.source)
         self.assertNotRegex(self.source.lower(), r"[?&]token=")
+
+    def test_check_only_does_not_install_missing_outer_prerequisites(self) -> None:
+        self.assertIn("check-only never installs packages", self.source)
+        self.assertIn('check_only="${HP_CHECK_ONLY:-no}"', self.source)
 
     def test_fail_closed_defaults_and_environment_forwarding(self) -> None:
         self.assertIn('SSH_CONNECTION="${SSH_CONNECTION:-}"', self.source)
@@ -78,7 +82,7 @@ class OneLineInstallTests(unittest.TestCase):
         self.assertIn("tests.test_one_line_install", self.workflow)
         self.assertRegex(
             self.workflow,
-            re.compile(r"shellcheck .*auto-install\.sh .*install-one-line\.sh", re.DOTALL),
+            re.compile(r"shellcheck .*auto-install\.sh .*quick-install\.sh .*install-one-line\.sh", re.DOTALL),
         )
 
 
