@@ -19,6 +19,7 @@ on:
       - packaging/systemd/hostpanel-update.service
       - packaging/systemd/hostpanel-update.timer
       - releases/update.pub
+      - releases/update-keyring.json
       - tools/run-qemu-vm-acceptance.sh
       - tools/qemu-guest-install.sh
       - tools/prepare-qemu-evidence.py
@@ -40,6 +41,7 @@ on:
       - app/static/hostpanel-mark.svg
       - app/static/hostpanel-logo.svg
       - bootstrap-install.sh
+      - RELEASE_VERSION
       - install.sh
       - install.base.sh
       - install-hardened.sh
@@ -53,6 +55,7 @@ on:
       - tests/test_localization_workflow_security.py
       - tests/test_full_stack_review_fixes.py
       - tests/test_github_update_pipeline.py
+      - tests/test_updater_issue115.py
       - tests/test_qemu_vm_acceptance.py
       - tests/test_qemu_token_scope.py
       - tests/test_qemu_evidence_sanitizer.py
@@ -104,7 +107,6 @@ jobs:
     timeout-minutes: 180
     env:
       HP_QEMU_REVIEWED_COMMIT_SHA: ${{ github.sha }}
-      HP_QEMU_EXPECTED_VERSION: 3.4.0
       HP_QEMU_MTA: ${{ inputs.mta || 'postfix' }}
 
     steps:
@@ -137,6 +139,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_localization_workflow_security.py' -v
           python3 -m unittest discover -s tests -p 'test_full_stack_review_fixes.py' -v
           python3 -m unittest discover -s tests -p 'test_github_update_pipeline.py' -v
+          python3 -m unittest discover -s tests -p 'test_updater_issue115.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_token_scope.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_evidence_sanitizer.py' -v
