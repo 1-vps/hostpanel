@@ -9,8 +9,8 @@ export PATH
 umask 077
 unset PYTHONPATH PYTHONHOME BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH
 
-readonly QUICK_INSTALL_COMMIT="7745b637d3a77664e385528838800100291d575c"
-readonly QUICK_INSTALL_BLOB="9018696895963da33f4f3dbf3288600a36763455"
+readonly QUICK_INSTALL_COMMIT="2164c28f9dcce9beee3b33a9fd8c476f2dbac21b"
+readonly QUICK_INSTALL_BLOB="b934377222910cae9ec223d666a09aebaf28c21f"
 readonly PRODUCT_COMMIT="d50ccea35aa6356f7f815a606fa91f6186b66a6f"
 readonly VALIDATOR_BLOB="2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9"
 readonly EXPECTED_VERSION="3.4.1"
@@ -18,6 +18,7 @@ readonly REPOSITORY_API="https://api.github.com/repos/1-vps/hostpanel"
 readonly STATUS_DIR="/var/lib/hostpanel"
 readonly STATUS_FILE="$STATUS_DIR/auto-install-status.json"
 readonly RUNTIME_DIR="/run/hostpanel-auto-install"
+readonly BOOTSTRAP_LOCK_DIR="/run/hostpanel-auto-install.bootstrap.lock"
 
 PANEL_HOST="${HP_PANEL_HOST:-}"
 PANEL_DOMAIN="${HP_PANEL_DOMAIN:-}"
@@ -35,6 +36,7 @@ PRIVATE_TOKEN_FILE=""
 PHASE="initializing"
 FINAL_STATUS=""
 LOCK_FD=""
+BOOTSTRAP_LOCK_HELD=no
 declare -a ROLES=()
 
 say(){ printf '\n==> %s\n' "$*"; }
@@ -54,8 +56,8 @@ Options:
   --role ROLE           Install one role; may be repeated
   --roles LIST          Comma- or space-separated roles
   --reinstall           Explicit reviewed reinstall
-  --check-only          Run preflight without mutating the server
-  --skip-post-check     Skip validator and doctor after installation
+  --check-only          Run preflight without packages or persistent installer files
+  --skip-post-check     Skip validator and doctor; status is marked unverified
   -h, --help            Show this help
 
 Environment:
@@ -107,12 +109,27 @@ CHECK_ONLY="$(normalize_yes_no HP_CHECK_ONLY "$CHECK_ONLY")"
 POST_CHECK="$(normalize_yes_no HP_POST_INSTALL_CHECK "$POST_CHECK")"
 [[ "$EUID" -eq 0 ]] || die "Run the automatic installer as root"
 
+release_bootstrap_lock(){
+  local holder=""
+  [[ "$BOOTSTRAP_LOCK_HELD" == yes ]] || return 0
+  if [[ -r "$BOOTSTRAP_LOCK_DIR/pid" ]]; then
+    IFS= read -r holder <"$BOOTSTRAP_LOCK_DIR/pid" || true
+  fi
+  if [[ "$holder" == "$$" ]]; then
+    rm -f -- "$BOOTSTRAP_LOCK_DIR/pid"
+    rmdir -- "$BOOTSTRAP_LOCK_DIR" 2>/dev/null || true
+  fi
+  BOOTSTRAP_LOCK_HELD=no
+}
+
 cleanup(){
   [[ -z "${AUTH_FILE:-}" ]] || rm -f -- "$AUTH_FILE"
   [[ -z "${PRIVATE_TOKEN_FILE:-}" ]] || rm -f -- "$PRIVATE_TOKEN_FILE"
   [[ -z "${WORK_DIR:-}" ]] || rm -rf -- "$WORK_DIR"
   TOKEN=""
+  TOKEN_FD=""
   unset TOKEN HP_GITHUB_TOKEN_FILE HP_GITHUB_TOKEN_FD
+  release_bootstrap_lock
 }
 
 write_status(){
@@ -177,11 +194,16 @@ os.chmod(status_name, 0o600)
 PY
 }
 
+record_status(){
+  [[ "$CHECK_ONLY" == no ]] || return 0
+  write_status "$@"
+}
+
 on_exit(){
   local status=$?
   trap - EXIT
   if ((status != 0)) && [[ "$FINAL_STATUS" != success ]]; then
-    write_status failed "Automatic installation failed during $PHASE (exit $status)" \
+    record_status failed "Automatic installation failed during $PHASE (exit $status)" \
       "$(cat /opt/hostpanel/VERSION 2>/dev/null || true)" 2>/dev/null || true
   fi
   cleanup
@@ -192,12 +214,45 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+acquire_bootstrap_lock(){
+  local holder="" stale="${BOOTSTRAP_LOCK_DIR}.stale.$$"
+  if mkdir -m 0700 -- "$BOOTSTRAP_LOCK_DIR" 2>/dev/null; then
+    printf '%s\n' "$$" >"$BOOTSTRAP_LOCK_DIR/pid"
+    BOOTSTRAP_LOCK_HELD=yes
+    return 0
+  fi
+
+  [[ -d "$BOOTSTRAP_LOCK_DIR" && ! -L "$BOOTSTRAP_LOCK_DIR" ]] \
+    || die "Unsafe automatic-installer bootstrap lock path"
+  [[ "$(stat -c %u -- "$BOOTSTRAP_LOCK_DIR" 2>/dev/null || printf invalid)" == 0 ]] \
+    || die "Automatic-installer bootstrap lock is not root-owned"
+  if [[ -r "$BOOTSTRAP_LOCK_DIR/pid" ]]; then
+    IFS= read -r holder <"$BOOTSTRAP_LOCK_DIR/pid" || true
+  fi
+  if [[ "$holder" =~ ^[1-9][0-9]*$ && -d "/proc/$holder" ]]; then
+    die "Another HostPanel installation is already starting (pid $holder)"
+  fi
+
+  mv -T -- "$BOOTSTRAP_LOCK_DIR" "$stale" 2>/dev/null \
+    || die "Could not recover a stale automatic-installer bootstrap lock"
+  rm -rf -- "$stale"
+  mkdir -m 0700 -- "$BOOTSTRAP_LOCK_DIR" \
+    || die "Could not acquire the automatic-installer bootstrap lock"
+  printf '%s\n' "$$" >"$BOOTSTRAP_LOCK_DIR/pid"
+  BOOTSTRAP_LOCK_HELD=yes
+}
+
 ensure_prerequisites(){
   local command missing=()
   for command in curl git python3 mktemp flock hostname; do
     command -v "$command" >/dev/null 2>&1 || missing+=("$command")
   done
   ((${#missing[@]} == 0)) && return 0
+
+  if [[ "$CHECK_ONLY" == yes ]]; then
+    die "Missing commands (${missing[*]}); check-only never installs packages"
+  fi
+
   say "Installing automatic-installer prerequisites"
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
@@ -250,9 +305,6 @@ PY
 
 detect_host(){
   local candidate
-  if [[ -n "$PANEL_DOMAIN" ]]; then
-    validate_hostname "panel.${PANEL_DOMAIN#.}" 2>/dev/null && return 0
-  fi
   for candidate in "$(hostname -f 2>/dev/null || true)" "$(hostname --fqdn 2>/dev/null || true)"; do
     [[ -n "$candidate" ]] || continue
     validate_hostname "$candidate" 2>/dev/null && return 0
@@ -278,10 +330,16 @@ PY
 }
 
 resolve_inputs(){
-  local role detected
-  [[ -n "$PANEL_HOST" ]] || PANEL_HOST="$(detect_host 2>/dev/null || true)"
-  [[ -n "$PANEL_HOST" ]] || die "Could not detect a valid FQDN; set HP_PANEL_HOST"
-  PANEL_HOST="$(validate_hostname "$PANEL_HOST")" || die "Invalid panel hostname"
+  local role
+  if [[ -n "$PANEL_HOST" ]]; then
+    PANEL_HOST="$(validate_hostname "$PANEL_HOST")" || die "Invalid panel hostname"
+  elif [[ -n "$PANEL_DOMAIN" ]]; then
+    PANEL_HOST="$(validate_hostname "panel.${PANEL_DOMAIN#.}")" \
+      || die "Invalid HP_PANEL_DOMAIN: $PANEL_DOMAIN"
+  else
+    PANEL_HOST="$(detect_host 2>/dev/null || true)"
+    [[ -n "$PANEL_HOST" ]] || die "Could not detect a valid FQDN; set HP_PANEL_HOST or HP_PANEL_DOMAIN"
+  fi
 
   [[ -n "$ADMIN_CIDR" ]] || ADMIN_CIDR="$(detect_cidr 2>/dev/null || true)"
   [[ -n "$ADMIN_CIDR" ]] || die "Could not detect an SSH source; set HP_PANEL_ADMIN_CIDR"
@@ -348,6 +406,8 @@ read_token(){
     [[ "$TOKEN_FD" =~ ^[0-9]+$ ]] || die "HP_GITHUB_TOKEN_FD must be numeric"
     IFS= read -r TOKEN <&"$TOKEN_FD" || [[ -n "$TOKEN" ]] || die "Could not read token descriptor"
     eval "exec ${TOKEN_FD}<&-"
+    TOKEN_FD=""
+    unset HP_GITHUB_TOKEN_FD
   elif [[ -n "$TOKEN_FILE" ]]; then
     TOKEN="$(read_token_file "$TOKEN_FILE")" || die "Could not read token file safely"
   else
@@ -372,9 +432,15 @@ prepare_downloads(){
   TOKEN=""
 }
 
+ensure_download_context(){
+  [[ -n "$AUTH_FILE" && -f "$AUTH_FILE" ]] && return 0
+  read_token
+  prepare_downloads
+}
+
 download_file(){
   local path="$1" ref="$2" destination="$3"
-  curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+  curl -q --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
     --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 240 \
     --config "$AUTH_FILE" "${REPOSITORY_API}/contents/${path}?ref=${ref}" -o "$destination"
 }
@@ -384,6 +450,7 @@ ensure_validator(){
      [[ "$(git hash-object /root/validate-production-vm.sh 2>/dev/null || true)" == "$VALIDATOR_BLOB" ]]; then
     return 0
   fi
+  ensure_download_context
   download_file tools/validate-production-vm.sh "$PRODUCT_COMMIT" "$WORK_DIR/validator.sh"
   [[ "$(git hash-object "$WORK_DIR/validator.sh")" == "$VALIDATOR_BLOB" ]] || die "Validator blob verification failed"
   bash -n "$WORK_DIR/validator.sh"
@@ -396,21 +463,19 @@ post_check(){
   [[ "$installed" == "$EXPECTED_VERSION" ]] || die "Installed version is $installed; expected $EXPECTED_VERSION"
   [[ "$POST_CHECK" == yes ]] || return 0
   ensure_validator
+  [[ -x /opt/hostpanel/venv/bin/python ]] || die "HostPanel Python environment is missing"
+  [[ -f /opt/hostpanel/app/hostpanel-doctor ]] || die "hostpanel-doctor is missing"
   env HP_EXPECTED_VERSION="$EXPECTED_VERSION" HP_PANEL_HOST="$PANEL_HOST" \
     bash /root/validate-production-vm.sh --check
-  if [[ -x /opt/hostpanel/venv/bin/python && -f /opt/hostpanel/app/hostpanel-doctor ]]; then
-    /opt/hostpanel/venv/bin/python /opt/hostpanel/app/hostpanel-doctor --quiet
-  fi
+  /opt/hostpanel/venv/bin/python /opt/hostpanel/app/hostpanel-doctor --quiet
 }
 
+acquire_bootstrap_lock
 ensure_prerequisites
 acquire_lock
 PHASE="resolving-inputs"
 resolve_inputs
-write_status running "Resolved fully automatic installation inputs"
-PHASE="reading-credentials"
-read_token
-prepare_downloads
+record_status running "Resolved fully automatic installation inputs"
 
 installed="$(cat /opt/hostpanel/VERSION 2>/dev/null || true)"
 if [[ -n "$installed" && "$REINSTALL" == no && "$CHECK_ONLY" == no ]]; then
@@ -418,11 +483,18 @@ if [[ -n "$installed" && "$REINSTALL" == no && "$CHECK_ONLY" == no ]]; then
   PHASE="verifying-existing-installation"
   post_check
   FINAL_STATUS=success
-  write_status success "Existing HostPanel installation is healthy" "$installed"
-  printf '\nHostPanel %s is already installed and healthy.\n' "$installed"
+  if [[ "$POST_CHECK" == yes ]]; then
+    record_status success "Existing HostPanel installation is healthy" "$installed"
+    printf '\nHostPanel %s is already installed and healthy.\n' "$installed"
+  else
+    record_status unverified "Existing HostPanel version matches; validation was skipped" "$installed"
+    printf '\nHostPanel %s is already installed; validation was skipped.\n' "$installed"
+  fi
   exit 0
 fi
 
+PHASE="reading-credentials"
+ensure_download_context
 PHASE="downloading-launcher"
 download_file quick-install.sh "$QUICK_INSTALL_COMMIT" "$WORK_DIR/quick-install.sh"
 [[ "$(git hash-object "$WORK_DIR/quick-install.sh")" == "$QUICK_INSTALL_BLOB" ]] || die "Quick installer blob verification failed"
@@ -435,13 +507,13 @@ args=(--hostname "$PANEL_HOST" --admin-cidr "$ADMIN_CIDR" --mta "$MTA" --yes)
 for role in "${ROLES[@]}"; do args+=(--role "$role"); done
 
 PHASE="preflight-and-install"
-write_status running "Running verified HostPanel preflight and installation"
-HP_GITHUB_TOKEN_FILE="$PRIVATE_TOKEN_FILE" bash "$WORK_DIR/quick-install.sh" "${args[@]}"
+record_status running "Running verified HostPanel preflight and installation"
+env -u HP_GITHUB_TOKEN_FD HP_GITHUB_TOKEN_FILE="$PRIVATE_TOKEN_FILE" \
+  bash "$WORK_DIR/quick-install.sh" "${args[@]}"
 
 if [[ "$CHECK_ONLY" == yes ]]; then
   FINAL_STATUS=success
-  write_status success "HostPanel preflight passed; no changes were made" "$installed"
-  printf '\nAutomatic preflight passed. No installation changes were made.\n'
+  printf '\nAutomatic preflight passed. No packages or persistent installer files were changed.\n'
   exit 0
 fi
 
@@ -449,7 +521,12 @@ PHASE="post-install-validation"
 post_check
 installed="$(cat /opt/hostpanel/VERSION 2>/dev/null || true)"
 FINAL_STATUS=success
-write_status success "HostPanel automatic installation and validation completed" "$installed"
-printf '\nHostPanel %s installed automatically.\n' "$installed"
+if [[ "$POST_CHECK" == yes ]]; then
+  record_status success "HostPanel automatic installation and validation completed" "$installed"
+  printf '\nHostPanel %s installed automatically and validated.\n' "$installed"
+else
+  record_status unverified "HostPanel automatic installation completed; validation was skipped" "$installed"
+  printf '\nHostPanel %s installed automatically; validation was skipped.\n' "$installed"
+fi
 printf 'Status: %s\n' "$STATUS_FILE"
 printf 'Log: /var/log/hostpanel-install.log\n'

@@ -7,13 +7,13 @@ It installs HostPanel version `3.4.1` from reviewed, immutable Git objects. The
 installer is pinned to commit:
 
 ```text
-a88be462efa38e479070b89e0a4c90b4b7b202da
+cb15cca3e1e4d8f2525d7989428c02771bd96331
 ```
 
 Its verified Git blob is:
 
 ```text
-4fa5e025c1516ebaaff260177b572f3253a61aa1
+d3dd590c8e0c673b3fb40e156c01ae0ccf49b43c
 ```
 
 ## Requirements
@@ -31,9 +31,9 @@ Create a provider snapshot and retain console access before installation.
 ## Obtain the installer
 
 Obtain the exact `auto-install.sh` bytes from immutable commit
-`a88be462efa38e479070b89e0a4c90b4b7b202da` through an authenticated checkout or
+`cb15cca3e1e4d8f2525d7989428c02771bd96331` through an authenticated checkout or
 reviewed file transfer. Verify that its Git blob is
-`4fa5e025c1516ebaaff260177b572f3253a61aa1`.
+`d3dd590c8e0c673b3fb40e156c01ae0ccf49b43c`.
 
 Do not execute a moving `main` branch as root.
 
@@ -57,9 +57,10 @@ Then clear the user-shell variable:
 unset HOSTPANEL_GITHUB_TOKEN
 ```
 
-The domain `example.com` becomes `panel.example.com`. The current SSH source is
-carried across `sudo` and converted to a single-address `/32` or `/128` for the
-administrative firewall rule.
+The domain `example.com` becomes `panel.example.com`. Explicit invalid domain
+values are rejected and never fall back to the machine hostname. The current SSH
+source is carried across `sudo` and converted to a single-address `/32` or
+`/128` for the administrative firewall rule.
 
 When the machine already has a valid FQDN from `hostname -f`, omit
 `HP_PANEL_DOMAIN`:
@@ -74,8 +75,9 @@ To avoid SSH-source detection, provide an explicit administrative network:
 printf '%s' "$HOSTPANEL_GITHUB_TOKEN" | sudo env HP_PANEL_DOMAIN=example.com HP_PANEL_ADMIN_CIDR=192.0.2.10/32 HP_GITHUB_TOKEN_FD=3 bash -c 'exec 3<&0; exec bash auto-install.sh'
 ```
 
-The token is supplied on inherited descriptor 3. It is not placed in a URL,
-normal command argument, or root environment variable.
+The token is supplied on inherited descriptor 3. The descriptor is consumed and
+removed from the child environment before delegation. The token is not placed in
+a URL, normal command argument, or root environment variable.
 
 ## Cloud-init, Terraform, and image builders
 
@@ -93,7 +95,8 @@ sudo env \
 Use [`examples/cloud-init-hostpanel.yaml`](examples/cloud-init-hostpanel.yaml) as
 the cloud-init reference. It expects the provider or secret manager to create
 `/run/secrets/hostpanel_github_token`; it deliberately does not embed a token in
-instance metadata.
+instance metadata. The example downloads the immutable commit and verifies its
+Git blob before execution.
 
 Terraform provisioners and image builders should use the same immutable script,
 environment variables, and external-secret pattern.
@@ -119,6 +122,10 @@ Token files must be root-owned, single-linked regular files with mode `0400` or
 `0600`. They are opened with no-follow semantics and rejected if their identity
 changes while being read.
 
+A healthy repeated run does not require a token when the pinned local production
+validator is already present. Credentials are loaded only when an immutable file
+must be downloaded.
+
 ## Configuration
 
 ```text
@@ -137,9 +144,17 @@ HP_GITHUB_TOKEN_FD=3
 Omitting `HP_ROLES` installs all roles. Supported roles are `control`, `web`,
 `database`, `mail`, `dns`, `backup`, and `edge`.
 
-`HP_CHECK_ONLY=yes` runs the complete preflight without changing the server.
+`HP_CHECK_ONLY=yes` runs preflight without installing missing operating-system
+packages, copying persistent installer files into `/root`, or writing the
+HostPanel status file. Required commands must already be installed. Temporary
+files and runtime locks are removed when the command exits.
+
 `HP_REINSTALL=yes` is required for an explicit replacement of an existing
 installation.
+
+`HP_POST_INSTALL_CHECK=no` skips the production validator and
+`hostpanel-doctor`; the machine-readable result is marked `unverified`, not
+healthy.
 
 ## Automatic detection and fail-closed behavior
 
@@ -158,14 +173,16 @@ public automatically.
 
 `auto-install.sh` automatically:
 
-1. installs missing bootstrap prerequisites;
-2. validates the hostname, administrative CIDR, MTA, and selected roles;
-3. verifies the immutable automatic launcher, bootstrap, and production validator;
-4. runs the complete preflight before mutation;
-5. installs all roles with Postfix by default;
-6. verifies version `3.4.1`;
-7. runs the production validator and `hostpanel-doctor`;
-8. writes machine-readable status to `/var/lib/hostpanel/auto-install-status.json`.
+1. acquires a root-only bootstrap lock before package operations;
+2. installs missing bootstrap prerequisites outside check-only mode;
+3. validates the hostname, administrative CIDR, MTA, and selected roles;
+4. verifies the immutable automatic launcher, bootstrap, and production validator;
+5. ignores user curl configuration for authenticated downloads;
+6. runs the complete preflight before installation;
+7. installs all roles with Postfix by default;
+8. verifies version `3.4.1`;
+9. requires the production validator and `hostpanel-doctor` unless explicitly skipped;
+10. writes machine-readable status to `/var/lib/hostpanel/auto-install-status.json`.
 
 ## Idempotence and status
 
@@ -173,7 +190,8 @@ A second run against a healthy installed `3.4.1` verifies the validator and
 doctor and exits successfully instead of reinstalling. A different installed
 version fails unless `HP_REINSTALL=yes` is explicit.
 
-Concurrent runs are rejected by a root-only lock under:
+Concurrent runs are rejected before package mutation by a root-only bootstrap
+lock and during installation by the runtime lock under:
 
 ```text
 /run/hostpanel-auto-install/

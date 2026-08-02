@@ -40,7 +40,7 @@ Options:
   --mta postfix|exim    Mail transfer agent (default: postfix)
   --role ROLE           Install one role; may be repeated
   --reinstall           Run the reviewed reinstall path
-  --check-only          Run preflight only
+  --check-only          Run preflight without installing packages or persistent files
   --yes                 Skip the final confirmation
   -h, --help            Show this help
 
@@ -59,6 +59,7 @@ cleanup(){
   [[ -z "${AUTH_FILE:-}" ]] || rm -f -- "$AUTH_FILE"
   [[ -z "${WORK_DIR:-}" ]] || rm -rf -- "$WORK_DIR"
   TOKEN=""
+  TOKEN_FD=""
   unset TOKEN HP_GITHUB_TOKEN HP_GITHUB_TOKEN_FILE HP_GITHUB_TOKEN_FD
   unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
   return "$status"
@@ -95,7 +96,7 @@ while (($#)); do
   esac
 done
 
-[[ "$EUID" -eq 0 ]] || die "Run the installer as root, for example: curl ... | sudo bash"
+[[ "$EUID" -eq 0 ]] || die "Run the installer as root"
 
 ensure_prerequisites(){
   local missing=() command
@@ -104,13 +105,17 @@ ensure_prerequisites(){
   done
   ((${#missing[@]} == 0)) && return 0
 
+  if [[ "$CHECK_ONLY" == yes ]]; then
+    die "Missing commands (${missing[*]}); check-only never installs packages"
+  fi
+
   say "Installing bootstrap prerequisites"
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y -qq ca-certificates curl git openssl python3 coreutils
+    apt-get -o Acquire::Retries=3 update -qq
+    apt-get -o Acquire::Retries=3 install -y -qq ca-certificates curl git openssl python3 coreutils
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y ca-certificates curl git openssl python3 coreutils
+    dnf -y --setopt=retries=3 install ca-certificates curl git openssl python3 coreutils
   else
     die "Missing commands (${missing[*]}) and no supported package manager was found"
   fi
@@ -122,15 +127,23 @@ ensure_prerequisites(){
 
 validate_hostname(){
   python3 - "$1" <<'PY'
+import ipaddress
 import re
 import sys
 
-value = sys.argv[1].strip().lower()
-if len(value) > 253 or "." not in value or value.endswith("."):
+value = sys.argv[1].strip().lower().rstrip(".")
+if not value or len(value) > 253 or "." not in value or value.endswith(".localdomain"):
+    raise SystemExit(1)
+try:
+    ipaddress.ip_address(value)
+except ValueError:
+    pass
+else:
     raise SystemExit(1)
 label = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 if any(not label.fullmatch(part) for part in value.split(".")):
     raise SystemExit(1)
+print(value)
 PY
 }
 
@@ -140,10 +153,9 @@ import ipaddress
 import sys
 
 value = sys.argv[1].strip()
-network = ipaddress.ip_network(value, strict=False)
 if "/" not in value:
     raise SystemExit(1)
-print(network.with_prefixlen)
+print(ipaddress.ip_network(value, strict=False).with_prefixlen)
 PY
 }
 
@@ -164,12 +176,13 @@ PY
 }
 
 read_token(){
-  local metadata mode owner links
   if [[ -n "$TOKEN_FD" ]]; then
     [[ "$TOKEN_FD" =~ ^[0-9]+$ ]] || die "HP_GITHUB_TOKEN_FD must be numeric"
     IFS= read -r TOKEN <&"$TOKEN_FD" || [[ -n "$TOKEN" ]] \
       || die "Could not read the GitHub token descriptor"
     eval "exec ${TOKEN_FD}<&-"
+    TOKEN_FD=""
+    unset HP_GITHUB_TOKEN_FD
   elif [[ -n "$TOKEN_FILE" ]]; then
     TOKEN="$(python3 - "$TOKEN_FILE" <<'PYTOKEN'
 import os
@@ -178,9 +191,7 @@ import stat
 import sys
 
 path = pathlib.Path(sys.argv[1])
-flags = os.O_RDONLY | os.O_CLOEXEC
-if hasattr(os, "O_NOFOLLOW"):
-    flags |= os.O_NOFOLLOW
+flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
 try:
     descriptor = os.open(path, flags)
 except OSError as exc:
@@ -236,8 +247,8 @@ prompt_inputs(){
   if [[ -z "$PANEL_HOST" ]]; then
     read -r -p "Panel hostname (for example panel.example.com): " PANEL_HOST </dev/tty
   fi
-  PANEL_HOST="${PANEL_HOST,,}"
-  validate_hostname "$PANEL_HOST" || die "Invalid panel hostname: $PANEL_HOST"
+  PANEL_HOST="$(validate_hostname "$PANEL_HOST")" \
+    || die "Invalid panel hostname: $PANEL_HOST"
 
   if [[ -z "$ADMIN_CIDR" ]]; then
     detected="$(default_admin_cidr)"
@@ -271,7 +282,7 @@ show_plan_and_confirm(){
   printf '  panel hostname: %s\n' "$PANEL_HOST"
   printf '  admin CIDR:     %s\n' "$ADMIN_CIDR"
   printf '  MTA:            %s\n' "$MTA"
-  printf '  mode:           %s\n' "$([[ "$REINSTALL" == yes ]] && printf reinstall || printf install)"
+  printf '  mode:           %s\n' "$([[ "$CHECK_ONLY" == yes ]] && printf check-only || { [[ "$REINSTALL" == yes ]] && printf reinstall || printf install; })"
   if ((${#ROLES[@]})); then
     printf '  roles:          %s\n' "${ROLES[*]}"
   else
@@ -286,7 +297,7 @@ show_plan_and_confirm(){
 
 download_reviewed_file(){
   local repository_path="$1" destination="$2"
-  curl --proto '=https' --tlsv1.2 \
+  curl -q --proto '=https' --tlsv1.2 \
     --fail --location --silent --show-error \
     --retry 3 --retry-all-errors --connect-timeout 15 --max-time 180 \
     --config "$AUTH_FILE" \
@@ -320,8 +331,6 @@ download_reviewed_file tools/validate-production-vm.sh "$WORK_DIR/validate-produ
   || die "Validator Git blob verification failed"
 bash -n "$WORK_DIR/bootstrap-install.sh"
 bash -n "$WORK_DIR/validate-production-vm.sh"
-install -o root -g root -m 0700 "$WORK_DIR/bootstrap-install.sh" /root/bootstrap-install.sh
-install -o root -g root -m 0700 "$WORK_DIR/validate-production-vm.sh" /root/validate-production-vm.sh
 
 GIT_AUTH_HEADER="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\r\n')"
 export GIT_CONFIG_COUNT=1
@@ -345,12 +354,15 @@ common_env=(
 )
 
 say "Running HostPanel preflight"
-env "${common_env[@]}" bash /root/bootstrap-install.sh --check "${install_args[@]}"
+env "${common_env[@]}" bash "$WORK_DIR/bootstrap-install.sh" --check "${install_args[@]}"
 
 if [[ "$CHECK_ONLY" == yes ]]; then
-  printf '\nPreflight passed. No HostPanel installation changes were made.\n'
+  printf '\nPreflight passed. No packages or persistent installer files were changed.\n'
   exit 0
 fi
+
+install -o root -g root -m 0700 "$WORK_DIR/bootstrap-install.sh" /root/bootstrap-install.sh
+install -o root -g root -m 0700 "$WORK_DIR/validate-production-vm.sh" /root/validate-production-vm.sh
 
 say "Installing HostPanel"
 env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}"

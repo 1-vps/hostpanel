@@ -8,8 +8,8 @@ export PATH
 umask 077
 unset PYTHONPATH PYTHONHOME BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH
 
-readonly AUTO_INSTALL_COMMIT="a88be462efa38e479070b89e0a4c90b4b7b202da"
-readonly AUTO_INSTALL_BLOB="4fa5e025c1516ebaaff260177b572f3253a61aa1"
+readonly AUTO_INSTALL_COMMIT="cb15cca3e1e4d8f2525d7989428c02771bd96331"
+readonly AUTO_INSTALL_BLOB="d3dd590c8e0c673b3fb40e156c01ae0ccf49b43c"
 readonly REPOSITORY_API="https://api.github.com/repos/1-vps/hostpanel"
 
 DOMAIN="${HP_PANEL_DOMAIN:-}"
@@ -84,11 +84,16 @@ read_token_from_stdin(){
 }
 
 ensure_prerequisites(){
-  local missing=() command
+  local missing=() command check_only="${HP_CHECK_ONLY:-no}"
   for command in curl git mktemp; do
     command -v "$command" >/dev/null 2>&1 || missing+=("$command")
   done
   ((${#missing[@]} == 0)) && return 0
+
+  check_only="${check_only,,}"
+  case "$check_only" in
+    yes|1|true|on) die "Missing commands (${missing[*]}); check-only never installs packages" ;;
+  esac
 
   say "Installing one-line bootstrap prerequisites"
   if command -v apt-get >/dev/null 2>&1; then
@@ -121,7 +126,7 @@ AUTH_FILE="$WORK_DIR/github-curl.conf"
 chmod 0600 "$AUTH_FILE"
 
 say "Downloading the immutable automatic installer"
-curl --proto '=https' --tlsv1.2 \
+curl -q --proto '=https' --tlsv1.2 \
   --fail --location --silent --show-error \
   --retry 5 --retry-all-errors --connect-timeout 15 --max-time 180 \
   --config "$AUTH_FILE" \
@@ -142,7 +147,7 @@ fi
 exec 3<<<"$TOKEN"
 TOKEN=""
 unset TOKEN
-export HP_GITHUB_TOKEN_FD=3
 
 say "Starting verified unattended HostPanel installation"
-bash "$WORK_DIR/auto-install.sh"
+HP_GITHUB_TOKEN_FD=3 bash "$WORK_DIR/auto-install.sh"
+exec 3<&-
