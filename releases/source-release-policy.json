@@ -1,6 +1,16 @@
 {
   "schema": 1,
   "overlay_paths": [
+    "app",
+    "bootstrap-install.sh",
+    "install.base.sh",
+    "install.sh",
+    "localization-overlay",
+    "packaging",
+    "releases/update.pub",
+    "tools"
+  ],
+  "late_overlay_paths": [
     "CONFIGURATION.md",
     "LOCALIZATION-OVERLAY.md",
     "PRODUCTION_READINESS.md",
@@ -11,15 +21,7 @@
     "SECURITY.md",
     "SETUP.md",
     "SOURCE_VERSION",
-    "app",
-    "bootstrap-install.sh",
-    "install.base.sh",
-    "install.sh",
-    "localization-overlay",
-    "packaging",
-    "releases/update.pub",
-    "tests",
-    "tools"
+    "tests"
   ],
   "required_paths": [
     "VERSION",
