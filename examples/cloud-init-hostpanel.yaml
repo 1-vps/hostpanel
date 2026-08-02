@@ -1,0 +1,50 @@
+#cloud-config
+# Inject this file through the provider or secret manager before runcmd:
+# /run/secrets/hostpanel_github_token (root-owned, mode 0400 or 0600).
+# Do not store a real token in cloud-init user data.
+
+write_files:
+  - path: /etc/hostpanel/automatic-install.env
+    owner: root:root
+    permissions: '0600'
+    content: |
+      HP_PANEL_HOST=panel.example.com
+      HP_PANEL_ADMIN_CIDR=192.0.2.10/32
+      HP_MTA=postfix
+      HP_GITHUB_TOKEN_FILE=/run/secrets/hostpanel_github_token
+
+runcmd:
+  - |
+    set -Eeuo pipefail
+    set -a
+    . /etc/hostpanel/automatic-install.env
+    set +a
+    test -f "$HP_GITHUB_TOKEN_FILE"
+    case "$(stat -c %a "$HP_GITHUB_TOKEN_FILE")" in 400|600) ;; *) exit 1 ;; esac
+    command -v curl >/dev/null || {
+      if command -v apt-get >/dev/null; then
+        apt-get update -qq
+        apt-get install -y -qq ca-certificates curl
+      else
+        dnf -y install ca-certificates curl
+      fi
+    }
+    D=$(mktemp -d /tmp/hostpanel-cloud-init.XXXXXX)
+    trap 'rm -rf -- "$D"' EXIT
+    T=$(cat "$HP_GITHUB_TOKEN_FILE")
+    [[ "$T" =~ ^[A-Za-z0-9_]{20,512}$ ]]
+    {
+      printf 'header = "Accept: application/vnd.github.raw+json"\n'
+      printf 'header = "Authorization: Bearer %s"\n' "$T"
+      printf 'header = "X-GitHub-Api-Version: 2022-11-28"\n'
+    } >"$D/curl"
+    unset T
+    chmod 0600 "$D/curl"
+    curl --proto '=https' --tlsv1.2 -fsSL --retry 5 \
+      --config "$D/curl" \
+      'https://api.github.com/repos/1-vps/hostpanel/contents/auto-install.sh?ref=a88be462efa38e479070b89e0a4c90b4b7b202da' \
+      -o "$D/install"
+    chmod 0700 "$D/install"
+    bash "$D/install"
+
+final_message: "HostPanel provisioning finished; inspect /var/lib/hostpanel/auto-install-status.json"
