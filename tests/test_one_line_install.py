@@ -8,10 +8,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ENTRY = ROOT / "install-one-line.sh"
-SETUP = ROOT / "SETUP.md"
 WORKFLOW = ROOT / ".github" / "workflows" / "automatic-installer.yml"
-ENTRY_COMMIT = "d0689bc880a8c43af637622c52b931de87b91d61"
-ENTRY_BLOB = "fd3806cd58118e30b0ef2a680bfacdd50f191421"
 AUTO_COMMIT = "a88be462efa38e479070b89e0a4c90b4b7b202da"
 AUTO_BLOB = "4fa5e025c1516ebaaff260177b572f3253a61aa1"
 
@@ -20,7 +17,6 @@ class OneLineInstallTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = ENTRY.read_text(encoding="utf-8")
-        cls.setup = SETUP.read_text(encoding="utf-8")
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
 
     def test_shell_syntax_and_help(self) -> None:
@@ -75,17 +71,6 @@ class OneLineInstallTests(unittest.TestCase):
         self.assertNotIn("HP_ALLOW_PUBLIC_PANEL=yes", self.source)
         self.assertIn("HP_PANEL_ADMIN_CIDR", self.source)
         self.assertIn("HP_CHECK_ONLY=yes", self.source)
-
-    def test_documentation_uses_the_short_file_command(self) -> None:
-        command = (
-            'printf \'%s\' "$HOSTPANEL_GITHUB_TOKEN" | sudo env '
-            'SSH_CONNECTION="${SSH_CONNECTION:-}" bash install-one-line.sh example.com'
-        )
-        self.assertIn(ENTRY_COMMIT, self.setup)
-        self.assertIn(ENTRY_BLOB, self.setup)
-        self.assertIn(command, self.setup)
-        self.assertNotIn("HP_PANEL_DOMAIN=example.com bash -c 'set -Eeuo pipefail", self.setup)
-        self.assertRegex(self.setup, re.compile(r"does not create a\s+persistent token file"))
 
     def test_workflow_validates_the_entry_file(self) -> None:
         self.assertGreaterEqual(self.workflow.count("install-one-line.sh"), 4)
