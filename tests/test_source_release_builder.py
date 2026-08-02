@@ -64,6 +64,7 @@ class SourceReleaseBuilderTests(unittest.TestCase):
             payload = {
                 "schema": 1,
                 "overlay_paths": ["app", "tools"],
+                "late_overlay_paths": ["README.md"],
                 "required_paths": ["VERSION", "app/templates/panel.html"],
             }
             path.write_text(json.dumps(payload), encoding="utf-8")
@@ -78,6 +79,15 @@ class SourceReleaseBuilderTests(unittest.TestCase):
             payload["overlay_paths"] = ["../escape"]
             path.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaises(self.builder.ReleaseBuildError):
+                self.builder.load_policy(path)
+
+            payload["overlay_paths"] = ["app"]
+            payload["late_overlay_paths"] = ["app"]
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(
+                self.builder.ReleaseBuildError,
+                "phases overlap",
+            ):
                 self.builder.load_policy(path)
 
     def test_safe_extraction_rejects_links_and_path_escape(self) -> None:
@@ -155,6 +165,7 @@ class SourceReleaseBuilderTests(unittest.TestCase):
             identity = self.builder.ReleaseIdentity("3.4.1", "3.4.1-hardened-r1")
             policy = self.builder.SourcePolicy(
                 overlay_paths=("app",),
+                late_overlay_paths=("README.md",),
                 required_paths=("VERSION", "app/templates/panel.html"),
             )
             timestamp = 1_700_000_000
