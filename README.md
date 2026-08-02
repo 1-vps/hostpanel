@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="app/static/hostpanel-logo.svg" alt="HostPanel" width="460">
+</p>
+
 # HostPanel
 
 HostPanel is a multi-tenant Linux hosting control panel for web, DNS, mail,

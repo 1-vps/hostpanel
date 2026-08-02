@@ -275,6 +275,9 @@ OVERLAY_FILES=(
   tools/patch_panel_ui.py
   app/static/panel-redesign.css
   app/static/panel-redesign.js
+  app/static/hostpanel-brand.css
+  app/static/hostpanel-mark.svg
+  app/static/hostpanel-logo.svg
 )
 for overlay in "${OVERLAY_FILES[@]}"; do verify_commit_file "$overlay"; done
 install -m 0755 "$CHECKOUT/install.sh" "$SOURCE_ROOT/install.sh"
@@ -285,6 +288,9 @@ install -m 0755 "$CHECKOUT/tools/harden_install_runtime.py" "$SOURCE_ROOT/tools/
 install -m 0755 "$CHECKOUT/tools/patch_panel_ui.py" "$SOURCE_ROOT/tools/patch_panel_ui.py"
 install -m 0644 "$CHECKOUT/app/static/panel-redesign.css" "$SOURCE_ROOT/app/static/panel-redesign.css"
 install -m 0644 "$CHECKOUT/app/static/panel-redesign.js" "$SOURCE_ROOT/app/static/panel-redesign.js"
+install -m 0644 "$CHECKOUT/app/static/hostpanel-brand.css" "$SOURCE_ROOT/app/static/hostpanel-brand.css"
+install -m 0644 "$CHECKOUT/app/static/hostpanel-mark.svg" "$SOURCE_ROOT/app/static/hostpanel-mark.svg"
+install -m 0644 "$CHECKOUT/app/static/hostpanel-logo.svg" "$SOURCE_ROOT/app/static/hostpanel-logo.svg"
 python3 "$SOURCE_ROOT/tools/patch_panel_ui.py" "$SOURCE_ROOT/app/templates/panel.html" \
   || die "Could not apply the reviewed control-panel UI overlay"
 

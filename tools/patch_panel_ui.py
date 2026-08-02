@@ -9,6 +9,8 @@ import stat
 import sys
 
 STYLE_TAG = '<link href="/static/panel-redesign.css" rel="stylesheet"/>'
+BRAND_STYLE_TAG = '<link href="/static/hostpanel-brand.css" rel="stylesheet"/>'
+FAVICON_TAG = '<link href="/static/hostpanel-mark.svg" rel="icon" type="image/svg+xml"/>'
 SCRIPT_TAG = '<script defer="" src="/static/panel-redesign.js"></script>'
 DASHBOARD_MARKER = 'class="page hp-dashboard" data-view="dashboard"'
 SECTION_TAG = re.compile(r"</?section\b[^>]*>", re.IGNORECASE)
@@ -86,6 +88,18 @@ def patch(text: str) -> str:
         '<link href="/static/panel.css" rel="stylesheet"/>',
         STYLE_TAG,
         "redesign stylesheet",
+    )
+    text = _insert_once(
+        text,
+        STYLE_TAG,
+        BRAND_STYLE_TAG,
+        "brand stylesheet",
+    )
+    text = _insert_once(
+        text,
+        BRAND_STYLE_TAG,
+        FAVICON_TAG,
+        "brand favicon",
     )
     text = _place_before_once(
         text,
