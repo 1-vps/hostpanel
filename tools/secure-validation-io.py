@@ -479,10 +479,24 @@ def _create_report(
     directory = open_trusted_directory(
         report_directory,
         owner_uid=owner_uid,
-        exact_mode=0o755,
         create=True,
         trusted_root=trusted_root,
     )
+    try:
+        os.fchmod(directory.fd, 0o700)
+        tightened = os.fstat(directory.fd)
+        _validate_directory_metadata(
+            tightened,
+            str(report_directory),
+            owner_uid=owner_uid,
+            exact_mode=0o700,
+        )
+        directory.stat_result = tightened
+        os.fsync(directory.fd)
+        _verify_path_matches_directory(directory)
+    except BaseException:
+        directory.close()
+        raise
     timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     for _ in range(32):
         name = f"{REPORT_PREFIX}{timestamp}-{os.getpid()}-{secrets.token_hex(6)}.log"
