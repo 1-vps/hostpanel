@@ -155,7 +155,26 @@ class ReleaseBundleBuilderTests(unittest.TestCase):
             ):
                 self.bundle.build(ROOT, "a" * 40, "stable", output)
 
-    def test_copy_rejects_links_and_existing_destinations(self) -> None:
+    def test_summary_must_be_outside_payload_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            output = pathlib.Path(temporary_name) / "dist"
+            output.mkdir()
+            with self.assertRaisesRegex(
+                self.bundle.ReleaseBundleError,
+                "must be outside",
+            ):
+                self.bundle.validate_summary_path(output / "summary.json", output)
+            with self.assertRaisesRegex(
+                self.bundle.ReleaseBundleError,
+                "must be outside",
+            ):
+                self.bundle.validate_summary_path(output, output)
+            self.bundle.validate_summary_path(
+                pathlib.Path(temporary_name) / "summary.json",
+                output,
+            )
+
+    def test_copy_rejects_links_existing_and_oversized_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
             root = pathlib.Path(temporary_name)
             source = root / "source"
@@ -168,6 +187,19 @@ class ReleaseBundleBuilderTests(unittest.TestCase):
             destination.write_text("existing", encoding="utf-8")
             with self.assertRaisesRegex(self.bundle.ReleaseBundleError, "overwrite"):
                 self.bundle.copy_exclusive(source, destination)
+
+            original_maximum = self.bundle.MAX_FILE_BYTES
+            self.bundle.MAX_FILE_BYTES = 3
+            oversized_destination = root / "oversized-copy"
+            try:
+                with self.assertRaisesRegex(
+                    self.bundle.ReleaseBundleError,
+                    "unsafe size",
+                ):
+                    self.bundle.copy_exclusive(source, oversized_destination)
+            finally:
+                self.bundle.MAX_FILE_BYTES = original_maximum
+            self.assertFalse(oversized_destination.exists())
 
     def test_source_checksum_file_is_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
@@ -183,6 +215,10 @@ class ReleaseBundleBuilderTests(unittest.TestCase):
                 [line.split()[1] for line in lines],
                 [archive_name, *self.bundle.SOURCE_METADATA],
             )
+
+    def test_dynamic_release_imports_disable_bytecode(self) -> None:
+        self.assertTrue(sys.dont_write_bytecode)
+        self.assertIn("sys.dont_write_bytecode = True", BUNDLE_PATH.read_text(encoding="utf-8"))
 
     def test_source_compiles(self) -> None:
         compile(BUNDLE_PATH.read_text(encoding="utf-8"), str(BUNDLE_PATH), "exec")
