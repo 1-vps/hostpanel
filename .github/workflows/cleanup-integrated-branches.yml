@@ -1,0 +1,68 @@
+name: Cleanup integrated branches
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cleanup-integrated-branches
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.repository == '1-vps/hostpanel' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Delete only fully integrated working branches
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
+          main_sha="$(git rev-parse HEAD)"
+
+          mapfile -t candidates < <(
+            git for-each-ref --format='%(refname:strip=3)' refs/remotes/origin \
+              | grep -E '^(agent|backup|validation)/' \
+              | sort -u
+          )
+
+          deletable=()
+          preserved=()
+          for branch in "${candidates[@]}"; do
+            tip="$(git rev-parse "refs/remotes/origin/$branch")"
+            if git merge-base --is-ancestor "$tip" "$main_sha"; then
+              deletable+=("$branch")
+            else
+              preserved+=("$branch")
+            fi
+          done
+
+          {
+            echo '## Integrated branch cleanup'
+            echo
+            echo "Main: \`$main_sha\`"
+            echo "Delete candidates: ${#deletable[@]}"
+            echo "Preserved divergent branches: ${#preserved[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for ((offset=0; offset<${#deletable[@]}; offset+=25)); do
+            git push origin --delete "${deletable[@]:offset:25}"
+          done
+
+          if ((${#preserved[@]})); then
+            {
+              echo
+              echo '### Preserved because they contain commits not in main'
+              printf -- '- `%s`\n' "${preserved[@]}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
