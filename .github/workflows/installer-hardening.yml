@@ -96,6 +96,13 @@ jobs:
               apt-get install -y -qq --no-install-recommends \
                 bash git ca-certificates openssl python3 python3-venv python3-pip tar gzip
 
+              install -d -m 0700 /root/hostpanel-source
+              cp -a /repo/. /root/hostpanel-source/
+              chown -R 0:0 /root/hostpanel-source
+              find /root/hostpanel-source -xdev -type d -exec chmod go-w {} +
+              find /root/hostpanel-source -xdev -type f -exec chmod go-w {} +
+              cd /root/hostpanel-source
+
               python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh
               bash -n /tmp/install.generated.sh
               HP_PANEL_HOST=panel.example.test \
