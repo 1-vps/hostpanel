@@ -20,6 +20,7 @@ class ReleaseAssetPolicyTests(unittest.TestCase):
             "hostpanel-update-manifest.json",
             "hostpanel-update-manifest.json.sig",
             "release-build.json",
+            "release-build.json.sig",
         ):
             self.assertIn(name, self.workflow)
         self.assertIn("jq -r '.assets[].name'", self.workflow)
@@ -41,6 +42,13 @@ class ReleaseAssetPolicyTests(unittest.TestCase):
         self.assertIn("--pattern hostpanel-update-manifest.json", self.workflow)
         self.assertIn("--pattern hostpanel-update-manifest.json.sig", self.workflow)
         self.assertIn("--pattern release-build.json", self.workflow)
+        self.assertIn("--pattern release-build.json.sig", self.workflow)
+
+    def test_provenance_is_signed_verified_and_published(self) -> None:
+        self.assertIn("-in dist/release-build.json", self.workflow)
+        self.assertIn("-out dist/release-build.json.sig", self.workflow)
+        self.assertIn("-sigfile dist/release-build.json.sig", self.workflow)
+        self.assertIn("dist/release-build.json.sig \\", self.workflow)
 
 
 if __name__ == "__main__":
