@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+
 concurrency:
   group: installer-hardening-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -20,8 +23,16 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ env.REVIEWED_COMMIT }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify exact reviewed checkout
+        run: |
+          set -euo pipefail
+          [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$REVIEWED_COMMIT" ]]
+          git diff --exit-code -- .
 
       - name: Generate the exact hardened installer
         run: |
@@ -68,8 +79,17 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ env.REVIEWED_COMMIT }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify exact reviewed checkout
+        run: |
+          set -euo pipefail
+          [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$REVIEWED_COMMIT" ]]
+          git diff --exit-code -- .
+
       - name: Validate complete installer bundle on ${{ matrix.os }}
         run: ./test-matrix.sh --os '${{ matrix.os }}'
 
@@ -80,8 +100,16 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ env.REVIEWED_COMMIT }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify exact reviewed checkout
+        run: |
+          set -euo pipefail
+          [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$REVIEWED_COMMIT" ]]
+          git diff --exit-code -- .
 
       - name: Validate Ubuntu 26.04 signature, packages and Python 3.14 lock
         run: |
