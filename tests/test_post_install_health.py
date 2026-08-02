@@ -134,12 +134,11 @@ class PostInstallHealthTests(unittest.TestCase):
         invocation = self.generated[patcher:compile_check]
         self.assertIn('"$PANEL_DIR/app/hostpanel-mysql-admin"', invocation)
 
-    def test_cli_patcher_fallback_is_unique_and_blob_verified(self):
-        self.assertIn(
-            "/tmp/hostpanel-bootstrap.*/repository/tools/patch_cli_runtime_env.py",
-            self.generated,
-        )
-        self.assertIn('((${#CLI_RUNTIME_PATCHERS[@]} == 1))', self.generated)
+    def test_cli_patcher_is_source_root_bound_and_blob_verified(self):
+        self.assertNotIn(
+    "find /tmp -path '/tmp/hostpanel-bootstrap.", self.generated
+)
+        self.assertNotIn("CLI_RUNTIME_PATCHERS", self.generated)
         self.assertIn('[[ -f "$CLI_RUNTIME_PATCHER" && ! -L "$CLI_RUNTIME_PATCHER" ]]', self.generated)
         self.assertIn(
             'git hash-object --no-filters "$CLI_RUNTIME_PATCHER"', self.generated

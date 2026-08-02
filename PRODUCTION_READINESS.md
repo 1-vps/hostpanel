@@ -33,7 +33,7 @@ Follow [`SETUP.md`](SETUP.md) to:
 Required reviewed Git blobs:
 
 ```text
-bootstrap-install.sh                  5d5bd1af8742703396e911a34163cd2992581737
+bootstrap-install.sh                  639fae60ddd5bec36f5e3167dd21733a412a69fd
 tools/validate-production-vm.sh      2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9
 ```
 

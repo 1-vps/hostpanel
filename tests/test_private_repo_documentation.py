@@ -5,7 +5,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REVIEWED_COMMIT = "9c38d0095563ea33efd14124babfd29556c0da46"
-BOOTSTRAP_BLOB = "5d5bd1af8742703396e911a34163cd2992581737"
+BOOTSTRAP_BLOB = "639fae60ddd5bec36f5e3167dd21733a412a69fd"
 VALIDATOR_BLOB = "2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9"
 DOC_PATHS = (
     ROOT / "README.md",
