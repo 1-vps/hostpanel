@@ -1,0 +1,122 @@
+name: Publish signed HostPanel release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-hostpanel-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(python3 tools/build-update-release.py --repository-root . --print-version)"
+          [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){2}([+-][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]
+          TAG="v$VERSION"
+          printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
+          printf 'tag=%s\n' "$TAG" >> "$GITHUB_OUTPUT"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            printf 'publish=false\n' >> "$GITHUB_OUTPUT"
+            echo "Release tag $TAG already exists; nothing to publish."
+          else
+            printf 'publish=true\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run release regressions
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          mapfile -t source_archives < <(
+            awk '$2 ~ /^hostpanel-v.*-source\.tar\.gz$/ {print $2}' SHA256SUMS
+          )
+          [[ "${#source_archives[@]}" -eq 1 ]]
+          source_archive="${source_archives[0]}"
+          awk -v target="$source_archive" '$2 == target {print}' SHA256SUMS | sha256sum -c -
+          openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+            -in "$source_archive" -sigfile "$source_archive.sig"
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          bash -n install.sh bootstrap-install.sh tools/install-update-agent.sh
+          python3 -m py_compile tools/build-update-release.py tools/hostpanel-update.py
+
+      - name: Build deterministic release assets
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          python3 tools/build-update-release.py \
+            --repository-root . \
+            --commit "$GITHUB_SHA" \
+            --channel stable \
+            --output-dir dist
+
+      - name: Sign release assets
+        if: steps.version.outputs.publish == 'true'
+        env:
+          HOSTPANEL_RELEASE_PRIVATE_KEY: ${{ secrets.HOSTPANEL_RELEASE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "$HOSTPANEL_RELEASE_PRIVATE_KEY" ]] || {
+            echo 'Missing HOSTPANEL_RELEASE_PRIVATE_KEY repository secret.' >&2
+            exit 1
+          }
+          umask 077
+          key_file="$(mktemp)"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s\n' "$HOSTPANEL_RELEASE_PRIVATE_KEY" > "$key_file"
+          openssl pkey -in "$key_file" -noout
+          archive="$(find dist -maxdepth 1 -type f -name 'hostpanel-v*-update.tar.gz' -print -quit)"
+          [[ -n "$archive" ]]
+          openssl pkeyutl -sign -inkey "$key_file" -rawin \
+            -in "$archive" -out "$archive.sig"
+          openssl pkeyutl -sign -inkey "$key_file" -rawin \
+            -in dist/hostpanel-update-manifest.json \
+            -out dist/hostpanel-update-manifest.json.sig
+          openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+            -in "$archive" -sigfile "$archive.sig"
+          openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+            -in dist/hostpanel-update-manifest.json \
+            -sigfile dist/hostpanel-update-manifest.json.sig
+
+      - name: Publish GitHub release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+            --method POST \
+            -f "ref=refs/tags/$TAG" \
+            -f "sha=$GITHUB_SHA" >/dev/null
+          archive="$(find dist -maxdepth 1 -type f -name 'hostpanel-v*-update.tar.gz' -print -quit)"
+          gh release create "$TAG" \
+            "$archive" \
+            "$archive.sig" \
+            dist/hostpanel-update-manifest.json \
+            dist/hostpanel-update-manifest.json.sig \
+            dist/release-build.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "HostPanel $VERSION" \
+            --generate-notes \
+            --verify-tag
