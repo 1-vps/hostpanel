@@ -179,6 +179,41 @@ class SourceReleaseBuilderTests(unittest.TestCase):
                     mismatched, identity, policy, timestamp
                 )
 
+    def test_post_processing_uses_the_git_checkout_for_reviewed_localization(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = pathlib.Path(temporary_name)
+            source = root / "source"
+            repository = root / "repository"
+            source.mkdir()
+            repository.mkdir()
+            commands: list[list[str]] = []
+            original_run = self.builder.run
+
+            def record(arguments, **_kwargs):
+                commands.append(list(arguments))
+                return type("Completed", (), {"stdout": ""})()
+
+            self.builder.run = record
+            try:
+                self.builder.run_post_processing(
+                    source,
+                    repository,
+                    self.builder.ReleaseIdentity("3.4.1", "3.4.1-hardened-r1"),
+                )
+            finally:
+                self.builder.run = original_run
+
+            localization_command = commands[1]
+            self.assertEqual(
+                pathlib.Path(localization_command[1]),
+                repository / "localization-overlay" / "apply_localization_overlay_reviewed.py",
+            )
+            self.assertEqual(pathlib.Path(localization_command[2]), source)
+            self.assertEqual(
+                pathlib.Path(localization_command[3]),
+                repository / "localization-overlay",
+            )
+
     def test_source_compiles(self) -> None:
         compile(MODULE_PATH.read_text(encoding="utf-8"), str(MODULE_PATH), "exec")
 
