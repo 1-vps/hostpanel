@@ -34,7 +34,8 @@ jobs:
       github.event.issue.number == 14 ||
       github.event.issue.number == 115 ||
       github.event.issue.number == 116 ||
-      github.event.issue.number == 118
+      github.event.issue.number == 118 ||
+      github.event.issue.number == 119
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
@@ -59,7 +60,7 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == issues ]]; then
             issue_number="$(jq -r '.issue.number // empty' "$GITHUB_EVENT_PATH")"
             case "$issue_number" in
-              7|14|115|116|118) ;;
+              7|14|115|116|118|119) ;;
               *)
                 echo "Ignoring unrelated closed issue #${issue_number:-unknown}." >&2
                 exit 1
@@ -145,7 +146,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for issue in 7 14 115 116 118; do
+          for issue in 7 14 115 116 118 119; do
             state="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" --jq .state)"
             [[ "$state" == closed ]] || {
               echo "Release gate issue #$issue is still $state." >&2
@@ -222,7 +223,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for issue in 7 14 115 116 118; do
+          for issue in 7 14 115 116 118 119; do
             state="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" --jq .state)"
             [[ "$state" == closed ]] || {
               echo "Release gate issue #$issue was reopened or remains $state." >&2
