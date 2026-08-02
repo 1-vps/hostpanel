@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
+import stat
 import sys
 import tempfile
 import types
@@ -145,6 +147,79 @@ class SourceReleaseEntrypointTests(unittest.TestCase):
             self.assertFalse(any(path.endswith((".pyc", ".pyo")) for path in observed[0]))
             self.assertFalse(cache.exists())
             self.assertFalse(orphan.exists())
+
+    def test_private_umask_modes_are_normalized_before_attestation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = pathlib.Path(temporary_name)
+            source = root / "source"
+            directory = source / "generated"
+            directory.mkdir(parents=True)
+            regular = directory / "payload.json"
+            executable = source / "install.sh"
+            previous_umask = os.umask(0o077)
+            try:
+                regular.write_text("{}\n", encoding="utf-8")
+                executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                executable.chmod(0o700)
+            finally:
+                os.umask(previous_umask)
+
+            observed_modes: list[dict[str, int]] = []
+            calls: list[tuple] = []
+
+            def generate(source_root, **kwargs):
+                observed_modes.append(
+                    {
+                        path.relative_to(source_root).as_posix(): stat.S_IMODE(path.lstat().st_mode)
+                        for path in source_root.rglob("*")
+                    }
+                )
+                calls.append(("generate", pathlib.Path(source_root), kwargs))
+
+            attestations = types.SimpleNamespace(
+                generate_attestations=generate,
+                verify_archive_attestations=lambda *_args, **_kwargs: None,
+                copy_attestations=lambda *_args, **_kwargs: None,
+            )
+            builder = types.SimpleNamespace(
+                run_git=lambda *_args: "",
+                run=lambda *_args, **_kwargs: types.SimpleNamespace(stdout=""),
+                extract_tar_safely=lambda *_args, **_kwargs: (),
+                write_deterministic_archive=lambda *_args: None,
+            )
+            identity = types.SimpleNamespace(
+                source_version="3.4.1",
+                release_id="3.4.1-hardened-r1",
+                archive_root="hostpanel-v3.4.1-hardened-r1",
+            )
+            self.entrypoint.install_phase_isolation(builder, attestations)
+            builder.write_deterministic_archive(
+                source,
+                root / "candidate.tar.gz",
+                identity,
+                123,
+            )
+
+            self.assertEqual(len(observed_modes), 1)
+            self.assertEqual(observed_modes[0]["generated"], 0o755)
+            self.assertEqual(observed_modes[0]["generated/payload.json"], 0o644)
+            self.assertEqual(observed_modes[0]["install.sh"], 0o755)
+
+    def test_mode_normalization_rejects_links_and_hardlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            source = pathlib.Path(temporary_name) / "source"
+            source.mkdir()
+            target = source / "target"
+            target.write_text("payload\n", encoding="utf-8")
+            symbolic = source / "symbolic"
+            symbolic.symlink_to(target.name)
+            with self.assertRaisesRegex(RuntimeError, "symbolic link"):
+                self.entrypoint.normalize_source_modes(source)
+            symbolic.unlink()
+            hardlink = source / "hardlink"
+            os.link(target, hardlink)
+            with self.assertRaisesRegex(RuntimeError, "multiple hard links"):
+                self.entrypoint.normalize_source_modes(source)
 
     def test_attestations_wrap_the_archive_in_order(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
