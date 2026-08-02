@@ -5,16 +5,20 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/publish-release.yml'
+      - SOURCE_VERSION
+      - RELEASE_VERSION
+      - SHA256SUMS
       - 'hostpanel-v*-source.tar.gz'
       - 'hostpanel-v*-source.tar.gz.sig'
-      - SHA256SUMS
       - app/**
       - bootstrap-install.sh
       - install.sh
       - install.base.sh
       - localization-overlay/**
       - packaging/**
+      - releases/source-release-policy.json
       - releases/update.pub
+      - tests/**
       - tools/**
   issues:
     types: [closed]
@@ -40,12 +44,14 @@ jobs:
       github.event.issue.number == 120 ||
       github.event.issue.number == 121
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     outputs:
       version: ${{ steps.version.outputs.version }}
+      release_id: ${{ steps.version.outputs.release_id }}
       tag: ${{ steps.version.outputs.tag }}
       publish: ${{ steps.version.outputs.publish }}
       create_tag: ${{ steps.version.outputs.create_tag }}
+      bundle_summary_sha256: ${{ steps.bundle.outputs.bundle_summary_sha256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -59,7 +65,9 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          git diff --exit-code -- .
           if [[ "$GITHUB_EVENT_NAME" == issues ]]; then
             issue_number="$(jq -r '.issue.number // empty' "$GITHUB_EVENT_PATH")"
             case "$issue_number" in
@@ -76,7 +84,7 @@ jobs:
             exit 1
           }
 
-      - name: Resolve release version and publication state
+      - name: Resolve release identity and publication state
         id: version
         shell: bash
         env:
@@ -84,49 +92,84 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(python3 tools/build-update-release.py --repository-root . --print-version)"
+          RELEASE_ID="$(python3 - <<'PY'
+          import pathlib
+          import re
+          import stat
+
+          path = pathlib.Path('RELEASE_VERSION')
+          metadata = path.lstat()
+          if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+              raise SystemExit('RELEASE_VERSION must be a single-linked regular file')
+          raw = path.read_text(encoding='utf-8', errors='strict')
+          lines = raw.splitlines()
+          if len(lines) != 1 or raw not in {lines[0], lines[0] + '\n'}:
+              raise SystemExit('RELEASE_VERSION must contain exactly one canonical line')
+          value = lines[0]
+          pattern = re.compile(
+              r'^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+              r'(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?'
+              r'(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$'
+          )
+          if pattern.fullmatch(value) is None:
+              raise SystemExit('RELEASE_VERSION is not semantic')
+          print(value)
+          PY
+          )"
           [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){2}([+-][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]
+          [[ "$RELEASE_ID" =~ ^[0-9]+(\.[0-9]+){2}([+-][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]
+          [[ "${VERSION%%[-+]*}" == "${RELEASE_ID%%[-+]*}" ]]
           TAG="v$VERSION"
-          printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
-          printf 'tag=%s\n' "$TAG" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\nrelease_id=%s\ntag=%s\n' \
+            "$VERSION" "$RELEASE_ID" "$TAG" >> "$GITHUB_OUTPUT"
 
           verify_existing_release() {
-            local release_json release_dir archive manifest metadata release_flags
-            local tag_type tag_sha name size maximum
-            local -a expected_names asset_names
+            local release_json release_dir payload name size maximum
+            local tag_type tag_sha release_flags
+            local -a payloads expected_names asset_names
+
+            payloads=(
+              "hostpanel-v${VERSION}-update.tar.gz"
+              hostpanel-update-manifest.json
+              release-build.json
+              "hostpanel-v${RELEASE_ID}-source.tar.gz"
+              source-build.json
+              sbom.cdx.json
+              dependency-lock-attestation.json
+              source-file-manifest.json
+              SOURCE-CANDIDATE-SHA256SUMS
+            )
+            expected_names=()
+            for payload in "${payloads[@]}"; do
+              expected_names+=("$payload" "$payload.sig")
+            done
+            mapfile -t expected_names < <(printf '%s\n' "${expected_names[@]}" | sort)
 
             release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")"
             release_flags="$(jq -r '[.draft,.prerelease]|@tsv' <<<"$release_json")"
             [[ "$release_flags" == $'false\tfalse' ]] || {
-              echo "Existing release $TAG is draft or prerelease, but the stable channel requires a final release." >&2
+              echo "Existing release $TAG is draft or prerelease, but stable requires a final release." >&2
               return 1
             }
             tag_type="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.type)"
             tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)"
             [[ "$tag_type" == commit && "$tag_sha" == "$GITHUB_SHA" ]] || {
-              echo "Existing release tag $TAG does not point to the tested commit $GITHUB_SHA." >&2
+              echo "Existing release tag $TAG does not point to tested commit $GITHUB_SHA." >&2
               return 1
             }
 
-            expected_names=(
-              "hostpanel-v${VERSION}-update.tar.gz"
-              "hostpanel-v${VERSION}-update.tar.gz.sig"
-              hostpanel-update-manifest.json
-              hostpanel-update-manifest.json.sig
-              release-build.json
-              release-build.json.sig
-            )
-            mapfile -t expected_names < <(printf '%s\n' "${expected_names[@]}" | sort)
             mapfile -t asset_names < <(jq -r '.assets[].name' <<<"$release_json" | sort)
             [[ "$(printf '%s\n' "${asset_names[@]}")" == "$(printf '%s\n' "${expected_names[@]}")" ]] || {
               echo "Existing release $TAG does not contain exactly the reviewed asset set." >&2
               return 1
             }
-
             for name in "${expected_names[@]}"; do
               case "$name" in
+                hostpanel-v*-source.tar.gz) maximum=$((2 * 1024 * 1024 * 1024)) ;;
                 hostpanel-v*-update.tar.gz) maximum=$((100 * 1024 * 1024)) ;;
+                SOURCE-CANDIDATE-SHA256SUMS) maximum=$((1024 * 1024)) ;;
                 *.sig) maximum=$((64 * 1024)) ;;
-                *.json) maximum=$((1024 * 1024)) ;;
+                *.json) maximum=$((32 * 1024 * 1024)) ;;
                 *)
                   echo "Unexpected release asset in size policy: $name" >&2
                   return 1
@@ -145,39 +188,28 @@ jobs:
 
             release_dir="$(mktemp -d)"
             trap 'rm -rf "$release_dir"' RETURN
-            gh release download "$TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --dir "$release_dir" \
-              --pattern "hostpanel-v${VERSION}-update.tar.gz" \
-              --pattern "hostpanel-v${VERSION}-update.tar.gz.sig" \
-              --pattern hostpanel-update-manifest.json \
-              --pattern hostpanel-update-manifest.json.sig \
-              --pattern release-build.json \
-              --pattern release-build.json.sig
-            archive="$release_dir/hostpanel-v${VERSION}-update.tar.gz"
-            manifest="$release_dir/hostpanel-update-manifest.json"
-            metadata="$release_dir/release-build.json"
-            for required in \
-              "$archive" "$archive.sig" \
-              "$manifest" "$manifest.sig" \
-              "$metadata" "$metadata.sig"; do
-              [[ -s "$required" ]] || {
-                echo "Existing release $TAG is missing required asset ${required##*/}." >&2
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$release_dir"
+            for payload in "${payloads[@]}"; do
+              [[ -s "$release_dir/$payload" && -s "$release_dir/$payload.sig" ]] || {
+                echo "Existing release $TAG is missing $payload or its signature." >&2
                 return 1
               }
+              openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+                -in "$release_dir/$payload" -sigfile "$release_dir/$payload.sig" >/dev/null
             done
-            openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
-              -in "$archive" -sigfile "$archive.sig" >/dev/null
-            openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
-              -in "$manifest" -sigfile "$manifest.sig" >/dev/null
-            openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
-              -in "$metadata" -sigfile "$metadata.sig" >/dev/null
             python3 tools/verify-existing-release.py \
-              --manifest "$manifest" \
-              --archive "$archive" \
-              --metadata "$metadata" \
+              --manifest "$release_dir/hostpanel-update-manifest.json" \
+              --archive "$release_dir/hostpanel-v${VERSION}-update.tar.gz" \
+              --metadata "$release_dir/release-build.json" \
               --commit "$GITHUB_SHA" \
-              --version "$VERSION"
+              --version "$VERSION" \
+              --release-id "$RELEASE_ID"
+            python3 tools/verify-source-release-bundle.py \
+              --directory "$release_dir" \
+              --repository-root . \
+              --commit "$GITHUB_SHA" \
+              --source-version "$VERSION" \
+              --release-id "$RELEASE_ID"
             rm -rf "$release_dir"
             trap - RETURN
           }
@@ -207,36 +239,61 @@ jobs:
             }
           done
 
-      - name: Run release regressions
+      - name: Reproduce complete release bundle twice
+        id: bundle
         if: steps.version.outputs.publish == 'true'
         run: |
           set -euo pipefail
-          mapfile -t source_archives < <(
-            awk '$2 ~ /^hostpanel-v.*-source\.tar\.gz$/ {print $2}' SHA256SUMS
-          )
-          [[ "${#source_archives[@]}" -eq 1 ]]
-          source_archive="${source_archives[0]}"
-          awk -v target="$source_archive" '$2 == target {print}' SHA256SUMS | sha256sum -c -
-          openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
-            -in "$source_archive" -sigfile "$source_archive.sig"
           python3 -m unittest discover -s tests -p 'test_*.py' -v
-          bash -n install.sh bootstrap-install.sh tools/install-update-agent.sh
+          bash -n \
+            install.sh \
+            bootstrap-install.sh \
+            tools/bootstrap-source-candidate.sh \
+            tools/run-qemu-source-candidate.sh \
+            tools/install-update-agent.sh
           python3 -m py_compile \
+            tools/build-release-bundle.py \
+            tools/build-source-release.py \
+            tools/run-source-release-builder.py \
+            tools/generate-source-attestations.py \
+            tools/verify-source-release-bundle.py \
             tools/build-update-release.py \
             tools/hostpanel-update.py \
             tools/verify-existing-release.py
-          mkdir -p dist
-          python3 tools/build-update-release.py \
+          python3 tools/build-release-bundle.py \
             --repository-root . \
             --commit "$GITHUB_SHA" \
             --channel stable \
-            --output-dir dist
+            --output-dir dist-a \
+            --summary bundle-a.json
+          python3 tools/build-release-bundle.py \
+            --repository-root . \
+            --commit "$GITHUB_SHA" \
+            --channel stable \
+            --output-dir dist-b \
+            --summary bundle-b.json
+          cmp -- bundle-a.json bundle-b.json
+          mapfile -t payloads < <(jq -r '.payloads | keys[]' bundle-a.json)
+          [[ "${#payloads[@]}" -eq 9 ]]
+          for payload in "${payloads[@]}"; do
+            cmp -- "dist-a/$payload" "dist-b/$payload"
+          done
+          jq -e \
+            --arg commit "$GITHUB_SHA" \
+            --arg version "${{ steps.version.outputs.version }}" \
+            --arg release_id "${{ steps.version.outputs.release_id }}" \
+            '.schema == 1 and .product == "hostpanel" and .channel == "stable" and
+             .commit == $commit and .version == $version and .release_id == $release_id and
+             .tag == ("v" + $version) and (.payloads | length) == 9' \
+            bundle-a.json >/dev/null
+          summary_sha256="$(sha256sum bundle-a.json | awk '{print $1}')"
+          printf 'bundle_summary_sha256=%s\n' "$summary_sha256" >> "$GITHUB_OUTPUT"
 
   publish:
     needs: verify
     if: needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     environment: hostpanel-release
     permissions:
       contents: write
@@ -255,21 +312,16 @@ jobs:
           set -euo pipefail
           [[ "$GITHUB_REF" == refs/heads/main ]]
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          git diff --exit-code -- .
           current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
           [[ "$current_main" == "$GITHUB_SHA" ]] || {
             echo "Refusing to publish stale commit $GITHUB_SHA; current main is $current_main." >&2
             exit 1
           }
           VERSION="$(python3 tools/build-update-release.py --repository-root . --print-version)"
+          RELEASE_ID="$(tr -d '\n' < RELEASE_VERSION)"
           [[ "$VERSION" == "${{ needs.verify.outputs.version }}" ]]
-          mapfile -t source_archives < <(
-            awk '$2 ~ /^hostpanel-v.*-source\.tar\.gz$/ {print $2}' SHA256SUMS
-          )
-          [[ "${#source_archives[@]}" -eq 1 ]]
-          source_archive="${source_archives[0]}"
-          awk -v target="$source_archive" '$2 == target {print}' SHA256SUMS | sha256sum -c -
-          openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
-            -in "$source_archive" -sigfile "$source_archive.sig"
+          [[ "$RELEASE_ID" == "${{ needs.verify.outputs.release_id }}" ]]
 
       - name: Recheck release gates
         env:
@@ -284,17 +336,22 @@ jobs:
             }
           done
 
-      - name: Build deterministic release assets
+      - name: Reproduce protected release bundle
         run: |
           set -euo pipefail
-          mkdir -p dist
-          python3 tools/build-update-release.py \
+          python3 tools/build-release-bundle.py \
             --repository-root . \
             --commit "$GITHUB_SHA" \
             --channel stable \
-            --output-dir dist
+            --output-dir dist \
+            --summary "$RUNNER_TEMP/release-bundle-summary.json"
+          summary_sha256="$(sha256sum "$RUNNER_TEMP/release-bundle-summary.json" | awk '{print $1}')"
+          [[ "$summary_sha256" == "${{ needs.verify.outputs.bundle_summary_sha256 }}" ]] || {
+            echo "Protected release bundle does not reproduce the verified bundle summary." >&2
+            exit 1
+          }
 
-      - name: Sign release assets
+      - name: Sign and independently verify every release payload
         env:
           HOSTPANEL_RELEASE_PRIVATE_KEY: ${{ secrets.HOSTPANEL_RELEASE_PRIVATE_KEY }}
         run: |
@@ -304,28 +361,57 @@ jobs:
             exit 1
           }
           umask 077
-          key_file="$(mktemp)"
-          trap 'rm -f "$key_file"' EXIT
+          key_file="$(mktemp "$RUNNER_TEMP/hostpanel-release-key.XXXXXX")"
+          derived_public="$(mktemp "$RUNNER_TEMP/hostpanel-derived-public.XXXXXX")"
+          anchored_public="$(mktemp "$RUNNER_TEMP/hostpanel-anchored-public.XXXXXX")"
+          cleanup_key_material() {
+            rm -f -- "$key_file" "$derived_public" "$anchored_public"
+          }
+          trap cleanup_key_material EXIT HUP INT TERM
           printf '%s\n' "$HOSTPANEL_RELEASE_PRIVATE_KEY" > "$key_file"
+          unset HOSTPANEL_RELEASE_PRIVATE_KEY
           openssl pkey -in "$key_file" -noout
-          archive="$(find dist -maxdepth 1 -type f -name 'hostpanel-v*-update.tar.gz' -print -quit)"
-          [[ -n "$archive" ]]
-          openssl pkeyutl -sign -inkey "$key_file" -rawin \
-            -in "$archive" -out "$archive.sig"
-          openssl pkeyutl -sign -inkey "$key_file" -rawin \
-            -in dist/hostpanel-update-manifest.json \
-            -out dist/hostpanel-update-manifest.json.sig
-          openssl pkeyutl -sign -inkey "$key_file" -rawin \
-            -in dist/release-build.json \
-            -out dist/release-build.json.sig
-          openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
-            -in "$archive" -sigfile "$archive.sig"
-          openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
-            -in dist/hostpanel-update-manifest.json \
-            -sigfile dist/hostpanel-update-manifest.json.sig
-          openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
-            -in dist/release-build.json \
-            -sigfile dist/release-build.json.sig
+          openssl pkey -in "$key_file" -pubout -outform DER -out "$derived_public"
+          openssl pkey -pubin -in releases/update.pub -outform DER -out "$anchored_public"
+          cmp -- "$derived_public" "$anchored_public" || {
+            echo 'Protected signing key does not match releases/update.pub.' >&2
+            exit 1
+          }
+
+          mapfile -t payloads < <(
+            jq -r '.payloads | keys[]' "$RUNNER_TEMP/release-bundle-summary.json"
+          )
+          [[ "${#payloads[@]}" -eq 9 ]]
+          for payload in "${payloads[@]}"; do
+            expected_digest="$(
+              jq -r --arg payload "$payload" '.payloads[$payload]' \
+                "$RUNNER_TEMP/release-bundle-summary.json"
+            )"
+            actual_digest="$(sha256sum "dist/$payload" | awk '{print $1}')"
+            [[ "$actual_digest" == "$expected_digest" ]] || {
+              echo "Payload digest changed before signing: $payload" >&2
+              exit 1
+            }
+            openssl pkeyutl -sign -inkey "$key_file" -rawin \
+              -in "dist/$payload" -out "dist/$payload.sig"
+            [[ -s "dist/$payload.sig" && ! -L "dist/$payload.sig" ]]
+            [[ "$(stat -c %s "dist/$payload.sig")" -le $((64 * 1024)) ]]
+            openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+              -in "dist/$payload" -sigfile "dist/$payload.sig" >/dev/null
+          done
+          cleanup_key_material
+          trap - EXIT HUP INT TERM
+
+          expected_assets=()
+          for payload in "${payloads[@]}"; do
+            expected_assets+=("$payload" "$payload.sig")
+          done
+          mapfile -t expected_assets < <(printf '%s\n' "${expected_assets[@]}" | sort)
+          mapfile -t actual_assets < <(
+            find dist -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort
+          )
+          [[ "${#actual_assets[@]}" -eq 18 ]]
+          [[ "$(printf '%s\n' "${actual_assets[@]}")" == "$(printf '%s\n' "${expected_assets[@]}")" ]]
 
       - name: Publish GitHub release
         env:
@@ -348,16 +434,56 @@ jobs:
               exit 1
             }
           fi
-          archive="$(find dist -maxdepth 1 -type f -name 'hostpanel-v*-update.tar.gz' -print -quit)"
+          mapfile -t assets < <(
+            find dist -mindepth 1 -maxdepth 1 -type f -printf '%p\n' | sort
+          )
+          [[ "${#assets[@]}" -eq 18 ]]
           gh release create "$TAG" \
-            "$archive" \
-            "$archive.sig" \
-            dist/hostpanel-update-manifest.json \
-            dist/hostpanel-update-manifest.json.sig \
-            dist/release-build.json \
-            dist/release-build.json.sig \
+            "${assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "HostPanel $VERSION" \
             --generate-notes \
             --verify-tag
+
+      - name: Verify published GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          RELEASE_ID: ${{ needs.verify.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          release_dir="$(mktemp -d "$RUNNER_TEMP/hostpanel-published-release.XXXXXX")"
+          trap 'rm -rf "$release_dir"' EXIT
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$release_dir"
+          mapfile -t local_assets < <(
+            find dist -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort
+          )
+          mapfile -t downloaded_assets < <(
+            find "$release_dir" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort
+          )
+          [[ "$(printf '%s\n' "${downloaded_assets[@]}")" == "$(printf '%s\n' "${local_assets[@]}")" ]]
+          for asset in "${local_assets[@]}"; do
+            cmp -- "dist/$asset" "$release_dir/$asset"
+          done
+          mapfile -t payloads < <(
+            jq -r '.payloads | keys[]' "$RUNNER_TEMP/release-bundle-summary.json"
+          )
+          for payload in "${payloads[@]}"; do
+            openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+              -in "$release_dir/$payload" -sigfile "$release_dir/$payload.sig" >/dev/null
+          done
+          python3 tools/verify-existing-release.py \
+            --manifest "$release_dir/hostpanel-update-manifest.json" \
+            --archive "$release_dir/hostpanel-v${VERSION}-update.tar.gz" \
+            --metadata "$release_dir/release-build.json" \
+            --commit "$GITHUB_SHA" \
+            --version "$VERSION" \
+            --release-id "$RELEASE_ID"
+          python3 tools/verify-source-release-bundle.py \
+            --directory "$release_dir" \
+            --repository-root . \
+            --commit "$GITHUB_SHA" \
+            --source-version "$VERSION" \
+            --release-id "$RELEASE_ID"
