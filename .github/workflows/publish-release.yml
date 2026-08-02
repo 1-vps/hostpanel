@@ -126,6 +126,19 @@ jobs:
           openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
             -in "$source_archive" -sigfile "$source_archive.sig"
 
+      - name: Recheck external release gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for issue in 7 14; do
+            state="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" --jq .state)"
+            [[ "$state" == closed ]] || {
+              echo "Release gate issue #$issue was reopened or remains $state." >&2
+              exit 1
+            }
+          done
+
       - name: Build deterministic release assets
         run: |
           set -euo pipefail
