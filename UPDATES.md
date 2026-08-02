@@ -1,29 +1,53 @@
 # Signed GitHub releases and automatic updates
 
-HostPanel can publish a signed GitHub Release whenever a new signed source
-version is merged to `main`. Installed servers poll the repository every five
+HostPanel publishes a signed GitHub Release when a new signed source version is
+merged to `main`. Installed servers poll the private repository every five
 minutes and apply a newer signed stable release.
 
 ## Release publication
 
-The workflow `.github/workflows/publish-release.yml` runs when the signed source
-archive, its signature, or `SHA256SUMS` changes on `main`. If the tag
-`v<VERSION>` does not exist, it:
+The workflow `.github/workflows/publish-release.yml` runs only after the signed
+source archive, its signature, or `SHA256SUMS` changes on `main`. It has no
+manual branch-selectable dispatch.
 
-1. verifies the existing signed source archive;
-2. runs the full regression suite;
-3. builds a deterministic `hostpanel-v<VERSION>-update.tar.gz`;
-4. signs the archive and canonical manifest;
-5. creates the version tag at the tested commit;
-6. publishes all assets in a GitHub Release.
+Publication is split into two security boundaries:
 
-Configure the repository Actions secret `HOSTPANEL_RELEASE_PRIVATE_KEY` with
-the PEM Ed25519 private key matching `releases/update.pub`. The private key must
-never be committed to the repository.
+1. the `verify` job has read-only repository access, verifies the signed source,
+   checks release gates, runs the full regression suite, and builds a test
+   update archive;
+2. the `publish` job runs only after verification, enters the protected
+   `hostpanel-release` environment, rebuilds from the same exact commit, signs
+   the archive and canonical manifest, and receives write access only while it
+   creates the tag and GitHub Release.
+
+The workflow also handles a partial previous failure. If the tag exists but the
+Release does not, publication resumes only when the existing lightweight tag
+points to the exact tested commit. An existing tag that points elsewhere is a
+hard failure.
+
+Before any new release is signed, GitHub issues #7 and #14 must both be closed.
+This makes provider-backed acceptance and native-language approval technical
+release gates rather than documentation-only reminders.
+
+### Required GitHub environment
+
+Create an environment named `hostpanel-release` and configure all of the
+following outside repository code:
+
+- allow deployments from protected `main` only;
+- require independent reviewer approval;
+- prevent self-review where supported;
+- store `HOSTPANEL_RELEASE_PRIVATE_KEY` as an **environment secret**, not a
+  repository-wide secret;
+- remove any older repository-level copy of that secret.
+
+`HOSTPANEL_RELEASE_PRIVATE_KEY` must contain the PEM Ed25519 private key matching
+`releases/update.pub`. The private key must never be committed to the repository
+or copied to an installed server.
 
 To publish a version, add the newly signed source archive and signature, replace
-`SHA256SUMS`, update release notes, and merge to `main`. Reusing an existing
-version does not create a second release.
+`SHA256SUMS`, update release notes, and merge through the protected `main`
+branch. Reusing an existing version never creates a second release.
 
 ## Server configuration
 
@@ -40,18 +64,22 @@ HP_AUTO_UPDATE=yes
 ```
 
 For a private GitHub repository, create a fine-grained token with read-only
-**Contents** access to this repository and store it root-only:
+**Contents** access to this repository and store it in a root-owned mode-0600
+file:
 
 ```bash
 sudo install -o root -g root -m 600 /dev/null /etc/hostpanel/github-update.token
 read -rsp 'GitHub update token: ' TOKEN; echo
 printf '%s\n' "$TOKEN" | sudo tee /etc/hostpanel/github-update.token >/dev/null
 unset TOKEN
+sudo chown root:root /etc/hostpanel/github-update.token
+sudo chmod 600 /etc/hostpanel/github-update.token
 sudo systemctl start hostpanel-update.service
 ```
 
 A public repository does not require the token file; set
-`HP_UPDATE_REQUIRE_TOKEN=no`.
+`HP_UPDATE_REQUIRE_TOKEN=no` only when the Release assets are intentionally
+public.
 
 ## Manual operation
 
@@ -65,7 +93,7 @@ journalctl -u hostpanel-update.service
 
 The updater verifies, in order:
 
-- GitHub release metadata and channel;
+- GitHub release metadata and stable channel;
 - the manifest signature against `/etc/hostpanel/update.pub`;
 - manifest schema, semantic version, tag and commit;
 - archive size and SHA-256;
@@ -80,7 +108,10 @@ the previous installation if an update fails.
 
 ## Release safety gate
 
-Do not publish a new signed source version until all release blockers are closed,
-including provider-backed acceptance and required native-language sign-off.
-The workflow automates packaging and publication; it does not replace those
-human release approvals.
+Do not close issue #7 until provider-backed installation, reboot, external
+web/DNS/mail, backup/restore and controlled rollback evidence is attached.
+Do not close issue #14 until named native reviewers have approved all three
+locale catalogs and rendered states.
+
+The workflow automates packaging, verification and publication. It intentionally
+cannot replace these external approvals.
