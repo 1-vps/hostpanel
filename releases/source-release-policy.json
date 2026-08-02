@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "overlay_paths": [
+    "CONFIGURATION.md",
+    "LOCALIZATION-OVERLAY.md",
+    "PRODUCTION_READINESS.md",
+    "README.md",
+    "RELEASE-NOTES-v3.4.1-hardened-r1.md",
+    "RELEASE-PROCESS.md",
+    "RELEASE_VERSION",
+    "SECURITY.md",
+    "SETUP.md",
+    "SOURCE_VERSION",
+    "app",
+    "bootstrap-install.sh",
+    "install.base.sh",
+    "install.sh",
+    "localization-overlay",
+    "packaging",
+    "releases/update.pub",
+    "tests",
+    "tools"
+  ],
+  "required_paths": [
+    "VERSION",
+    "app",
+    "app/templates/panel.html",
+    "bootstrap-install.sh",
+    "install.base.sh",
+    "install.sh",
+    "requirements.lock",
+    "tools/harden_install.py",
+    "tools/harden_install_runtime.py",
+    "tools/hostpanel-update.py",
+    "tools/install-update-agent.sh",
+    "tools/secure-validation-io.py",
+    "tools/validate-production-vm.sh"
+  ]
+}
