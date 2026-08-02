@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   group: publish-hostpanel-release
@@ -179,6 +180,7 @@ jobs:
     environment: hostpanel-release
     permissions:
       contents: write
+      issues: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
