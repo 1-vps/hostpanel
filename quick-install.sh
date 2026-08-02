@@ -171,14 +171,57 @@ read_token(){
       || die "Could not read the GitHub token descriptor"
     eval "exec ${TOKEN_FD}<&-"
   elif [[ -n "$TOKEN_FILE" ]]; then
-    [[ -f "$TOKEN_FILE" && ! -L "$TOKEN_FILE" ]] \
-      || die "HP_GITHUB_TOKEN_FILE must be a regular non-symlink file"
-    metadata="$(stat -Lc '%a %u %h' -- "$TOKEN_FILE")" \
-      || die "Could not inspect HP_GITHUB_TOKEN_FILE"
-    read -r mode owner links <<<"$metadata"
-    [[ "$mode" == 600 && "$owner" == 0 && "$links" == 1 ]] \
-      || die "HP_GITHUB_TOKEN_FILE must be root-owned, single-linked and mode 0600"
-    TOKEN="$(cat -- "$TOKEN_FILE")"
+    TOKEN="$(python3 - "$TOKEN_FILE" <<'PYTOKEN'
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+flags = os.O_RDONLY | os.O_CLOEXEC
+if hasattr(os, "O_NOFOLLOW"):
+    flags |= os.O_NOFOLLOW
+try:
+    descriptor = os.open(path, flags)
+except OSError as exc:
+    raise SystemExit(f"Could not safely open HP_GITHUB_TOKEN_FILE: {exc}")
+try:
+    before = os.fstat(descriptor)
+    if not stat.S_ISREG(before.st_mode):
+        raise SystemExit("HP_GITHUB_TOKEN_FILE must be a regular file")
+    if before.st_uid != 0 or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1:
+        raise SystemExit(
+            "HP_GITHUB_TOKEN_FILE must be root-owned, single-linked and mode 0600"
+        )
+    if before.st_size < 20 or before.st_size > 512:
+        raise SystemExit("HP_GITHUB_TOKEN_FILE has an unsafe size")
+    data = bytearray()
+    while len(data) <= 512:
+        chunk = os.read(descriptor, 513 - len(data))
+        if not chunk:
+            break
+        data.extend(chunk)
+    after = os.fstat(descriptor)
+    path_state = os.lstat(path)
+    if (
+        (before.st_dev, before.st_ino, before.st_size)
+        != (after.st_dev, after.st_ino, after.st_size)
+        or (after.st_dev, after.st_ino) != (path_state.st_dev, path_state.st_ino)
+    ):
+        raise SystemExit("HP_GITHUB_TOKEN_FILE changed while it was being read")
+    if len(data) != before.st_size:
+        raise SystemExit("HP_GITHUB_TOKEN_FILE could not be read completely")
+    try:
+        token = bytes(data).decode("ascii", errors="strict")
+    except UnicodeError as exc:
+        raise SystemExit("HP_GITHUB_TOKEN_FILE is not ASCII") from exc
+    if "\n" in token or "\r" in token:
+        raise SystemExit("HP_GITHUB_TOKEN_FILE must not contain a newline")
+    print(token, end="")
+finally:
+    os.close(descriptor)
+PYTOKEN
+    )" || die "Could not read HP_GITHUB_TOKEN_FILE safely"
   else
     [[ -r /dev/tty ]] || die "No terminal is available for the hidden GitHub token prompt"
     read -r -s -p 'GitHub Contents:Read token: ' TOKEN </dev/tty
@@ -222,6 +265,25 @@ prompt_inputs(){
   done
 }
 
+show_plan_and_confirm(){
+  printf '\nHostPanel installation plan\n'
+  printf '  release commit: %s\n' "$REVIEWED_COMMIT_SHA"
+  printf '  panel hostname: %s\n' "$PANEL_HOST"
+  printf '  admin CIDR:     %s\n' "$ADMIN_CIDR"
+  printf '  MTA:            %s\n' "$MTA"
+  printf '  mode:           %s\n' "$([[ "$REINSTALL" == yes ]] && printf reinstall || printf install)"
+  if ((${#ROLES[@]})); then
+    printf '  roles:          %s\n' "${ROLES[*]}"
+  else
+    printf '  roles:          all\n'
+  fi
+
+  if [[ "$ASSUME_YES" == no && "$CHECK_ONLY" == no ]]; then
+    read -r -p "Run preflight and install HostPanel? [y/N] " reply </dev/tty
+    [[ "$reply" =~ ^[Yy]$ ]] || die "Installation cancelled"
+  fi
+}
+
 download_reviewed_file(){
   local repository_path="$1" destination="$2"
   curl --proto '=https' --tlsv1.2 \
@@ -234,6 +296,7 @@ download_reviewed_file(){
 
 ensure_prerequisites
 prompt_inputs
+show_plan_and_confirm
 read_token
 
 WORK_DIR="$(mktemp -d /tmp/hostpanel-quick-install.XXXXXX)" \
@@ -281,28 +344,11 @@ common_env=(
   HP_RSPAMD_REPO=off
 )
 
-printf '\nHostPanel installation plan\n'
-printf '  release commit: %s\n' "$REVIEWED_COMMIT_SHA"
-printf '  panel hostname: %s\n' "$PANEL_HOST"
-printf '  admin CIDR:     %s\n' "$ADMIN_CIDR"
-printf '  MTA:            %s\n' "$MTA"
-printf '  mode:           %s\n' "$([[ "$REINSTALL" == yes ]] && printf reinstall || printf install)"
-if ((${#ROLES[@]})); then
-  printf '  roles:          %s\n' "${ROLES[*]}"
-else
-  printf '  roles:          all\n'
-fi
-
-if [[ "$ASSUME_YES" == no && "$CHECK_ONLY" == no ]]; then
-  read -r -p "Run preflight and install HostPanel? [y/N] " reply </dev/tty
-  [[ "$reply" =~ ^[Yy]$ ]] || die "Installation cancelled"
-fi
-
 say "Running HostPanel preflight"
 env "${common_env[@]}" bash /root/bootstrap-install.sh --check "${install_args[@]}"
 
 if [[ "$CHECK_ONLY" == yes ]]; then
-  printf '\nPreflight passed. No changes were made.\n'
+  printf '\nPreflight passed. No HostPanel installation changes were made.\n'
   exit 0
 fi
 
