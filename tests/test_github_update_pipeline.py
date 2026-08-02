@@ -98,7 +98,7 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
     def test_existing_release_is_verified_instead_of_silently_accepted(self) -> None:
         self.assertIn("verify_existing_release()", self.workflow)
         self.assertIn('gh release download "$TAG"', self.workflow)
-        self.assertIn("Existing release manifest commit does not match", self.workflow)
+        self.assertIn("existing release manifest {label} does not match", self.workflow)
         self.assertIn("existing release archive digest does not match", self.workflow)
         self.assertIn("Verified existing GitHub Release $TAG at $GITHUB_SHA", self.workflow)
 
