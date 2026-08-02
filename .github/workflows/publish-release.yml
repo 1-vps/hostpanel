@@ -7,6 +7,16 @@ on:
       - 'hostpanel-v*-source.tar.gz'
       - 'hostpanel-v*-source.tar.gz.sig'
       - SHA256SUMS
+      - app/**
+      - bootstrap-install.sh
+      - install.sh
+      - install.base.sh
+      - localization-overlay/**
+      - packaging/**
+      - releases/update.pub
+      - tools/**
+  issues:
+    types: [closed]
 
 permissions:
   contents: read
@@ -17,6 +27,10 @@ concurrency:
 
 jobs:
   verify:
+    if: >-
+      github.event_name == 'push' ||
+      github.event.issue.number == 7 ||
+      github.event.issue.number == 14
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
@@ -31,11 +45,25 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify exact main commit
+      - name: Verify exact current main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == refs/heads/main ]]
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          if [[ "$GITHUB_EVENT_NAME" == issues ]]; then
+            issue_number="$(jq -r '.issue.number // empty' "$GITHUB_EVENT_PATH")"
+            [[ "$issue_number" == 7 || "$issue_number" == 14 ]] || {
+              echo "Ignoring unrelated closed issue #${issue_number:-unknown}." >&2
+              exit 1
+            }
+          fi
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          [[ "$current_main" == "$GITHUB_SHA" ]] || {
+            echo "Refusing to release stale commit $GITHUB_SHA; current main is $current_main." >&2
+            exit 1
+          }
 
       - name: Resolve release version and publication state
         id: version
@@ -49,9 +77,78 @@ jobs:
           TAG="v$VERSION"
           printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
           printf 'tag=%s\n' "$TAG" >> "$GITHUB_OUTPUT"
+
+          verify_existing_release() {
+            local release_dir archive manifest release_flags tag_type tag_sha
+            release_flags="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '[.draft,.prerelease]|@tsv')"
+            [[ "$release_flags" == $'false\tfalse' ]] || {
+              echo "Existing release $TAG is draft or prerelease, but the stable channel requires a final release." >&2
+              return 1
+            }
+            tag_type="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.type)"
+            tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)"
+            [[ "$tag_type" == commit && "$tag_sha" == "$GITHUB_SHA" ]] || {
+              echo "Existing release tag $TAG does not point to the tested commit $GITHUB_SHA." >&2
+              return 1
+            }
+
+            release_dir="$(mktemp -d)"
+            trap 'rm -rf "$release_dir"' RETURN
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$release_dir"
+            archive="$release_dir/hostpanel-v${VERSION}-update.tar.gz"
+            manifest="$release_dir/hostpanel-update-manifest.json"
+            for required in \
+              "$archive" "$archive.sig" \
+              "$manifest" "$manifest.sig" \
+              "$release_dir/release-build.json"; do
+              [[ -s "$required" ]] || {
+                echo "Existing release $TAG is missing required asset ${required##*/}." >&2
+                return 1
+              }
+            done
+            openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+              -in "$archive" -sigfile "$archive.sig" >/dev/null
+            openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+              -in "$manifest" -sigfile "$manifest.sig" >/dev/null
+            python3 - "$manifest" "$archive" "$GITHUB_SHA" "$VERSION" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+manifest_path = pathlib.Path(sys.argv[1])
+archive_path = pathlib.Path(sys.argv[2])
+expected_commit = sys.argv[3]
+expected_version = sys.argv[4]
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+archive = data.get("archive")
+if not isinstance(archive, dict):
+    raise SystemExit("existing release manifest archive entry is invalid")
+checks = {
+    "schema": data.get("schema") == 1,
+    "product": data.get("product") == "hostpanel",
+    "channel": data.get("channel") == "stable",
+    "version": data.get("version") == expected_version,
+    "tag": data.get("tag") == f"v{expected_version}",
+    "commit": data.get("commit") == expected_commit,
+    "archive name": archive.get("name") == archive_path.name,
+    "signature name": archive.get("signature") == f"{archive_path.name}.sig",
+}
+for label, valid in checks.items():
+    if not valid:
+        raise SystemExit(f"existing release manifest {label} does not match")
+digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+if archive.get("sha256") != digest:
+    raise SystemExit("existing release archive digest does not match its signed manifest")
+PY
+            rm -rf "$release_dir"
+            trap - RETURN
+          }
+
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            verify_existing_release
             printf 'publish=false\ncreate_tag=false\n' >> "$GITHUB_OUTPUT"
-            echo "GitHub Release $TAG already exists; nothing to publish."
+            echo "Verified existing GitHub Release $TAG at $GITHUB_SHA; nothing to publish."
           elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
             printf 'publish=true\ncreate_tag=false\n' >> "$GITHUB_OUTPUT"
             echo "Tag $TAG exists without a release; publication will resume."
@@ -110,11 +207,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Revalidate exact release input
+      - name: Revalidate exact current release input
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == refs/heads/main ]]
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          [[ "$current_main" == "$GITHUB_SHA" ]] || {
+            echo "Refusing to publish stale commit $GITHUB_SHA; current main is $current_main." >&2
+            exit 1
+          }
           VERSION="$(python3 tools/build-update-release.py --repository-root . --print-version)"
           [[ "$VERSION" == "${{ needs.verify.outputs.version }}" ]]
           mapfile -t source_archives < <(
