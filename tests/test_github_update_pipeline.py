@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -13,6 +14,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 UPDATER_PATH = ROOT / "tools" / "hostpanel-update.py"
 BUILDER_PATH = ROOT / "tools" / "build-update-release.py"
+RELEASE_VERIFIER_PATH = ROOT / "tools" / "verify-existing-release.py"
 HARDENER_PATH = ROOT / "tools" / "harden_install.py"
 INSTALL_AGENT = ROOT / "tools" / "install-update-agent.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "publish-release.yml"
@@ -21,25 +23,33 @@ TIMER = ROOT / "packaging" / "systemd" / "hostpanel-update.timer"
 PUBLIC_KEY = ROOT / "releases" / "update.pub"
 
 
-def load_updater():
-    spec = importlib.util.spec_from_file_location("hostpanel_update", UPDATER_PATH)
+def load_module(path: pathlib.Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise RuntimeError("could not load HostPanel updater")
+        raise RuntimeError(f"could not load {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
+def load_updater():
+    return load_module(UPDATER_PATH, "hostpanel_update")
+
+
 class GitHubUpdatePipelineTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.updater = load_updater()
+        cls.release_verifier = load_module(
+            RELEASE_VERIFIER_PATH, "hostpanel_existing_release_verifier"
+        )
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
         cls.install_agent = INSTALL_AGENT.read_text(encoding="utf-8")
         cls.service = SERVICE.read_text(encoding="utf-8")
         cls.timer = TIMER.read_text(encoding="utf-8")
         cls.hardener = HARDENER_PATH.read_text(encoding="utf-8")
+        cls.release_verifier_source = RELEASE_VERIFIER_PATH.read_text(encoding="utf-8")
 
     def test_release_workflow_publishes_new_signed_source_versions(self) -> None:
         self.assertIn("branches: [main]", self.workflow)
@@ -98,9 +108,61 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
     def test_existing_release_is_verified_instead_of_silently_accepted(self) -> None:
         self.assertIn("verify_existing_release()", self.workflow)
         self.assertIn('gh release download "$TAG"', self.workflow)
-        self.assertIn("existing release manifest {label} does not match", self.workflow)
-        self.assertIn("existing release archive digest does not match", self.workflow)
+        self.assertIn("tools/verify-existing-release.py", self.workflow)
+        self.assertIn("existing release manifest {label} does not match", self.release_verifier_source)
+        self.assertIn("existing release archive digest does not match", self.release_verifier_source)
         self.assertIn("Verified existing GitHub Release $TAG at $GITHUB_SHA", self.workflow)
+
+    def test_existing_release_verifier_binds_commit_and_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = pathlib.Path(temporary_name)
+            archive_path = temporary / "hostpanel-v3.4.1-update.tar.gz"
+            archive_path.write_bytes(b"signed release payload")
+            digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+            commit = "a" * 40
+            manifest_path = temporary / "hostpanel-update-manifest.json"
+            manifest = {
+                "schema": 1,
+                "product": "hostpanel",
+                "channel": "stable",
+                "version": "3.4.1",
+                "commit": commit,
+                "tag": "v3.4.1",
+                "archive": {
+                    "name": archive_path.name,
+                    "sha256": digest,
+                    "signature": f"{archive_path.name}.sig",
+                },
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            metadata_path = temporary / "release-build.json"
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "version": "3.4.1",
+                        "tag": "v3.4.1",
+                        "commit": commit,
+                        "archive": archive_path.name,
+                        "archive_sha256": digest,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.release_verifier.verify(
+                manifest_path,
+                archive_path,
+                metadata_path,
+                commit,
+                "3.4.1",
+            )
+            with self.assertRaises(SystemExit):
+                self.release_verifier.verify(
+                    manifest_path,
+                    archive_path,
+                    metadata_path,
+                    "b" * 40,
+                    "3.4.1",
+                )
 
     def test_runtime_changes_are_release_inputs(self) -> None:
         for release_input in (
@@ -209,6 +271,11 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
     def test_source_files_compile_or_parse(self) -> None:
         compile(UPDATER_PATH.read_text(encoding="utf-8"), str(UPDATER_PATH), "exec")
         compile(BUILDER_PATH.read_text(encoding="utf-8"), str(BUILDER_PATH), "exec")
+        compile(
+            RELEASE_VERIFIER_PATH.read_text(encoding="utf-8"),
+            str(RELEASE_VERIFIER_PATH),
+            "exec",
+        )
         compile(HARDENER_PATH.read_text(encoding="utf-8"), str(HARDENER_PATH), "exec")
         self.assertTrue(
             INSTALL_AGENT.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash")
