@@ -14,15 +14,39 @@ concurrency:
 
 jobs:
   cleanup:
-    if: >-
-      github.repository == '1-vps/hostpanel' &&
-      github.event.pull_request.title == 'Execute archived branch cleanup runner' &&
-      github.event.pull_request.head.ref == 'agent/branch-cleanup-runner' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      - name: Validate exact cleanup trigger
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as handle:
+              event = json.load(handle)
+          pull = event.get('pull_request') or {}
+          head = pull.get('head') or {}
+          base = pull.get('base') or {}
+          head_repo = head.get('repo') or {}
+          expected = {
+              'repository': '1-vps/hostpanel',
+              'title': 'Execute archived branch cleanup runner',
+              'head': 'agent/branch-cleanup-runner',
+              'base': 'main',
+          }
+          actual = {
+              'repository': os.environ.get('GITHUB_REPOSITORY'),
+              'title': pull.get('title'),
+              'head': head.get('ref'),
+              'base': base.get('ref'),
+          }
+          if actual != expected or head_repo.get('full_name') != expected['repository']:
+              raise SystemExit(f'cleanup trigger mismatch: {actual!r}')
+          PY
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: main
