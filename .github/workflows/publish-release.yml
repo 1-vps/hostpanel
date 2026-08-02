@@ -88,8 +88,12 @@ jobs:
           printf 'tag=%s\n' "$TAG" >> "$GITHUB_OUTPUT"
 
           verify_existing_release() {
-            local release_dir archive manifest metadata release_flags tag_type tag_sha
-            release_flags="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '[.draft,.prerelease]|@tsv')"
+            local release_json release_dir archive manifest metadata release_flags
+            local tag_type tag_sha name size maximum
+            local -a expected_names asset_names
+
+            release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")"
+            release_flags="$(jq -r '[.draft,.prerelease]|@tsv' <<<"$release_json")"
             [[ "$release_flags" == $'false\tfalse' ]] || {
               echo "Existing release $TAG is draft or prerelease, but the stable channel requires a final release." >&2
               return 1
@@ -101,9 +105,51 @@ jobs:
               return 1
             }
 
+            expected_names=(
+              "hostpanel-v${VERSION}-update.tar.gz"
+              "hostpanel-v${VERSION}-update.tar.gz.sig"
+              hostpanel-update-manifest.json
+              hostpanel-update-manifest.json.sig
+              release-build.json
+            )
+            mapfile -t expected_names < <(printf '%s\n' "${expected_names[@]}" | sort)
+            mapfile -t asset_names < <(jq -r '.assets[].name' <<<"$release_json" | sort)
+            [[ "$(printf '%s\n' "${asset_names[@]}")" == "$(printf '%s\n' "${expected_names[@]}")" ]] || {
+              echo "Existing release $TAG does not contain exactly the reviewed asset set." >&2
+              return 1
+            }
+
+            for name in "${expected_names[@]}"; do
+              case "$name" in
+                hostpanel-v*-update.tar.gz) maximum=$((100 * 1024 * 1024)) ;;
+                *.sig) maximum=$((64 * 1024)) ;;
+                *.json) maximum=$((1024 * 1024)) ;;
+                *)
+                  echo "Unexpected release asset in size policy: $name" >&2
+                  return 1
+                  ;;
+              esac
+              size="$(
+                jq -r --arg name "$name" \
+                  '[.assets[] | select(.name == $name) | .size] | if length == 1 then .[0] else empty end' \
+                  <<<"$release_json"
+              )"
+              [[ "$size" =~ ^[0-9]+$ ]] && ((size > 0 && size <= maximum)) || {
+                echo "Existing release asset $name has unsafe advertised size ${size:-missing}." >&2
+                return 1
+              }
+            done
+
             release_dir="$(mktemp -d)"
             trap 'rm -rf "$release_dir"' RETURN
-            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$release_dir"
+            gh release download "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --dir "$release_dir" \
+              --pattern "hostpanel-v${VERSION}-update.tar.gz" \
+              --pattern "hostpanel-v${VERSION}-update.tar.gz.sig" \
+              --pattern hostpanel-update-manifest.json \
+              --pattern hostpanel-update-manifest.json.sig \
+              --pattern release-build.json
             archive="$release_dir/hostpanel-v${VERSION}-update.tar.gz"
             manifest="$release_dir/hostpanel-update-manifest.json"
             metadata="$release_dir/release-build.json"
