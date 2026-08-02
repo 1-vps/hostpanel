@@ -79,7 +79,7 @@ jobs:
           printf 'tag=%s\n' "$TAG" >> "$GITHUB_OUTPUT"
 
           verify_existing_release() {
-            local release_dir archive manifest release_flags tag_type tag_sha
+            local release_dir archive manifest metadata release_flags tag_type tag_sha
             release_flags="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '[.draft,.prerelease]|@tsv')"
             [[ "$release_flags" == $'false\tfalse' ]] || {
               echo "Existing release $TAG is draft or prerelease, but the stable channel requires a final release." >&2
@@ -97,10 +97,11 @@ jobs:
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$release_dir"
             archive="$release_dir/hostpanel-v${VERSION}-update.tar.gz"
             manifest="$release_dir/hostpanel-update-manifest.json"
+            metadata="$release_dir/release-build.json"
             for required in \
               "$archive" "$archive.sig" \
               "$manifest" "$manifest.sig" \
-              "$release_dir/release-build.json"; do
+              "$metadata"; do
               [[ -s "$required" ]] || {
                 echo "Existing release $TAG is missing required asset ${required##*/}." >&2
                 return 1
@@ -110,37 +111,12 @@ jobs:
               -in "$archive" -sigfile "$archive.sig" >/dev/null
             openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
               -in "$manifest" -sigfile "$manifest.sig" >/dev/null
-            python3 - "$manifest" "$archive" "$GITHUB_SHA" "$VERSION" <<'PY'
-import hashlib
-import json
-import pathlib
-import sys
-
-manifest_path = pathlib.Path(sys.argv[1])
-archive_path = pathlib.Path(sys.argv[2])
-expected_commit = sys.argv[3]
-expected_version = sys.argv[4]
-data = json.loads(manifest_path.read_text(encoding="utf-8"))
-archive = data.get("archive")
-if not isinstance(archive, dict):
-    raise SystemExit("existing release manifest archive entry is invalid")
-checks = {
-    "schema": data.get("schema") == 1,
-    "product": data.get("product") == "hostpanel",
-    "channel": data.get("channel") == "stable",
-    "version": data.get("version") == expected_version,
-    "tag": data.get("tag") == f"v{expected_version}",
-    "commit": data.get("commit") == expected_commit,
-    "archive name": archive.get("name") == archive_path.name,
-    "signature name": archive.get("signature") == f"{archive_path.name}.sig",
-}
-for label, valid in checks.items():
-    if not valid:
-        raise SystemExit(f"existing release manifest {label} does not match")
-digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
-if archive.get("sha256") != digest:
-    raise SystemExit("existing release archive digest does not match its signed manifest")
-PY
+            python3 tools/verify-existing-release.py \
+              --manifest "$manifest" \
+              --archive "$archive" \
+              --metadata "$metadata" \
+              --commit "$GITHUB_SHA" \
+              --version "$VERSION"
             rm -rf "$release_dir"
             trap - RETURN
           }
@@ -184,7 +160,10 @@ PY
             -in "$source_archive" -sigfile "$source_archive.sig"
           python3 -m unittest discover -s tests -p 'test_*.py' -v
           bash -n install.sh bootstrap-install.sh tools/install-update-agent.sh
-          python3 -m py_compile tools/build-update-release.py tools/hostpanel-update.py
+          python3 -m py_compile \
+            tools/build-update-release.py \
+            tools/hostpanel-update.py \
+            tools/verify-existing-release.py
           mkdir -p dist
           python3 tools/build-update-release.py \
             --repository-root . \
