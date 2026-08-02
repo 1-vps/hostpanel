@@ -165,12 +165,14 @@ class LocalizationBootstrapWiringTests(unittest.TestCase):
         )
         for workflow, expected_group in expected_groups:
             with self.subTest(group=expected_group):
-                self.assertIn(expected_group, workflow)
-                self.assertIn("cancel-in-progress: true", workflow)
-                self.assertNotIn("cancel-in-progress: false", workflow)
+                before_jobs = workflow.split("\njobs:\n", 1)[0]
+                concurrency = before_jobs.split("\nconcurrency:\n", 1)[1]
+                self.assertIn(expected_group, concurrency)
+                self.assertIn("cancel-in-progress: true", concurrency)
+                self.assertNotIn("cancel-in-progress: false", concurrency)
                 self.assertNotIn(
                     "github.event.pull_request.head.sha || github.sha",
-                    workflow.split("jobs:", 1)[0],
+                    concurrency,
                 )
 
     def test_runtime_digest_constants_match_reviewed_layers(self):
