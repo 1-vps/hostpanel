@@ -71,6 +71,20 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
             self.workflow.index("HOSTPANEL_RELEASE_PRIVATE_KEY"),
         )
 
+    def test_release_workflow_resumes_when_external_gate_closes(self) -> None:
+        self.assertIn("issues:\n    types: [closed]", self.workflow)
+        self.assertIn("github.event.issue.number == 7", self.workflow)
+        self.assertIn("github.event.issue.number == 14", self.workflow)
+        self.assertIn('[[ "$issue_number" == 7 || "$issue_number" == 14 ]]', self.workflow)
+        self.assertGreaterEqual(
+            self.workflow.count(
+                'gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha'
+            ),
+            2,
+        )
+        self.assertIn("Refusing to release stale commit", self.workflow)
+        self.assertIn("Refusing to publish stale commit", self.workflow)
+
     def test_release_workflow_enforces_external_gates_and_safe_resume(self) -> None:
         self.assertEqual(self.workflow.count("for issue in 7 14; do"), 2)
         self.assertIn("Release gate issue #$issue is still $state", self.workflow)
@@ -80,6 +94,26 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
         self.assertIn('tag_sha="$(gh api', self.workflow)
         self.assertIn('[[ "$tag_type" == commit && "$tag_sha" == "$GITHUB_SHA" ]]', self.workflow)
         self.assertIn("Existing tag $TAG does not point to the tested commit", self.workflow)
+
+    def test_existing_release_is_verified_instead_of_silently_accepted(self) -> None:
+        self.assertIn("verify_existing_release()", self.workflow)
+        self.assertIn('gh release download "$TAG"', self.workflow)
+        self.assertIn("Existing release manifest commit does not match", self.workflow)
+        self.assertIn("existing release archive digest does not match", self.workflow)
+        self.assertIn("Verified existing GitHub Release $TAG at $GITHUB_SHA", self.workflow)
+
+    def test_runtime_changes_are_release_inputs(self) -> None:
+        for release_input in (
+            "app/**",
+            "bootstrap-install.sh",
+            "install.sh",
+            "install.base.sh",
+            "localization-overlay/**",
+            "packaging/**",
+            "releases/update.pub",
+            "tools/**",
+        ):
+            self.assertIn(f"- {release_input}", self.workflow)
 
     def test_update_agent_is_installed_and_polled_frequently(self) -> None:
         self.assertIn("/opt/hostpanel/tools/hostpanel-update", self.install_agent)
