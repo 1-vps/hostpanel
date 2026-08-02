@@ -38,11 +38,18 @@ jobs:
           TAG="v$VERSION"
           printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
           printf 'tag=%s\n' "$TAG" >> "$GITHUB_OUTPUT"
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             printf 'publish=false\n' >> "$GITHUB_OUTPUT"
-            echo "Release tag $TAG already exists; nothing to publish."
+            printf 'tag_exists=true\n' >> "$GITHUB_OUTPUT"
+            echo "GitHub Release $TAG already exists; nothing to publish."
           else
             printf 'publish=true\n' >> "$GITHUB_OUTPUT"
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+              printf 'tag_exists=true\n' >> "$GITHUB_OUTPUT"
+              echo "Tag $TAG exists without a completed Release; publication will resume."
+            else
+              printf 'tag_exists=false\n' >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Run release regressions
@@ -105,13 +112,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
+          TAG_EXISTS: ${{ steps.version.outputs.tag_exists }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/git/refs" \
-            --method POST \
-            -f "ref=refs/tags/$TAG" \
-            -f "sha=$GITHUB_SHA" >/dev/null
+          if [[ "$TAG_EXISTS" != true ]]; then
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+              --method POST \
+              -f "ref=refs/tags/$TAG" \
+              -f "sha=$GITHUB_SHA" >/dev/null
+          fi
           archive="$(find dist -maxdepth 1 -type f -name 'hostpanel-v*-update.tar.gz' -print -quit)"
           gh release create "$TAG" \
             "$archive" \
