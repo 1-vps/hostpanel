@@ -198,6 +198,7 @@ PYPORTS
 for source_file in \
   "$REPO_ROOT/bootstrap-install.sh" \
   "$REPO_ROOT/tools/validate-production-vm.sh" \
+  "$REPO_ROOT/tools/secure-validation-io.py" \
   "$REPO_ROOT/tools/qemu-guest-install.sh"; do
   [[ -f "$source_file" && ! -L "$source_file" ]] || die "unsafe or missing source file: $source_file"
 done
@@ -298,6 +299,7 @@ unset REPO_TOKEN REPO_AUTH_HEADER
 scp "${scp_opts[@]}" \
   "$REPO_ROOT/bootstrap-install.sh" \
   "$REPO_ROOT/tools/validate-production-vm.sh" \
+  "$REPO_ROOT/tools/secure-validation-io.py" \
   "$REPO_ROOT/tools/qemu-guest-install.sh" \
   "$WORK_DIR/guest.env" \
   hostpanel@127.0.0.1:/tmp/
@@ -316,6 +318,7 @@ expected_uid = int(sys.argv[1])
 inputs = (
     (pathlib.Path("/tmp/bootstrap-install.sh"), 0o700),
     (pathlib.Path("/tmp/validate-production-vm.sh"), 0o700),
+    (pathlib.Path("/tmp/secure-validation-io.py"), 0o700),
     (pathlib.Path("/tmp/qemu-guest-install.sh"), 0o700),
     (pathlib.Path("/tmp/guest.env"), 0o600),
 )

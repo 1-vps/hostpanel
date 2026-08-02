@@ -336,6 +336,9 @@ jobs:
             printf 'HP_EXPECTED_PUBLIC_IP=%q\n' "$VPS_HOST"
             printf 'HP_EXPECTED_VERSION=%q\n' "$EXPECTED_VERSION"
             printf 'HP_REVIEWED_COMMIT_SHA=%q\n' "$REVIEWED_COMMIT_SHA"
+            printf 'HP_PROVIDER_INSTANCE_ID=%q\n' "$PROVIDER_INSTANCE_ID"
+            printf 'HP_PROVIDER_SNAPSHOT_ID=%q\n' "$SNAPSHOT_ID"
+            printf 'HP_PROVIDER_SNAPSHOT_CREATED_AT_UTC=%q\n' "$SNAPSHOT_CREATED_AT_UTC"
             printf 'HP_MTA=%q\n' "$MTA"
             printf 'HP_REINSTALL=%q\n' "$REINSTALL"
             printf 'export GIT_CONFIG_COUNT=1\n'
@@ -375,7 +378,10 @@ jobs:
             echo '/opt/hostpanel already exists; rerun with reinstall enabled only after reviewing the host.' >&2
             exit 1
           fi
-          for input in /root/bootstrap-install.sh /root/validate-production-vm.sh; do
+          for input in \
+            /root/bootstrap-install.sh \
+            /root/validate-production-vm.sh \
+            /root/secure-validation-io.py; do
             [[ -f "$input" && ! -L "$input" ]] || {
               echo "Unsafe or missing acceptance input: $input" >&2
               exit 1
@@ -401,6 +407,7 @@ jobs:
 
           bash -n /root/bootstrap-install.sh
           bash -n /root/validate-production-vm.sh
+          python3 -m py_compile /root/secure-validation-io.py
 
           install_args=(--mta "$HP_MTA")
           if [[ "$HP_REINSTALL" == true ]]; then
@@ -427,11 +434,17 @@ jobs:
             HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
             HP_PANEL_HOST="$HP_PANEL_HOST" \
             HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
+            HP_PROVIDER_INSTANCE_ID="$HP_PROVIDER_INSTANCE_ID" \
+            HP_PROVIDER_SNAPSHOT_ID="$HP_PROVIDER_SNAPSHOT_ID" \
+            HP_PROVIDER_SNAPSHOT_CREATED_AT_UTC="$HP_PROVIDER_SNAPSHOT_CREATED_AT_UTC" \
             bash /root/validate-production-vm.sh --check | tee "$EVIDENCE/pre-reboot-validator.txt"
           env \
             HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
             HP_PANEL_HOST="$HP_PANEL_HOST" \
             HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
+            HP_PROVIDER_INSTANCE_ID="$HP_PROVIDER_INSTANCE_ID" \
+            HP_PROVIDER_SNAPSHOT_ID="$HP_PROVIDER_SNAPSHOT_ID" \
+            HP_PROVIDER_SNAPSHOT_CREATED_AT_UTC="$HP_PROVIDER_SNAPSHOT_CREATED_AT_UTC" \
             bash /root/validate-production-vm.sh --prepare-reboot | tee "$EVIDENCE/prepare-reboot-validator.txt"
 
           cat /etc/os-release > "$EVIDENCE/os-release.txt"
@@ -446,13 +459,18 @@ jobs:
           "${SCP[@]}" \
             bootstrap-install.sh \
             tools/validate-production-vm.sh \
+            tools/secure-validation-io.py \
             /tmp/hostpanel-acceptance.env \
             /tmp/hostpanel-acceptance-remote.sh \
             root@"$VPS_HOST":/root/
           rm -f /tmp/hostpanel-acceptance.env
           "${SSH[@]}" root@"$VPS_HOST" '
             chmod 600 /root/hostpanel-acceptance.env
-            chmod 700 /root/bootstrap-install.sh /root/validate-production-vm.sh /root/hostpanel-acceptance-remote.sh
+            chmod 700 \
+              /root/bootstrap-install.sh \
+              /root/validate-production-vm.sh \
+              /root/secure-validation-io.py \
+              /root/hostpanel-acceptance-remote.sh
             /root/hostpanel-acceptance-remote.sh
           '
 
@@ -517,6 +535,7 @@ jobs:
                 /root/hostpanel-acceptance.env \
                 /root/bootstrap-install.sh \
                 /root/validate-production-vm.sh \
+                /root/secure-validation-io.py \
                 /root/hostpanel-acceptance-remote.sh; then
                 cleanup_status=1
               fi
@@ -537,6 +556,9 @@ jobs:
               HP_EXPECTED_VERSION="$HP_EXPECTED_VERSION" \
               HP_PANEL_HOST="$HP_PANEL_HOST" \
               HP_EXPECTED_PUBLIC_IP="$HP_EXPECTED_PUBLIC_IP" \
+              HP_PROVIDER_INSTANCE_ID="$HP_PROVIDER_INSTANCE_ID" \
+              HP_PROVIDER_SNAPSHOT_ID="$HP_PROVIDER_SNAPSHOT_ID" \
+              HP_PROVIDER_SNAPSHOT_CREATED_AT_UTC="$HP_PROVIDER_SNAPSHOT_CREATED_AT_UTC" \
               bash /root/validate-production-vm.sh --post-reboot | tee "$EVIDENCE/post-reboot-validator.txt"
             cat /proc/sys/kernel/random/boot_id > "$EVIDENCE/post-reboot-boot-id.txt"
             systemctl --failed --no-legend --plain > "$EVIDENCE/failed-units-post-reboot.txt" || true
@@ -596,7 +618,7 @@ jobs:
             -o ServerAliveInterval=15 \
             -o ServerAliveCountMax=4 \
             root@"$VPS_HOST" \
-            'rm -f /root/hostpanel-acceptance.env /root/bootstrap-install.sh /root/validate-production-vm.sh /root/hostpanel-acceptance-remote.sh'; then
+            'rm -f /root/hostpanel-acceptance.env /root/bootstrap-install.sh /root/validate-production-vm.sh /root/secure-validation-io.py /root/hostpanel-acceptance-remote.sh'; then
             cleanup_failed=true
           fi
           {
