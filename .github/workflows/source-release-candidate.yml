@@ -1,0 +1,124 @@
+name: Source release candidate
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/source-release-candidate.yml'
+      - 'SOURCE_VERSION'
+      - 'RELEASE_VERSION'
+      - 'SHA256SUMS'
+      - 'hostpanel-v*-source.tar.gz'
+      - 'hostpanel-v*-source.tar.gz.sig'
+      - 'app/**'
+      - 'bootstrap-install.sh'
+      - 'install.base.sh'
+      - 'install.sh'
+      - 'localization-overlay/**'
+      - 'packaging/**'
+      - 'releases/source-release-policy.json'
+      - 'releases/update.pub'
+      - 'tests/**'
+      - 'tools/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-release-candidate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deterministic-source-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.REVIEWED_COMMIT }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact reviewed checkout
+        run: |
+          set -euo pipefail
+          [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$REVIEWED_COMMIT" ]]
+          git diff --exit-code -- .
+
+      - name: Run source-builder regressions
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/build-source-release.py
+          python3 -m unittest discover -s tests -p 'test_source_release_builder.py' -v
+          [[ "$(python3 tools/build-source-release.py --repository-root . --print-version)" == "3.4.1" ]]
+
+      - name: Build the candidate twice
+        run: |
+          set -euo pipefail
+          mkdir -p dist-a dist-b
+          python3 tools/build-source-release.py \
+            --repository-root . \
+            --commit "$REVIEWED_COMMIT" \
+            --output-dir dist-a
+          python3 tools/build-source-release.py \
+            --repository-root . \
+            --commit "$REVIEWED_COMMIT" \
+            --output-dir dist-b
+          archive_a="$(find dist-a -maxdepth 1 -type f -name 'hostpanel-v*-source.tar.gz' -print -quit)"
+          archive_b="$(find dist-b -maxdepth 1 -type f -name 'hostpanel-v*-source.tar.gz' -print -quit)"
+          [[ -n "$archive_a" && -n "$archive_b" ]]
+          [[ "${archive_a##*/}" == "${archive_b##*/}" ]]
+          cmp -- "$archive_a" "$archive_b"
+          cmp -- dist-a/source-build.json dist-b/source-build.json
+          (
+            cd dist-a
+            sha256sum "${archive_a##*/}" source-build.json > SOURCE-CANDIDATE-SHA256SUMS
+            sha256sum -c SOURCE-CANDIDATE-SHA256SUMS
+          )
+          python3 - "$REVIEWED_COMMIT" dist-a/source-build.json <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          commit = sys.argv[1]
+          path = pathlib.Path(sys.argv[2])
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          expected_keys = {
+              "archive",
+              "baseline",
+              "built_at",
+              "commit",
+              "overlay_paths",
+              "product",
+              "release_id",
+              "schema",
+              "source_version",
+          }
+          if set(payload) != expected_keys:
+              raise SystemExit("source-build.json has an unexpected shape")
+          if payload["schema"] != 1 or payload["product"] != "hostpanel":
+              raise SystemExit("source-build.json identity mismatch")
+          if payload["commit"] != commit:
+              raise SystemExit("source-build.json is not bound to the reviewed commit")
+          if payload["source_version"] != "3.4.1":
+              raise SystemExit("source-build.json has the wrong source version")
+          if payload["release_id"] != "3.4.1-hardened-r1":
+              raise SystemExit("source-build.json has the wrong release identifier")
+          PY
+
+      - name: Upload unsigned source candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hostpanel-source-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist-a/hostpanel-v3.4.1-hardened-r1-source.tar.gz
+            dist-a/source-build.json
+            dist-a/SOURCE-CANDIDATE-SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: false
