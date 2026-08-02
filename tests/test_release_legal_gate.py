@@ -51,6 +51,22 @@ class ReleaseLegalGateTests(unittest.TestCase):
         with temporary, self.assertRaisesRegex(SystemExit, r"\[DATE\].*\[LEGAL ENTITY NAME\]"):
             self.validator.validate_repository(root)
 
+    def test_linked_legal_file_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            root = pathlib.Path(temporary_name)
+            (root / "README.md").write_text(
+                "# HostPanel\n\n**License:** Proprietary — see [LICENSE](LICENSE).\n",
+                encoding="utf-8",
+            )
+            target = root / "real-license"
+            target.write_text(
+                "HostPanel End User License Agreement\nEffective 2 August 2026\n",
+                encoding="utf-8",
+            )
+            (root / "LICENSE").symlink_to(target.name)
+            with self.assertRaisesRegex(SystemExit, "opened safely"):
+                self.validator.validate_repository(root)
+
     def test_obsolete_mit_claim_is_rejected(self) -> None:
         temporary, root = self.fixture(
             "# HostPanel\n\n**License:** MIT\n",

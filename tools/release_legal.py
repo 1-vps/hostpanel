@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import re
 import stat
@@ -17,17 +18,60 @@ class LegalValidationError(SystemExit):
     """Raised when repository legal metadata is unsafe for publication."""
 
 
+def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev,
+        left.st_ino,
+        left.st_mode,
+        left.st_uid,
+        left.st_gid,
+        left.st_nlink,
+        left.st_size,
+        left.st_mtime_ns,
+    ) == (
+        right.st_dev,
+        right.st_ino,
+        right.st_mode,
+        right.st_uid,
+        right.st_gid,
+        right.st_nlink,
+        right.st_size,
+        right.st_mtime_ns,
+    )
+
+
 def _read_regular_text(path: pathlib.Path) -> str:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        metadata = path.lstat()
-    except FileNotFoundError as exc:
-        raise LegalValidationError(f"required legal file is missing: {path.name}") from exc
-    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink() or metadata.st_nlink != 1:
-        raise LegalValidationError(f"required legal file is not a single regular file: {path.name}")
-    if metadata.st_size <= 0 or metadata.st_size > MAX_TEXT_BYTES:
-        raise LegalValidationError(f"required legal file has an unsafe size: {path.name}")
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise LegalValidationError(f"required legal file cannot be opened safely: {path.name}") from exc
     try:
-        return path.read_text(encoding="utf-8", errors="strict")
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise LegalValidationError(
+                f"required legal file is not a single regular file: {path.name}"
+            )
+        if before.st_size <= 0 or before.st_size > MAX_TEXT_BYTES:
+            raise LegalValidationError(f"required legal file has an unsafe size: {path.name}")
+        chunks: list[bytes] = []
+        remaining = MAX_TEXT_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if len(data) > MAX_TEXT_BYTES or len(data) != before.st_size:
+            raise LegalValidationError(f"required legal file changed size while read: {path.name}")
+        if not _same_file(before, after):
+            raise LegalValidationError(f"required legal file changed while read: {path.name}")
+    finally:
+        os.close(descriptor)
+    try:
+        return data.decode("utf-8", errors="strict")
     except UnicodeError as exc:
         raise LegalValidationError(f"required legal file is not strict UTF-8: {path.name}") from exc
 
