@@ -1,0 +1,40 @@
+name: Automatic installer
+
+on:
+  pull_request:
+    paths:
+      - auto-install.sh
+      - SETUP.md
+      - examples/cloud-init-hostpanel.yaml
+      - tests/test_auto_install.py
+      - .github/workflows/automatic-installer.yml
+  push:
+    branches: [main]
+    paths:
+      - auto-install.sh
+      - SETUP.md
+      - examples/cloud-init-hostpanel.yaml
+      - tests/test_auto_install.py
+      - .github/workflows/automatic-installer.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Parse automatic installer
+        run: bash -n auto-install.sh
+      - name: Run automatic installer regressions
+        run: python3 -m unittest -v tests.test_auto_install
+      - name: ShellCheck automatic installer
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -S error auto-install.sh
