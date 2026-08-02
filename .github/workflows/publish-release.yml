@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - '.github/workflows/publish-release.yml'
       - 'hostpanel-v*-source.tar.gz'
       - 'hostpanel-v*-source.tar.gz.sig'
       - SHA256SUMS
@@ -36,7 +37,8 @@ jobs:
       github.event.issue.number == 116 ||
       github.event.issue.number == 118 ||
       github.event.issue.number == 119 ||
-      github.event.issue.number == 120
+      github.event.issue.number == 120 ||
+      github.event.issue.number == 121
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
@@ -61,7 +63,7 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == issues ]]; then
             issue_number="$(jq -r '.issue.number // empty' "$GITHUB_EVENT_PATH")"
             case "$issue_number" in
-              7|14|115|116|118|119|120) ;;
+              7|14|115|116|118|119|120|121) ;;
               *)
                 echo "Ignoring unrelated closed issue #${issue_number:-unknown}." >&2
                 exit 1
@@ -111,6 +113,7 @@ jobs:
               hostpanel-update-manifest.json
               hostpanel-update-manifest.json.sig
               release-build.json
+              release-build.json.sig
             )
             mapfile -t expected_names < <(printf '%s\n' "${expected_names[@]}" | sort)
             mapfile -t asset_names < <(jq -r '.assets[].name' <<<"$release_json" | sort)
@@ -149,14 +152,15 @@ jobs:
               --pattern "hostpanel-v${VERSION}-update.tar.gz.sig" \
               --pattern hostpanel-update-manifest.json \
               --pattern hostpanel-update-manifest.json.sig \
-              --pattern release-build.json
+              --pattern release-build.json \
+              --pattern release-build.json.sig
             archive="$release_dir/hostpanel-v${VERSION}-update.tar.gz"
             manifest="$release_dir/hostpanel-update-manifest.json"
             metadata="$release_dir/release-build.json"
             for required in \
               "$archive" "$archive.sig" \
               "$manifest" "$manifest.sig" \
-              "$metadata"; do
+              "$metadata" "$metadata.sig"; do
               [[ -s "$required" ]] || {
                 echo "Existing release $TAG is missing required asset ${required##*/}." >&2
                 return 1
@@ -166,6 +170,8 @@ jobs:
               -in "$archive" -sigfile "$archive.sig" >/dev/null
             openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
               -in "$manifest" -sigfile "$manifest.sig" >/dev/null
+            openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+              -in "$metadata" -sigfile "$metadata.sig" >/dev/null
             python3 tools/verify-existing-release.py \
               --manifest "$manifest" \
               --archive "$archive" \
@@ -193,7 +199,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for issue in 7 14 115 116 118 119 120; do
+          for issue in 7 14 115 116 118 119 120 121; do
             state="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" --jq .state)"
             [[ "$state" == closed ]] || {
               echo "Release gate issue #$issue is still $state." >&2
@@ -270,7 +276,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for issue in 7 14 115 116 118 119 120; do
+          for issue in 7 14 115 116 118 119 120 121; do
             state="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" --jq .state)"
             [[ "$state" == closed ]] || {
               echo "Release gate issue #$issue was reopened or remains $state." >&2
@@ -309,11 +315,17 @@ jobs:
           openssl pkeyutl -sign -inkey "$key_file" -rawin \
             -in dist/hostpanel-update-manifest.json \
             -out dist/hostpanel-update-manifest.json.sig
+          openssl pkeyutl -sign -inkey "$key_file" -rawin \
+            -in dist/release-build.json \
+            -out dist/release-build.json.sig
           openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
             -in "$archive" -sigfile "$archive.sig"
           openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
             -in dist/hostpanel-update-manifest.json \
             -sigfile dist/hostpanel-update-manifest.json.sig
+          openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+            -in dist/release-build.json \
+            -sigfile dist/release-build.json.sig
 
       - name: Publish GitHub release
         env:
@@ -343,6 +355,7 @@ jobs:
             dist/hostpanel-update-manifest.json \
             dist/hostpanel-update-manifest.json.sig \
             dist/release-build.json \
+            dist/release-build.json.sig \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "HostPanel $VERSION" \
