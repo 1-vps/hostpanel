@@ -15,17 +15,25 @@ on:
     paths:
       - .github/workflows/qemu-vm-acceptance.yml
       - .github/workflows/publish-release.yml
+      - SOURCE_VERSION
+      - RELEASE_VERSION
+      - releases/source-release-policy.json
       - localization-overlay/**
       - packaging/systemd/hostpanel-update.service
       - packaging/systemd/hostpanel-update.timer
       - releases/update.pub
       - tools/run-qemu-vm-acceptance.sh
+      - tools/run-qemu-source-candidate.sh
+      - tools/bootstrap-source-candidate.sh
       - tools/qemu-guest-install.sh
       - tools/prepare-qemu-evidence.py
       - tools/sanitize-qemu-evidence.py
       - tools/seal-qemu-evidence.py
       - tools/inspect-release-state.py
       - tools/validate-production-vm.sh
+      - tools/build-source-release.py
+      - tools/run-source-release-builder.py
+      - tools/generate-source-attestations.py
       - tools/build-update-release.py
       - tools/hostpanel-update.py
       - tools/install-update-agent.sh
@@ -54,6 +62,7 @@ on:
       - tests/test_full_stack_review_fixes.py
       - tests/test_github_update_pipeline.py
       - tests/test_qemu_vm_acceptance.py
+      - tests/test_qemu_source_candidate.py
       - tests/test_qemu_token_scope.py
       - tests/test_qemu_evidence_sanitizer.py
       - tests/test_qemu_early_evidence.py
@@ -81,21 +90,25 @@ jobs:
   release-state-inspection:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.REVIEWED_COMMIT }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Inspect signed release state bootstrap
         run: |
           set -euo pipefail
-          EXPECTED_SHA="${{ github.sha }}"
+          [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           ACTUAL_SHA="$(git rev-parse HEAD)"
-          [[ "$ACTUAL_SHA" == "$EXPECTED_SHA" ]] || {
+          [[ "$ACTUAL_SHA" == "$REVIEWED_COMMIT" ]] || {
             printf 'QEMU release-state checkout mismatch: expected %s, got %s\n' \
-              "$EXPECTED_SHA" "$ACTUAL_SHA" >&2
+              "$REVIEWED_COMMIT" "$ACTUAL_SHA" >&2
             exit 1
           }
+          git diff --exit-code -- .
           python3 tools/inspect-release-state.py
 
   qemu-vm:
@@ -103,31 +116,37 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      HP_QEMU_REVIEWED_COMMIT_SHA: ${{ github.sha }}
-      HP_QEMU_EXPECTED_VERSION: 3.4.0
+      HP_QEMU_REVIEWED_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       HP_QEMU_MTA: ${{ inputs.mta || 'postfix' }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.HP_QEMU_REVIEWED_COMMIT_SHA }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Validate QEMU acceptance harness
         run: |
           set -euo pipefail
+          [[ "$HP_QEMU_REVIEWED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
           ACTUAL_SHA="$(git rev-parse HEAD)"
           [[ "$ACTUAL_SHA" == "$HP_QEMU_REVIEWED_COMMIT_SHA" ]] || {
             printf 'QEMU reviewed checkout mismatch: expected %s, got %s\n' \
               "$HP_QEMU_REVIEWED_COMMIT_SHA" "$ACTUAL_SHA" >&2
             exit 1
           }
+          git diff --exit-code -- .
           bash -n tools/run-qemu-vm-acceptance.sh
+          bash -n tools/run-qemu-source-candidate.sh
+          bash -n tools/bootstrap-source-candidate.sh
           bash -n tools/qemu-guest-install.sh
           bash -n tools/install-update-agent.sh
           python3 -m py_compile \
             tools/prepare-qemu-evidence.py \
+            tools/build-source-release.py \
+            tools/run-source-release-builder.py \
+            tools/generate-source-attestations.py \
             tools/build-update-release.py \
             tools/hostpanel-update.py
           python3 -m unittest discover -s tests -p 'test_existing_catalog_corrections.py' -v
@@ -138,6 +157,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_full_stack_review_fixes.py' -v
           python3 -m unittest discover -s tests -p 'test_github_update_pipeline.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_vm_acceptance.py' -v
+          python3 -m unittest discover -s tests -p 'test_qemu_source_candidate.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_token_scope.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_evidence_sanitizer.py' -v
           python3 -m unittest discover -s tests -p 'test_qemu_early_evidence.py' -v
@@ -172,13 +192,13 @@ jobs:
             sudo setfacl -m "u:$(id -u):rw" /dev/kvm || true
           fi
 
-      - name: Boot, install, reboot, and validate
+      - name: Boot, install candidate, reboot, and validate
         env:
           HP_QEMU_REPO_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/qemu-vm-acceptance
-          bash tools/run-qemu-vm-acceptance.sh
+          bash tools/run-qemu-source-candidate.sh
 
       - name: Sanitize and seal VM evidence before upload
         id: sanitize-evidence
