@@ -227,4 +227,4 @@ INSTALLED_VERSION="$(tr -d '[:space:]' <"$SOURCE_ROOT/VERSION")"
 
 say "Installing reproduced HostPanel source candidate $EXPECTED_VERSION"
 cd "$SOURCE_ROOT"
-bash "$SOURCE_ROOT/install.sh"
+bash "$SOURCE_ROOT/install.sh" "$@"
