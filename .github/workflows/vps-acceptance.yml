@@ -11,6 +11,22 @@ on:
         description: Exact reviewed 40-character commit SHA to install and validate
         required: true
         type: string
+      provider_instance_id:
+        description: Exact provider instance ID reviewed in the provider console
+        required: true
+        type: string
+      snapshot_id:
+        description: Exact fresh snapshot ID reviewed in the provider console
+        required: true
+        type: string
+      snapshot_created_at_utc:
+        description: Snapshot creation time in canonical UTC form YYYY-MM-DDTHH:MM:SSZ; maximum age 24 hours
+        required: true
+        type: string
+      snapshot_confirmation:
+        description: Type SNAPSHOT-VERIFIED:<instance>:<snapshot>:<commit>:<created-at-utc>
+        required: true
+        type: string
       reinstall:
         description: Permit reinstall when /opt/hostpanel already exists
         required: true
@@ -45,10 +61,16 @@ jobs:
     environment: vps-acceptance
     env:
       REVIEWED_COMMIT_SHA: ${{ inputs.reviewed_commit_sha }}
+      PROVIDER_INSTANCE_ID: ${{ inputs.provider_instance_id }}
+      SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+      SNAPSHOT_CREATED_AT_UTC: ${{ inputs.snapshot_created_at_utc }}
+      SNAPSHOT_CONFIRMATION: ${{ inputs.snapshot_confirmation }}
       EXPECTED_VERSION: 3.4.0
       PANEL_HOST_INPUT: ${{ inputs.panel_host }}
       REINSTALL: ${{ inputs.reinstall }}
       MTA: ${{ inputs.mta }}
+      EVIDENCE_ROOT: provider-artifacts/evidence
+      SEALED_EVIDENCE: provider-artifacts/hostpanel-vps-acceptance.tar
 
     steps:
       - name: Check out the reviewed acceptance commit
@@ -58,6 +80,12 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Prepare fail-closed provider evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 tools/prepare-provider-evidence.py
+
       - name: Validate authorization, current main, inputs, and environment gates
         shell: bash
         env:
@@ -65,7 +93,7 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_IPV6: ${{ secrets.VPS_IPV6 }}
           VPS_SSH_PORT: ${{ secrets.VPS_SSH_PORT }}
-          VPS_PROVIDER_SNAPSHOT_CONFIRMED: ${{ secrets.VPS_PROVIDER_SNAPSHOT_CONFIRMED }}
+          VPS_PROVIDER_INSTANCE_ID: ${{ secrets.VPS_PROVIDER_INSTANCE_ID }}
         run: |
           set -euo pipefail
           [[ "${{ github.ref }}" == refs/heads/main ]] || {
@@ -95,12 +123,49 @@ jobs:
             echo "Refusing stale VPS acceptance: workflow dispatch SHA $GITHUB_SHA is not current main $CURRENT_MAIN_SHA." >&2
             exit 1
           }
-          [[ "$VPS_PROVIDER_SNAPSHOT_CONFIRMED" == yes ]] || {
-            echo 'VPS_PROVIDER_SNAPSHOT_CONFIRMED must be the environment secret yes.' >&2
+
+          [[ "$PROVIDER_INSTANCE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]] || {
+            echo 'provider_instance_id has an unsafe format.' >&2
             exit 1
           }
-          [[ -n "$VPS_HOST" ]] || { echo 'Missing required environment secret: VPS_HOST' >&2; exit 1; }
+          [[ "$SNAPSHOT_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]] || {
+            echo 'snapshot_id has an unsafe format.' >&2
+            exit 1
+          }
+          [[ -n "$VPS_PROVIDER_INSTANCE_ID" ]] || {
+            echo 'Missing required environment secret: VPS_PROVIDER_INSTANCE_ID' >&2
+            exit 1
+          }
+          [[ "$PROVIDER_INSTANCE_ID" == "$VPS_PROVIDER_INSTANCE_ID" ]] || {
+            echo 'provider_instance_id does not match the protected environment instance identity.' >&2
+            exit 1
+          }
+          python3 - "$SNAPSHOT_CREATED_AT_UTC" <<'PY'
+          import datetime as dt
+          import sys
 
+          raw = sys.argv[1]
+          try:
+              created = dt.datetime.strptime(raw, "%Y-%m-%dT%H:%M:%SZ").replace(
+                  tzinfo=dt.timezone.utc
+              )
+          except ValueError as exc:
+              raise SystemExit("snapshot_created_at_utc must use canonical UTC format") from exc
+          now = dt.datetime.now(dt.timezone.utc)
+          age = now - created
+          if age < -dt.timedelta(minutes=5):
+              raise SystemExit("snapshot creation time is unacceptably in the future")
+          if age > dt.timedelta(hours=24):
+              raise SystemExit("snapshot is older than the 24-hour acceptance limit")
+          PY
+          EXPECTED_SNAPSHOT_CONFIRMATION="SNAPSHOT-VERIFIED:${PROVIDER_INSTANCE_ID}:${SNAPSHOT_ID}:${REVIEWED_COMMIT_SHA}:${SNAPSHOT_CREATED_AT_UTC}"
+          [[ "$SNAPSHOT_CONFIRMATION" == "$EXPECTED_SNAPSHOT_CONFIRMATION" ]] || {
+            echo 'snapshot_confirmation does not bind the reviewed instance, snapshot, commit, and creation time.' >&2
+            exit 1
+          }
+          unset EXPECTED_SNAPSHOT_CONFIRMATION
+
+          [[ -n "$VPS_HOST" ]] || { echo 'Missing required environment secret: VPS_HOST' >&2; exit 1; }
           VPS_PORT="${VPS_SSH_PORT:-22}"
           [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && ((VPS_PORT >= 1 && VPS_PORT <= 65535))
           case "$MTA" in
@@ -157,7 +222,7 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends \
             openssh-client sshpass curl dnsutils netcat-openbsd
 
-      - name: Configure strict SSH host verification
+      - name: Configure strict SSH host verification and acceptance context
         env:
           VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
         run: |
@@ -167,15 +232,30 @@ jobs:
           umask 077
           printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           [[ -s "$HOME/.ssh/known_hosts" ]]
-          install -d -m 700 evidence
+          [[ -d "$EVIDENCE_ROOT" && ! -L "$EVIDENCE_ROOT" ]]
+          rm -f "$EVIDENCE_ROOT/runner-evidence-state.txt"
           {
             printf 'reviewed_commit_sha=%s\n' "$REVIEWED_COMMIT_SHA"
             printf 'current_main_sha=%s\n' "$CURRENT_MAIN_SHA"
             printf 'workflow_dispatch_sha=%s\n' "$GITHUB_SHA"
             printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID"
             printf 'workflow_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
-          } > evidence/acceptance-context.txt
-          chmod 600 evidence/acceptance-context.txt
+            printf 'provider_instance_id=%s\n' "$PROVIDER_INSTANCE_ID"
+            printf 'snapshot_id=%s\n' "$SNAPSHOT_ID"
+            printf 'snapshot_created_at_utc=%s\n' "$SNAPSHOT_CREATED_AT_UTC"
+          } > "$EVIDENCE_ROOT/acceptance-context.txt"
+          cat > "$EVIDENCE_ROOT/manual-release-checklist.txt" <<'CHECKLIST'
+          authoritative_dns_delegation=NOT_AUTOMATED
+          inbound_outbound_mail_and_authentication=NOT_AUTOMATED
+          disposable_web_php_database_flow=NOT_AUTOMATED
+          backup_restore_round_trip=NOT_AUTOMATED
+          customer_filesystem_quota_enforcement=NOT_AUTOMATED
+          provider_snapshot_rollback=NOT_AUTOMATED
+          final_release_readiness=INCOMPLETE_UNTIL_MANUAL_EVIDENCE_ATTACHED
+          CHECKLIST
+          chmod 600 \
+            "$EVIDENCE_ROOT/acceptance-context.txt" \
+            "$EVIDENCE_ROOT/manual-release-checklist.txt"
 
       - name: Inventory the disposable VM
         env:
@@ -209,7 +289,7 @@ jobs:
             ip -brief address
             printf "== existing hostpanel ==\n"
             test ! -e /opt/hostpanel || find /opt/hostpanel -maxdepth 2 -mindepth 1 -printf "%p\n" | sed -n "1,100p"
-          ' | tee evidence/pre-install-inventory.txt
+          ' | tee "$EVIDENCE_ROOT/pre-install-inventory.txt"
 
       - name: Install HostPanel and prepare reboot validation
         env:
@@ -486,7 +566,7 @@ jobs:
                 echo "OPEN_IPV6 $port"
               done
             fi
-          } | tee evidence/external-probes.txt
+          } | tee "$EVIDENCE_ROOT/external-probes.txt"
 
       - name: Collect root-only validation evidence
         if: always()
@@ -495,14 +575,14 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$SSHPASS" ]] || { echo 'Missing VPS_ROOT_PASSWORD.' >&2; exit 1; }
-          mkdir -p evidence/remote
+          mkdir -p "$EVIDENCE_ROOT/remote"
           sshpass -e scp -r -P "${VPS_PORT:-22}" \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o PreferredAuthentications=password \
             -o PubkeyAuthentication=no \
             -o ConnectTimeout=20 \
-            root@"$VPS_HOST":/root/hostpanel-acceptance-evidence/. evidence/remote/ || true
+            root@"$VPS_HOST":/root/hostpanel-acceptance-evidence/. "$EVIDENCE_ROOT/remote/" || true
           timeout 90s sshpass -e ssh -p "${VPS_PORT:-22}" \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
@@ -514,13 +594,27 @@ jobs:
             root@"$VPS_HOST" \
             'rm -f /root/hostpanel-acceptance.env /root/bootstrap-install.sh /root/validate-production-vm.sh /root/hostpanel-acceptance-remote.sh' \
             || true
-          find evidence -type f -exec chmod 600 {} +
+          find "$EVIDENCE_ROOT" -type f -exec chmod 600 {} +
 
-      - name: Upload acceptance evidence
+      - name: Sanitize and seal provider evidence before upload
         if: always()
+        id: provider_evidence
+        run: |
+          set -euo pipefail
+          python3 tools/prepare-provider-evidence.py
+          python3 tools/sanitize-provider-evidence.py "$EVIDENCE_ROOT"
+          python3 tools/seal-provider-evidence.py "$EVIDENCE_ROOT" "$SEALED_EVIDENCE"
+          sha256sum "$SEALED_EVIDENCE" > "${SEALED_EVIDENCE}.sha256"
+          chmod 600 "$SEALED_EVIDENCE" "${SEALED_EVIDENCE}.sha256"
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
+
+      - name: Upload sealed acceptance evidence
+        if: ${{ always() && steps.provider_evidence.outputs.ready == 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: hostpanel-vps-acceptance-${{ github.run_id }}-${{ inputs.reviewed_commit_sha }}
-          path: evidence
+          path: |
+            provider-artifacts/hostpanel-vps-acceptance.tar
+            provider-artifacts/hostpanel-vps-acceptance.tar.sha256
           if-no-files-found: error
           retention-days: 14
