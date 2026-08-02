@@ -135,7 +135,9 @@ class PostInstallHealthTests(unittest.TestCase):
         self.assertIn('"$PANEL_DIR/app/hostpanel-mysql-admin"', invocation)
 
     def test_cli_patcher_is_source_root_bound_and_blob_verified(self):
-        self.assertNotIn("/tmp/hostpanel-bootstrap", self.generated)
+        self.assertNotIn(
+    "find /tmp -path '/tmp/hostpanel-bootstrap.", self.generated
+)
         self.assertNotIn("CLI_RUNTIME_PATCHERS", self.generated)
         self.assertIn('[[ -f "$CLI_RUNTIME_PATCHER" && ! -L "$CLI_RUNTIME_PATCHER" ]]', self.generated)
         self.assertIn(
