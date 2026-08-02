@@ -1,8 +1,8 @@
 name: Archive and clean working branches
 
 on:
-  push:
-    branches: [main]
+  issues:
+    types: [opened]
   workflow_dispatch:
 
 permissions:
@@ -14,12 +14,17 @@ concurrency:
 
 jobs:
   cleanup:
-    if: github.repository == '1-vps/hostpanel' && github.ref == 'refs/heads/main'
+    if: >-
+      github.repository == '1-vps/hostpanel' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'issues' &&
+        github.event.issue.title == 'Run recoverable branch cleanup 838d9298-20260802'))
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: main
           fetch-depth: 0
           persist-credentials: true
 
