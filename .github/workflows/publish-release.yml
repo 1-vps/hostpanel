@@ -4,12 +4,24 @@ on:
   push:
     branches: [main]
     paths:
+      - '.github/workflows/publish-release.yml'
       - 'hostpanel-v*-source.tar.gz'
       - 'hostpanel-v*-source.tar.gz.sig'
       - SHA256SUMS
+      - app/**
+      - bootstrap-install.sh
+      - install.sh
+      - install.base.sh
+      - localization-overlay/**
+      - packaging/**
+      - releases/update.pub
+      - tools/**
+  issues:
+    types: [closed]
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   group: publish-hostpanel-release
@@ -17,6 +29,16 @@ concurrency:
 
 jobs:
   verify:
+    if: >-
+      github.event_name == 'push' ||
+      github.event.issue.number == 7 ||
+      github.event.issue.number == 14 ||
+      github.event.issue.number == 115 ||
+      github.event.issue.number == 116 ||
+      github.event.issue.number == 118 ||
+      github.event.issue.number == 119 ||
+      github.event.issue.number == 120 ||
+      github.event.issue.number == 121
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
@@ -31,11 +53,28 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify exact main commit
+      - name: Verify exact current main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == refs/heads/main ]]
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          if [[ "$GITHUB_EVENT_NAME" == issues ]]; then
+            issue_number="$(jq -r '.issue.number // empty' "$GITHUB_EVENT_PATH")"
+            case "$issue_number" in
+              7|14|115|116|118|119|120|121) ;;
+              *)
+                echo "Ignoring unrelated closed issue #${issue_number:-unknown}." >&2
+                exit 1
+                ;;
+            esac
+          fi
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          [[ "$current_main" == "$GITHUB_SHA" ]] || {
+            echo "Refusing to release stale commit $GITHUB_SHA; current main is $current_main." >&2
+            exit 1
+          }
 
       - name: Resolve release version and publication state
         id: version
@@ -49,9 +88,104 @@ jobs:
           TAG="v$VERSION"
           printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
           printf 'tag=%s\n' "$TAG" >> "$GITHUB_OUTPUT"
+
+          verify_existing_release() {
+            local release_json release_dir archive manifest metadata release_flags
+            local tag_type tag_sha name size maximum
+            local -a expected_names asset_names
+
+            release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")"
+            release_flags="$(jq -r '[.draft,.prerelease]|@tsv' <<<"$release_json")"
+            [[ "$release_flags" == $'false\tfalse' ]] || {
+              echo "Existing release $TAG is draft or prerelease, but the stable channel requires a final release." >&2
+              return 1
+            }
+            tag_type="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.type)"
+            tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)"
+            [[ "$tag_type" == commit && "$tag_sha" == "$GITHUB_SHA" ]] || {
+              echo "Existing release tag $TAG does not point to the tested commit $GITHUB_SHA." >&2
+              return 1
+            }
+
+            expected_names=(
+              "hostpanel-v${VERSION}-update.tar.gz"
+              "hostpanel-v${VERSION}-update.tar.gz.sig"
+              hostpanel-update-manifest.json
+              hostpanel-update-manifest.json.sig
+              release-build.json
+              release-build.json.sig
+            )
+            mapfile -t expected_names < <(printf '%s\n' "${expected_names[@]}" | sort)
+            mapfile -t asset_names < <(jq -r '.assets[].name' <<<"$release_json" | sort)
+            [[ "$(printf '%s\n' "${asset_names[@]}")" == "$(printf '%s\n' "${expected_names[@]}")" ]] || {
+              echo "Existing release $TAG does not contain exactly the reviewed asset set." >&2
+              return 1
+            }
+
+            for name in "${expected_names[@]}"; do
+              case "$name" in
+                hostpanel-v*-update.tar.gz) maximum=$((100 * 1024 * 1024)) ;;
+                *.sig) maximum=$((64 * 1024)) ;;
+                *.json) maximum=$((1024 * 1024)) ;;
+                *)
+                  echo "Unexpected release asset in size policy: $name" >&2
+                  return 1
+                  ;;
+              esac
+              size="$(
+                jq -r --arg name "$name" \
+                  '[.assets[] | select(.name == $name) | .size] | if length == 1 then .[0] else empty end' \
+                  <<<"$release_json"
+              )"
+              [[ "$size" =~ ^[0-9]+$ ]] && ((size > 0 && size <= maximum)) || {
+                echo "Existing release asset $name has unsafe advertised size ${size:-missing}." >&2
+                return 1
+              }
+            done
+
+            release_dir="$(mktemp -d)"
+            trap 'rm -rf "$release_dir"' RETURN
+            gh release download "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --dir "$release_dir" \
+              --pattern "hostpanel-v${VERSION}-update.tar.gz" \
+              --pattern "hostpanel-v${VERSION}-update.tar.gz.sig" \
+              --pattern hostpanel-update-manifest.json \
+              --pattern hostpanel-update-manifest.json.sig \
+              --pattern release-build.json \
+              --pattern release-build.json.sig
+            archive="$release_dir/hostpanel-v${VERSION}-update.tar.gz"
+            manifest="$release_dir/hostpanel-update-manifest.json"
+            metadata="$release_dir/release-build.json"
+            for required in \
+              "$archive" "$archive.sig" \
+              "$manifest" "$manifest.sig" \
+              "$metadata" "$metadata.sig"; do
+              [[ -s "$required" ]] || {
+                echo "Existing release $TAG is missing required asset ${required##*/}." >&2
+                return 1
+              }
+            done
+            openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+              -in "$archive" -sigfile "$archive.sig" >/dev/null
+            openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+              -in "$manifest" -sigfile "$manifest.sig" >/dev/null
+            openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+              -in "$metadata" -sigfile "$metadata.sig" >/dev/null
+            python3 tools/verify-existing-release.py \
+              --manifest "$manifest" \
+              --archive "$archive" \
+              --metadata "$metadata" \
+              --commit "$GITHUB_SHA" \
+              --version "$VERSION"
+            rm -rf "$release_dir"
+            trap - RETURN
+          }
+
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            verify_existing_release
             printf 'publish=false\ncreate_tag=false\n' >> "$GITHUB_OUTPUT"
-            echo "GitHub Release $TAG already exists; nothing to publish."
+            echo "Verified existing GitHub Release $TAG at $GITHUB_SHA; nothing to publish."
           elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
             printf 'publish=true\ncreate_tag=false\n' >> "$GITHUB_OUTPUT"
             echo "Tag $TAG exists without a release; publication will resume."
@@ -59,13 +193,13 @@ jobs:
             printf 'publish=true\ncreate_tag=true\n' >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Enforce external release gates
+      - name: Enforce release gates
         if: steps.version.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for issue in 7 14; do
+          for issue in 7 14 115 116 118 119 120 121; do
             state="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" --jq .state)"
             [[ "$state" == closed ]] || {
               echo "Release gate issue #$issue is still $state." >&2
@@ -87,7 +221,10 @@ jobs:
             -in "$source_archive" -sigfile "$source_archive.sig"
           python3 -m unittest discover -s tests -p 'test_*.py' -v
           bash -n install.sh bootstrap-install.sh tools/install-update-agent.sh
-          python3 -m py_compile tools/build-update-release.py tools/hostpanel-update.py
+          python3 -m py_compile \
+            tools/build-update-release.py \
+            tools/hostpanel-update.py \
+            tools/verify-existing-release.py
           mkdir -p dist
           python3 tools/build-update-release.py \
             --repository-root . \
@@ -103,6 +240,7 @@ jobs:
     environment: hostpanel-release
     permissions:
       contents: write
+      issues: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -110,11 +248,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Revalidate exact release input
+      - name: Revalidate exact current release input
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == refs/heads/main ]]
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          [[ "$current_main" == "$GITHUB_SHA" ]] || {
+            echo "Refusing to publish stale commit $GITHUB_SHA; current main is $current_main." >&2
+            exit 1
+          }
           VERSION="$(python3 tools/build-update-release.py --repository-root . --print-version)"
           [[ "$VERSION" == "${{ needs.verify.outputs.version }}" ]]
           mapfile -t source_archives < <(
@@ -126,12 +271,12 @@ jobs:
           openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
             -in "$source_archive" -sigfile "$source_archive.sig"
 
-      - name: Recheck external release gates
+      - name: Recheck release gates
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for issue in 7 14; do
+          for issue in 7 14 115 116 118 119 120 121; do
             state="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" --jq .state)"
             [[ "$state" == closed ]] || {
               echo "Release gate issue #$issue was reopened or remains $state." >&2
@@ -170,11 +315,17 @@ jobs:
           openssl pkeyutl -sign -inkey "$key_file" -rawin \
             -in dist/hostpanel-update-manifest.json \
             -out dist/hostpanel-update-manifest.json.sig
+          openssl pkeyutl -sign -inkey "$key_file" -rawin \
+            -in dist/release-build.json \
+            -out dist/release-build.json.sig
           openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
             -in "$archive" -sigfile "$archive.sig"
           openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
             -in dist/hostpanel-update-manifest.json \
             -sigfile dist/hostpanel-update-manifest.json.sig
+          openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+            -in dist/release-build.json \
+            -sigfile dist/release-build.json.sig
 
       - name: Publish GitHub release
         env:
@@ -204,6 +355,7 @@ jobs:
             dist/hostpanel-update-manifest.json \
             dist/hostpanel-update-manifest.json.sig \
             dist/release-build.json \
+            dist/release-build.json.sig \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "HostPanel $VERSION" \

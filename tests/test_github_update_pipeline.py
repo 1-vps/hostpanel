@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -13,33 +14,43 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 UPDATER_PATH = ROOT / "tools" / "hostpanel-update.py"
 BUILDER_PATH = ROOT / "tools" / "build-update-release.py"
+RELEASE_VERIFIER_PATH = ROOT / "tools" / "verify-existing-release.py"
 HARDENER_PATH = ROOT / "tools" / "harden_install.py"
 INSTALL_AGENT = ROOT / "tools" / "install-update-agent.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "publish-release.yml"
 SERVICE = ROOT / "packaging" / "systemd" / "hostpanel-update.service"
 TIMER = ROOT / "packaging" / "systemd" / "hostpanel-update.timer"
 PUBLIC_KEY = ROOT / "releases" / "update.pub"
+RELEASE_GATE_ISSUES = (7, 14, 115, 116, 118, 119, 120, 121)
 
 
-def load_updater():
-    spec = importlib.util.spec_from_file_location("hostpanel_update", UPDATER_PATH)
+def load_module(path: pathlib.Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise RuntimeError("could not load HostPanel updater")
+        raise RuntimeError(f"could not load {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
+def load_updater():
+    return load_module(UPDATER_PATH, "hostpanel_update")
+
+
 class GitHubUpdatePipelineTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.updater = load_updater()
+        cls.release_verifier = load_module(
+            RELEASE_VERIFIER_PATH, "hostpanel_existing_release_verifier"
+        )
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
         cls.install_agent = INSTALL_AGENT.read_text(encoding="utf-8")
         cls.service = SERVICE.read_text(encoding="utf-8")
         cls.timer = TIMER.read_text(encoding="utf-8")
         cls.hardener = HARDENER_PATH.read_text(encoding="utf-8")
+        cls.release_verifier_source = RELEASE_VERIFIER_PATH.read_text(encoding="utf-8")
 
     def test_release_workflow_publishes_new_signed_source_versions(self) -> None:
         self.assertIn("branches: [main]", self.workflow)
@@ -53,6 +64,7 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
             "openssl pkeyutl -verify -pubin -inkey releases/update.pub",
             self.workflow,
         )
+        self.assertIn("release-build.json.sig", self.workflow)
         self.assertIn("gh release create", self.workflow)
         self.assertNotIn("BEGIN PRIVATE KEY", self.workflow)
 
@@ -71,8 +83,25 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
             self.workflow.index("HOSTPANEL_RELEASE_PRIVATE_KEY"),
         )
 
-    def test_release_workflow_enforces_external_gates_and_safe_resume(self) -> None:
-        self.assertEqual(self.workflow.count("for issue in 7 14; do"), 2)
+    def test_release_workflow_resumes_when_any_gate_closes(self) -> None:
+        self.assertIn("issues:\n    types: [closed]", self.workflow)
+        for issue in RELEASE_GATE_ISSUES:
+            self.assertIn(f"github.event.issue.number == {issue}", self.workflow)
+        self.assertIn("7|14|115|116|118|119|120|121", self.workflow)
+        self.assertGreaterEqual(
+            self.workflow.count(
+                'gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha'
+            ),
+            2,
+        )
+        self.assertIn("Refusing to release stale commit", self.workflow)
+        self.assertIn("Refusing to publish stale commit", self.workflow)
+
+    def test_release_workflow_enforces_all_gates_and_safe_resume(self) -> None:
+        gate_loop = "for issue in 7 14 115 116 118 119 120 121; do"
+        self.assertEqual(self.workflow.count(gate_loop), 2)
+        for issue in RELEASE_GATE_ISSUES:
+            self.assertIn(str(issue), gate_loop)
         self.assertIn("Release gate issue #$issue is still $state", self.workflow)
         self.assertIn("Release gate issue #$issue was reopened or remains $state", self.workflow)
         self.assertIn("Tag $TAG exists without a release; publication will resume", self.workflow)
@@ -80,6 +109,92 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
         self.assertIn('tag_sha="$(gh api', self.workflow)
         self.assertIn('[[ "$tag_type" == commit && "$tag_sha" == "$GITHUB_SHA" ]]', self.workflow)
         self.assertIn("Existing tag $TAG does not point to the tested commit", self.workflow)
+
+    def test_existing_release_is_verified_instead_of_silently_accepted(self) -> None:
+        self.assertIn("verify_existing_release()", self.workflow)
+        self.assertIn('gh release download "$TAG"', self.workflow)
+        self.assertIn("tools/verify-existing-release.py", self.workflow)
+        self.assertIn("existing release manifest {label} does not match", self.release_verifier_source)
+        self.assertIn("existing release archive digest does not match", self.release_verifier_source)
+        self.assertIn("existing release build metadata has an unexpected shape", self.release_verifier_source)
+        self.assertIn("Verified existing GitHub Release $TAG at $GITHUB_SHA", self.workflow)
+
+    def test_existing_release_verifier_binds_commit_digest_and_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary = pathlib.Path(temporary_name)
+            archive_path = temporary / "hostpanel-v3.4.1-update.tar.gz"
+            archive_path.write_bytes(b"signed release payload")
+            digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+            commit = "a" * 40
+            manifest_path = temporary / "hostpanel-update-manifest.json"
+            manifest = {
+                "schema": 1,
+                "product": "hostpanel",
+                "channel": "stable",
+                "version": "3.4.1",
+                "commit": commit,
+                "tag": "v3.4.1",
+                "archive": {
+                    "name": archive_path.name,
+                    "sha256": digest,
+                    "signature": f"{archive_path.name}.sig",
+                },
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            metadata_path = temporary / "release-build.json"
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "version": "3.4.1",
+                        "tag": "v3.4.1",
+                        "commit": commit,
+                        "archive": archive_path.name,
+                        "archive_sha256": digest,
+                        "built_at": "2026-08-02T06:00:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.release_verifier.verify(
+                manifest_path,
+                archive_path,
+                metadata_path,
+                commit,
+                "3.4.1",
+            )
+            with self.assertRaises(SystemExit):
+                self.release_verifier.verify(
+                    manifest_path,
+                    archive_path,
+                    metadata_path,
+                    "b" * 40,
+                    "3.4.1",
+                )
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["unexpected"] = True
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "unexpected shape"):
+                self.release_verifier.verify(
+                    manifest_path,
+                    archive_path,
+                    metadata_path,
+                    commit,
+                    "3.4.1",
+                )
+
+    def test_runtime_changes_are_release_inputs(self) -> None:
+        for release_input in (
+            ".github/workflows/publish-release.yml",
+            "app/**",
+            "bootstrap-install.sh",
+            "install.sh",
+            "install.base.sh",
+            "localization-overlay/**",
+            "packaging/**",
+            "releases/update.pub",
+            "tools/**",
+        ):
+            self.assertIn(f"- '{release_input}'" if release_input.startswith(".github") else f"- {release_input}", self.workflow)
 
     def test_update_agent_is_installed_and_polled_frequently(self) -> None:
         self.assertIn("/opt/hostpanel/tools/hostpanel-update", self.install_agent)
@@ -175,6 +290,11 @@ class GitHubUpdatePipelineTests(unittest.TestCase):
     def test_source_files_compile_or_parse(self) -> None:
         compile(UPDATER_PATH.read_text(encoding="utf-8"), str(UPDATER_PATH), "exec")
         compile(BUILDER_PATH.read_text(encoding="utf-8"), str(BUILDER_PATH), "exec")
+        compile(
+            RELEASE_VERIFIER_PATH.read_text(encoding="utf-8"),
+            str(RELEASE_VERIFIER_PATH),
+            "exec",
+        )
         compile(HARDENER_PATH.read_text(encoding="utf-8"), str(HARDENER_PATH), "exec")
         self.assertTrue(
             INSTALL_AGENT.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash")
