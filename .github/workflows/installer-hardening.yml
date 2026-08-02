@@ -29,6 +29,7 @@ jobs:
           python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh
           bash -n install.sh
           bash -n bootstrap-install.sh
+          bash -n quick-install.sh
           bash -n test-matrix.sh
           bash -n run-full-test-matrix.sh
           bash -n /tmp/install.generated.sh
@@ -45,7 +46,7 @@ jobs:
           sudo apt-get install -y -qq shellcheck
           python3 tools/harden_install.py install.base.sh /tmp/install.generated.sh
           shellcheck -S error \
-            install.sh bootstrap-install.sh test-matrix.sh \
+            install.sh bootstrap-install.sh quick-install.sh test-matrix.sh \
             run-full-test-matrix.sh /tmp/install.generated.sh
 
   supported-os-preflight:
@@ -121,7 +122,7 @@ jobs:
 
               test -f SHA256SUMS
               test ! -L SHA256SUMS
-              mapfile -t archives < <(awk "\$2 ~ /-source\\.tar\\.gz\$/ {print \$2}" SHA256SUMS)
+              mapfile -t archives < <(awk "\$2 ~ /-source\\.tar\\.gz$/ {print \$2}" SHA256SUMS)
               test "${#archives[@]}" -eq 1
               archive="${archives[0]}"
               test -f "$archive"
