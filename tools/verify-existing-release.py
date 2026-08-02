@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import json
 import pathlib
@@ -53,6 +54,19 @@ def sha256_file(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
+def require_utc_timestamp(value: object) -> None:
+    if not isinstance(value, str) or not value.endswith("+00:00"):
+        raise SystemExit("existing release build metadata built_at is not UTC")
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise SystemExit("existing release build metadata built_at is invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != dt.timedelta(0):
+        raise SystemExit("existing release build metadata built_at is not UTC")
+    if parsed.microsecond != 0:
+        raise SystemExit("existing release build metadata built_at is not canonical")
+
+
 def verify(
     manifest_path: pathlib.Path,
     archive_path: pathlib.Path,
@@ -99,6 +113,15 @@ def verify(
         raise SystemExit("existing release archive digest does not match its signed manifest")
 
     metadata = load_object(metadata_path, "release build metadata")
+    if set(metadata) != {
+        "version",
+        "tag",
+        "commit",
+        "archive",
+        "archive_sha256",
+        "built_at",
+    }:
+        raise SystemExit("existing release build metadata has an unexpected shape")
     metadata_checks = {
         "version": metadata.get("version") == expected_version,
         "tag": metadata.get("tag") == f"v{expected_version}",
@@ -109,6 +132,7 @@ def verify(
     for label, valid in metadata_checks.items():
         if not valid:
             raise SystemExit(f"existing release build metadata {label} does not match")
+    require_utc_timestamp(metadata.get("built_at"))
 
 
 def parse_args() -> argparse.Namespace:
