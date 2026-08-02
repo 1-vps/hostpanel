@@ -117,6 +117,7 @@ jobs:
     timeout-minutes: 180
     env:
       HP_QEMU_REVIEWED_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      HP_QEMU_EXPECTED_VERSION: 3.4.0
       HP_QEMU_MTA: ${{ inputs.mta || 'postfix' }}
 
     steps:
