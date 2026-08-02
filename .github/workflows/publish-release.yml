@@ -7,26 +7,37 @@ on:
       - 'hostpanel-v*-source.tar.gz'
       - 'hostpanel-v*-source.tar.gz.sig'
       - SHA256SUMS
-  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: publish-hostpanel-release
   cancel-in-progress: false
 
 jobs:
-  publish:
+  verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.version.outputs.publish }}
+      create_tag: ${{ steps.version.outputs.create_tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Resolve release version
+      - name: Verify exact main commit
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+
+      - name: Resolve release version and publication state
         id: version
         shell: bash
         env:
@@ -39,18 +50,28 @@ jobs:
           printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
           printf 'tag=%s\n' "$TAG" >> "$GITHUB_OUTPUT"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            printf 'publish=false\n' >> "$GITHUB_OUTPUT"
-            printf 'tag_exists=true\n' >> "$GITHUB_OUTPUT"
+            printf 'publish=false\ncreate_tag=false\n' >> "$GITHUB_OUTPUT"
             echo "GitHub Release $TAG already exists; nothing to publish."
+          elif gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            printf 'publish=true\ncreate_tag=false\n' >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG exists without a release; publication will resume."
           else
-            printf 'publish=true\n' >> "$GITHUB_OUTPUT"
-            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
-              printf 'tag_exists=true\n' >> "$GITHUB_OUTPUT"
-              echo "Tag $TAG exists without a completed Release; publication will resume."
-            else
-              printf 'tag_exists=false\n' >> "$GITHUB_OUTPUT"
-            fi
+            printf 'publish=true\ncreate_tag=true\n' >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Enforce external release gates
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for issue in 7 14; do
+            state="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" --jq .state)"
+            [[ "$state" == closed ]] || {
+              echo "Release gate issue #$issue is still $state." >&2
+              exit 1
+            }
+          done
 
       - name: Run release regressions
         if: steps.version.outputs.publish == 'true'
@@ -67,9 +88,45 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_*.py' -v
           bash -n install.sh bootstrap-install.sh tools/install-update-agent.sh
           python3 -m py_compile tools/build-update-release.py tools/hostpanel-update.py
+          mkdir -p dist
+          python3 tools/build-update-release.py \
+            --repository-root . \
+            --commit "$GITHUB_SHA" \
+            --channel stable \
+            --output-dir dist
+
+  publish:
+    needs: verify
+    if: needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: hostpanel-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Revalidate exact release input
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          VERSION="$(python3 tools/build-update-release.py --repository-root . --print-version)"
+          [[ "$VERSION" == "${{ needs.verify.outputs.version }}" ]]
+          mapfile -t source_archives < <(
+            awk '$2 ~ /^hostpanel-v.*-source\.tar\.gz$/ {print $2}' SHA256SUMS
+          )
+          [[ "${#source_archives[@]}" -eq 1 ]]
+          source_archive="${source_archives[0]}"
+          awk -v target="$source_archive" '$2 == target {print}' SHA256SUMS | sha256sum -c -
+          openssl pkeyutl -verify -pubin -inkey releases/update.pub -rawin \
+            -in "$source_archive" -sigfile "$source_archive.sig"
 
       - name: Build deterministic release assets
-        if: steps.version.outputs.publish == 'true'
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -80,13 +137,12 @@ jobs:
             --output-dir dist
 
       - name: Sign release assets
-        if: steps.version.outputs.publish == 'true'
         env:
           HOSTPANEL_RELEASE_PRIVATE_KEY: ${{ secrets.HOSTPANEL_RELEASE_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           [[ -n "$HOSTPANEL_RELEASE_PRIVATE_KEY" ]] || {
-            echo 'Missing HOSTPANEL_RELEASE_PRIVATE_KEY repository secret.' >&2
+            echo 'Missing HOSTPANEL_RELEASE_PRIVATE_KEY environment secret.' >&2
             exit 1
           }
           umask 077
@@ -108,19 +164,25 @@ jobs:
             -sigfile dist/hostpanel-update-manifest.json.sig
 
       - name: Publish GitHub release
-        if: steps.version.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          TAG_EXISTS: ${{ steps.version.outputs.tag_exists }}
-          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          CREATE_TAG: ${{ needs.verify.outputs.create_tag }}
         run: |
           set -euo pipefail
-          if [[ "$TAG_EXISTS" != true ]]; then
+          if [[ "$CREATE_TAG" == true ]]; then
             gh api "repos/$GITHUB_REPOSITORY/git/refs" \
               --method POST \
               -f "ref=refs/tags/$TAG" \
               -f "sha=$GITHUB_SHA" >/dev/null
+          else
+            tag_type="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.type)"
+            tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)"
+            [[ "$tag_type" == commit && "$tag_sha" == "$GITHUB_SHA" ]] || {
+              echo "Existing tag $TAG does not point to the tested commit." >&2
+              exit 1
+            }
           fi
           archive="$(find dist -maxdepth 1 -type f -name 'hostpanel-v*-update.tar.gz' -print -quit)"
           gh release create "$TAG" \
