@@ -11,7 +11,7 @@ import tarfile
 
 from hostpanel_build_config import (
     BuildError, Platform, component_packages, expand_component, owner_ids,
-    panel_web_mode, php_versions,
+    php_versions,
 )
 from hostpanel_build_packages import (
     apply_system_updates, candidate_version, installed_version, refresh_packages,
@@ -21,7 +21,7 @@ from hostpanel_build_packages import (
 CONFIG_PATHS = {
     'nginx': ('/etc/nginx',),
     'apache': ('/etc/apache2', '/etc/httpd'),
-    'openlitespeed': ('/usr/local/lsws/conf',),
+    'openlitespeed': ('/usr/local/lsws/conf', '/etc/hostpanel/openlitespeed'),
     'php': ('/etc/php', '/etc/opt/remi'),
     'database': (
         '/etc/mysql', '/etc/my.cnf',
@@ -227,6 +227,8 @@ def validate_webserver_mode(
     options: dict[str, str], helper: pathlib.Path, python_path: pathlib.Path,
     log_path: pathlib.Path,
 ) -> None:
+    if not helper.is_file() or not python_path.is_file():
+        raise BuildError('webserver reconciliation runtime is missing')
     completed = run_command(
         [str(python_path), str(helper), options['webserver'], '--check'],
         check=False, capture=True,
@@ -237,7 +239,8 @@ def validate_webserver_mode(
             + ', '.join(completed.stdout.splitlines()[:10])
         )
     if completed.returncode != 0:
-        raise BuildError('webserver mode validation failed')
+        detail = (completed.stderr or completed.stdout).strip()[-500:]
+        raise BuildError(f'webserver mode validation failed: {detail}')
 
 
 def preflight_packages(
@@ -255,16 +258,39 @@ def preflight_packages(
                 missing.append(package)
     if missing:
         detail = ', '.join(missing)
-        if 'openlitespeed' in missing:
+        if 'openlitespeed' in missing or any(item.startswith('lsphp') for item in missing):
             raise BuildError(
-                'OpenLiteSpeed is not published by the configured repositories '
-                f'for {platform.os_id} {platform.version_id}; no services were changed. '
-                'Configure a supported official LiteSpeed package source, then rerun: '
+                'OpenLiteSpeed or a required LSPHP runtime is not published by the '
+                f'configured repositories for {platform.os_id} {platform.version_id}; '
+                f'no services were changed. Missing: {detail}. Configure a supported '
+                'official LiteSpeed package source, then rerun: '
                 'hostpanel-build build web --apply'
             )
         raise BuildError(
             f'required packages are unavailable; no services were changed: {detail}'
         )
+
+
+def service_active(name: str) -> bool:
+    return run_command(
+        ['systemctl', 'is-active', '--quiet', name], check=False, capture=True
+    ).returncode == 0
+
+
+def mask_openlitespeed(log_path: pathlib.Path) -> bool:
+    was_active = service_active('lsws.service')
+    run_command(
+        ['systemctl', 'mask', '--runtime', '--now', 'lsws.service'],
+        log_path=log_path,
+    )
+    return was_active
+
+
+def unmask_openlitespeed(log_path: pathlib.Path) -> None:
+    run_command(
+        ['systemctl', 'unmask', '--runtime', 'lsws.service'],
+        check=False, log_path=log_path,
+    )
 
 
 def apply_build(
@@ -277,19 +303,39 @@ def apply_build(
     components = expand_component(component, options, roles if component == 'all' else None)
     if 'panel' in components:
         raise BuildError('use update_panel --apply for the signed HostPanel application update')
-    preflight_packages(components, options, platform)
+
     refresh_packages(platform, log_path)
-    for item in components:
-        snapshot = config_snapshot(item, backup_dir)
-        if snapshot is not None:
-            print(f'Configuration snapshot: {snapshot}')
-        reinstall_packages(component_packages(item, options, platform), platform, log_path)
-        validate_component(item, options, platform, log_path)
-        restart_component(item, options, platform, log_path)
-    if component == 'web' or (component == 'all' and 'web' in roles):
-        reconcile_webserver(options, web_helper, python_path, mode_file, log_path)
-        validate_webserver_mode(options, web_helper, python_path, log_path)
-    run_doctor(log_path, python_path, doctor_path)
+    preflight_packages(components, options, platform)
+    ols_requested = 'openlitespeed' in components
+    ols_was_active = False
+    if ols_requested:
+        ols_was_active = mask_openlitespeed(log_path)
+
+    succeeded = False
+    try:
+        for item in components:
+            snapshot = config_snapshot(item, backup_dir)
+            if snapshot is not None:
+                print(f'Configuration snapshot: {snapshot}')
+            reinstall_packages(component_packages(item, options, platform), platform, log_path)
+            validate_component(item, options, platform, log_path)
+            # OpenLiteSpeed remains runtime-masked until the loopback listener,
+            # LSPHP runtimes and all managed vhosts have been reconciled.
+            if item != 'openlitespeed':
+                restart_component(item, options, platform, log_path)
+        if component == 'web' or (component == 'all' and 'web' in roles):
+            reconcile_webserver(options, web_helper, python_path, mode_file, log_path)
+            validate_webserver_mode(options, web_helper, python_path, log_path)
+        run_doctor(log_path, python_path, doctor_path)
+        succeeded = True
+    finally:
+        if ols_requested:
+            unmask_openlitespeed(log_path)
+            if not succeeded and ols_was_active:
+                run_command(
+                    ['systemctl', 'restart', 'lsws.service'],
+                    check=False, log_path=log_path,
+                )
 
 
 def apply_updates_and_doctor(
