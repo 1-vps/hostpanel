@@ -60,6 +60,10 @@ sudo hostpanel-build build web --apply
 
 An applied web build installs or realigns the required packages, validates configurations, changes every managed domain through HostPanel's existing webserver engine, records the mode for future domains, and runs `hostpanel-doctor`.
 
+For `openlitespeed`, every selected PHP branch must also be available as a matching LSPHP runtime and extension set. The switch refreshes package metadata and checks every required `openlitespeed`/`lsphp*` candidate before masking or restarting a service. If the configured repositories do not publish the complete set, the command stops before service mutation.
+
+During an OpenLiteSpeed switch, `lsws.service` is runtime-masked while packages are installed. HostPanel then forces WebAdmin to `127.0.0.1:7080`, installs the HostPanel listener on `127.0.0.1:8088`, enables proxy-IP handling, validates all LSPHP binaries, and converts managed domains transactionally. Failed domain conversion is rolled back in reverse order.
+
 ## Other options
 
 ```text
@@ -139,5 +143,12 @@ sudo hostpanel-build update_panel --apply
 - The base installer never attempts to install OpenLiteSpeed.
 - Webserver conversion uses HostPanel's tested per-domain configuration engine instead of editing customer vhosts with broad substitutions.
 - Relevant configuration is snapshotted before package realignment.
+- OpenLiteSpeed package installation is isolated behind a runtime systemd mask; only loopback listeners are accepted.
+- Every selected PHP branch requires an executable matching LSPHP runtime before OpenLiteSpeed is activated.
+- Multi-domain webserver changes roll back already converted domains in reverse order on failure.
 - Service configuration is validated before restart.
 - Applied maintenance ends with `hostpanel-doctor --quiet`.
+
+## OpenLiteSpeed repository availability
+
+`openlitespeed` is an explicit post-install choice, not a base-install dependency. On a distribution where the configured official repositories do not expose `openlitespeed` and every required `lsphp*` package, `hostpanel-build build web --apply` exits before changing services. This includes Ubuntu releases for which LiteSpeed has not published a complete package set. Keep `webserver=nginx_apache` until the required candidates are visible.
