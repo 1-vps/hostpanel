@@ -36,28 +36,27 @@ class CustomBuildExtrasStateTests(unittest.TestCase):
             with self.assertRaisesRegex(CONFIG.BuildError, 'does not match'):
                 STATE.validate_mongodb(options, pathlib.Path('/tmp/log'))
 
-    def test_varnish_failure_repairs_direct_origin(self):
+    def test_mongodb_hardening_is_idempotent_and_fail_closed(self):
+        original = 'net:\n  bindIp: localhost,::1\nsecurity:\n  authorization: true\n'
+        updated = STATE.harden_mongod_config(original)
+        self.assertEqual(updated, STATE.harden_mongod_config(updated))
+        self.assertIn('bindIp: 127.0.0.1', updated)
+        self.assertIn('authorization: enabled', updated)
+        with self.assertRaisesRegex(CONFIG.BuildError, 'bindIpAll'):
+            STATE.harden_mongod_config('net:\n  bindIpAll: true\n')
+        with self.assertRaisesRegex(CONFIG.BuildError, 'multiple top-level net'):
+            STATE.harden_mongod_config('net:\nnet:\n')
+
+    def test_varnish_validation_requires_loopback_admin_port(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
         options['varnish'] = 'on'
-        repaired: list[tuple[bool, int]] = []
-        with mock.patch.object(
-            STATE.base, 'apply_varnish',
-            side_effect=CONFIG.BuildError('validation failed'),
-        ), mock.patch.object(
-            STATE.base, 'write_atomic_text',
-        ), mock.patch.object(
-            STATE.base, 'rewrite_varnish_proxies',
-            side_effect=lambda enabled, port, log: repaired.append((enabled, port)),
-        ), mock.patch.object(
-            STATE, 'run_command',
-            return_value=subprocess.CompletedProcess([], 0, '', ''),
-        ):
-            with self.assertRaisesRegex(CONFIG.BuildError, 'validation failed'):
-                STATE.apply_varnish(
-                    options, CONFIG.Platform('debian', 'ubuntu', '24.04'),
-                    pathlib.Path('/tmp/log'), pathlib.Path('/tmp/backup'),
-                )
-        self.assertEqual(repaired, [(False, 8080)])
+        with mock.patch.object(STATE.base, 'validate_varnish'), \
+             mock.patch.object(STATE.base, 'loopback_listener', return_value=False):
+            with self.assertRaisesRegex(CONFIG.BuildError, 'management port'):
+                STATE.validate_varnish(options, pathlib.Path('/tmp/log'))
+        with mock.patch.object(STATE.base, 'validate_varnish'), \
+             mock.patch.object(STATE.base, 'loopback_listener', return_value=True):
+            STATE.validate_varnish(options, pathlib.Path('/tmp/log'))
 
     def test_active_varnish_blocks_webserver_mode_change(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
@@ -94,7 +93,7 @@ class CustomBuildExtrasStateTests(unittest.TestCase):
             self.assertIn('expected["mongod"]', first)
             self.assertIn('expected["varnish"]', first)
 
-    def test_entry_and_installer_include_state_adapters(self):
+    def test_entry_and_installer_include_all_state_adapters(self):
         entry = (TOOLS / 'hostpanel_build_entry.py').read_text(encoding='utf-8')
         launcher = (TOOLS / 'hostpanel-build.py').read_text(encoding='utf-8')
         installer = (TOOLS / 'install-hostpanel-build.sh').read_text(encoding='utf-8')
@@ -102,9 +101,12 @@ class CustomBuildExtrasStateTests(unittest.TestCase):
             ['bash', '-n', str(TOOLS / 'install-hostpanel-build.sh')], check=True
         )
         self.assertIn('ensure_safe_web_switch', entry)
+        self.assertIn('state.install()', entry)
+        self.assertIn('cli.validate_varnish = state.validate_varnish', entry)
         self.assertIn('from hostpanel_build_entry import main', launcher)
         self.assertIn('hostpanel_build_extras_state.py', installer)
         self.assertIn('hostpanel_build_entry.py', installer)
+        self.assertIn('hostpanel_build_mongodb_adapter.py', installer)
         self.assertIn('patch_extras_doctor.py', installer)
         self.assertIn('/etc/hostpanel/mongodb-mode', installer)
 
