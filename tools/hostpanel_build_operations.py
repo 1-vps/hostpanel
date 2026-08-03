@@ -14,7 +14,8 @@ from hostpanel_build_config import (
     panel_web_mode, php_versions,
 )
 from hostpanel_build_packages import (
-    apply_system_updates, refresh_packages, reinstall_packages, run_command,
+    apply_system_updates, candidate_version, installed_version, refresh_packages,
+    reinstall_packages, run_command,
 )
 
 CONFIG_PATHS = {
@@ -239,6 +240,33 @@ def validate_webserver_mode(
         raise BuildError('webserver mode validation failed')
 
 
+def preflight_packages(
+    components: list[str], options: dict[str, str], platform: Platform
+) -> None:
+    missing: list[str] = []
+    seen: set[str] = set()
+    for component in components:
+        for package in component_packages(component, options, platform):
+            if package in seen:
+                continue
+            seen.add(package)
+            if installed_version(package, platform) is None \
+               and candidate_version(package, platform) is None:
+                missing.append(package)
+    if missing:
+        detail = ', '.join(missing)
+        if 'openlitespeed' in missing:
+            raise BuildError(
+                'OpenLiteSpeed is not published by the configured repositories '
+                f'for {platform.os_id} {platform.version_id}; no services were changed. '
+                'Configure a supported official LiteSpeed package source, then rerun: '
+                'hostpanel-build build web --apply'
+            )
+        raise BuildError(
+            f'required packages are unavailable; no services were changed: {detail}'
+        )
+
+
 def apply_build(
     component: str, options: dict[str, str], platform: Platform,
     log_path: pathlib.Path, backup_dir: pathlib.Path,
@@ -249,6 +277,7 @@ def apply_build(
     components = expand_component(component, options, roles if component == 'all' else None)
     if 'panel' in components:
         raise BuildError('use update_panel --apply for the signed HostPanel application update')
+    preflight_packages(components, options, platform)
     refresh_packages(platform, log_path)
     for item in components:
         snapshot = config_snapshot(item, backup_dir)
