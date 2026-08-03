@@ -14,7 +14,7 @@ from hostpanel_build_config import (
     php_versions,
 )
 from hostpanel_build_packages import (
-    apply_system_updates, candidate_version, installed_version, refresh_packages,
+    apply_system_updates, candidate_version, refresh_packages,
     reinstall_packages, run_command,
 )
 
@@ -154,7 +154,7 @@ def services_for(component: str, options: dict[str, str], platform: Platform) ->
         mta = 'postfix' if options['mta'] == 'postfix' else ('exim4' if platform.family == 'debian' else 'exim')
         return [mta, 'dovecot', 'rspamd', 'clamav-daemon' if platform.family == 'debian' else 'clamd']
     if component == 'dns':
-        return ['named']
+        return ['bind9' if platform.family == 'debian' else 'named']
     if component == 'redis':
         return ['redis-server' if platform.family == 'debian' else 'redis']
     return []
@@ -253,8 +253,7 @@ def preflight_packages(
             if package in seen:
                 continue
             seen.add(package)
-            if installed_version(package, platform) is None \
-               and candidate_version(package, platform) is None:
+            if candidate_version(package, platform) is None:
                 missing.append(package)
     if missing:
         detail = ', '.join(missing)
