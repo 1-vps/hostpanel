@@ -9,8 +9,8 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ENTRY = ROOT / "install-one-line.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "automatic-installer.yml"
-AUTO_COMMIT = "9fedefce0bd5d9506983cff8cb060816bfe5dbaa"
-AUTO_BLOB = "8950754a20a3ba478a6dbfa48b070d8ce1428b0d"
+AUTO_COMMIT = "0722d75dd0dd2b64f730012700b5bd45a7ce0c41"
+AUTO_BLOB = "984c23040306429858662a6b51a62e983e7f2796"
 
 
 class OneLineInstallTests(unittest.TestCase):
@@ -30,9 +30,10 @@ class OneLineInstallTests(unittest.TestCase):
         self.assertIn("never prompts", result.stdout)
         self.assertIn("standard input", result.stdout)
         self.assertIn("install-one-line.sh [DOMAIN]", result.stdout)
+        self.assertIn("base webserver mode is nginx_apache", result.stdout)
 
     def test_entry_is_small_and_pinned_to_the_automatic_engine(self) -> None:
-        self.assertLessEqual(len(self.source.splitlines()), 170)
+        self.assertLessEqual(len(self.source.splitlines()), 175)
         self.assertIn(f'AUTO_INSTALL_COMMIT="{AUTO_COMMIT}"', self.source)
         self.assertIn(f'AUTO_INSTALL_BLOB="{AUTO_BLOB}"', self.source)
         self.assertNotIn("ref=main", self.source)
@@ -75,6 +76,7 @@ class OneLineInstallTests(unittest.TestCase):
         self.assertNotIn("HP_ALLOW_PUBLIC_PANEL=yes", self.source)
         self.assertIn("HP_PANEL_ADMIN_CIDR", self.source)
         self.assertIn("HP_CHECK_ONLY=yes", self.source)
+        self.assertIn("nginx_apache", self.source)
 
     def test_workflow_validates_the_entry_file(self) -> None:
         self.assertGreaterEqual(self.workflow.count("install-one-line.sh"), 4)

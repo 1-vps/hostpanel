@@ -11,7 +11,6 @@ write_files:
       HP_PANEL_HOST=panel.example.com
       HP_PANEL_ADMIN_CIDR=192.0.2.10/32
       HP_MTA=postfix
-      HP_LITESPEED_REPO=auto
       HP_GITHUB_TOKEN_FILE=/run/secrets/hostpanel_github_token
 
 runcmd:
@@ -43,11 +42,11 @@ runcmd:
     chmod 0600 "$D/curl"
     curl -q --proto '=https' --tlsv1.2 -fsSL --retry 5 \
       --config "$D/curl" \
-      'https://api.github.com/repos/1-vps/hostpanel/contents/auto-install.sh?ref=9fedefce0bd5d9506983cff8cb060816bfe5dbaa' \
+      'https://api.github.com/repos/1-vps/hostpanel/contents/auto-install.sh?ref=0722d75dd0dd2b64f730012700b5bd45a7ce0c41' \
       -o "$D/install"
     rm -f -- "$D/curl"
-    [[ "$(git hash-object "$D/install")" == 8950754a20a3ba478a6dbfa48b070d8ce1428b0d ]]
+    [[ "$(git hash-object "$D/install")" == 984c23040306429858662a6b51a62e983e7f2796 ]]
     chmod 0700 "$D/install"
     bash "$D/install"
 
-final_message: "HostPanel provisioning finished; inspect /var/lib/hostpanel/auto-install-status.json"
+final_message: "HostPanel nginx_apache provisioning and CustomBuild installation finished; inspect /var/lib/hostpanel/auto-install-status.json"

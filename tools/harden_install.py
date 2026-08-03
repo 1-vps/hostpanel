@@ -34,6 +34,7 @@ REVIEWED_IMPLEMENTATION_MARKERS = (
     "compile Sieve after plugin configuration",
     "SIEVEC_PLUGIN_ARGS",
     "OpenLiteSpeed optional fallback",
+    "CustomBuild nginx_apache default",
     "root action runtime directories",
     "systemd-resolved preflight allowance",
     "_replace_once",
@@ -317,6 +318,37 @@ for backup in "${TREE_ROLLBACK_BACKUPS[@]}"; do'''
         "__UPDATE_AGENT_PATHS__", update_agent_paths
     ).replace("__UPDATE_AGENT_BLOBS__", update_agent_blobs)
 
+    webserver_mode_old = r'''RSPAMD_REPO_MODE="${HP_RSPAMD_REPO:-off}"'''
+    webserver_mode_new = r'''RSPAMD_REPO_MODE="${HP_RSPAMD_REPO:-off}"
+WEBSERVER_MODE="${HP_WEBSERVER_MODE:-nginx_apache}"'''
+
+    webserver_validation_old = r'''[[ "$MAIL_MTA" =~ ^(postfix|exim)$ ]] || die "Unsupported MTA: $MAIL_MTA (choose postfix or exim)"'''
+    webserver_validation_new = r'''[[ "$MAIL_MTA" =~ ^(postfix|exim)$ ]] || die "Unsupported MTA: $MAIL_MTA (choose postfix or exim)"
+if [[ "$REINSTALL" == yes && -z "${HP_WEBSERVER_MODE+x}" \
+     && -r /etc/hostpanel/webserver-mode ]]; then
+  previous_webserver_mode="$(tr -d '[:space:]' </etc/hostpanel/webserver-mode)"
+  [[ "$previous_webserver_mode" =~ ^(nginx_apache|nginx|apache|openlitespeed)$ ]] \
+    && WEBSERVER_MODE="$previous_webserver_mode"
+fi
+[[ "$WEBSERVER_MODE" =~ ^(nginx_apache|nginx|apache|openlitespeed)$ ]] \
+  || die "Unsupported webserver mode: $WEBSERVER_MODE"'''
+
+    ols_install_old = r'''if has_role web && pkg_available "$(pkg_name openlitespeed)"; then
+say "Installing OpenLiteSpeed and LSPHP"'''
+    ols_install_new = r'''if has_role web && [[ "$WEBSERVER_MODE" == openlitespeed ]] \
+   && pkg_available "$(pkg_name openlitespeed)"; then
+say "Installing OpenLiteSpeed and LSPHP"'''
+
+    ols_config_old = r'''if has_role web; then
+say "Configuring OpenLiteSpeed as a private per-domain backend"'''
+    ols_config_new = r'''if has_role web && [[ "$WEBSERVER_MODE" == openlitespeed ]]; then
+say "Configuring OpenLiteSpeed as a private per-domain backend"'''
+
+    ols_missing_old = r'''  warn "OpenLiteSpeed backend unavailable; nginx and Apache remain active"'''
+    ols_missing_new = r'''  [[ "$WEBSERVER_MODE" != openlitespeed ]] \
+    || die "OpenLiteSpeed mode was requested but the runtime is unavailable; configure a supported package source before selecting it"
+  warn "OpenLiteSpeed backend unavailable; nginx and Apache remain active"'''
+
     text = path.read_text(encoding="utf-8")
     updated = replace_reviewed_shape(
         text, health_old, health_new, "post-install health"
@@ -350,6 +382,27 @@ for backup in "${TREE_ROLLBACK_BACKUPS[@]}"; do'''
         update_agent_old,
         update_agent_new,
         "signed GitHub update agent installation",
+    )
+    updated = replace_reviewed_shape(
+        updated,
+        webserver_mode_old,
+        webserver_mode_new,
+        "CustomBuild nginx_apache default",
+    )
+    updated = replace_reviewed_shape(
+        updated,
+        webserver_validation_old,
+        webserver_validation_new,
+        "CustomBuild webserver validation",
+    )
+    updated = replace_reviewed_shape(
+        updated, ols_install_old, ols_install_new, "optional OpenLiteSpeed installation"
+    )
+    updated = replace_reviewed_shape(
+        updated, ols_config_old, ols_config_new, "optional OpenLiteSpeed configuration"
+    )
+    updated = replace_reviewed_shape(
+        updated, ols_missing_old, ols_missing_new, "requested OpenLiteSpeed availability"
     )
 
     mode = stat.S_IMODE(path.stat().st_mode)

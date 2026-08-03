@@ -7,9 +7,22 @@ on:
       - quick-install.sh
       - install-one-line.sh
       - SETUP.md
+      - CUSTOMBUILD.md
       - examples/cloud-init-hostpanel.yaml
+      - tools/harden_install.py
+      - tools/hostpanel-build.py
+      - tools/hostpanel_build_config.py
+      - tools/hostpanel_build_packages.py
+      - tools/hostpanel_build_operations.py
+      - tools/hostpanel_build_cli.py
+      - tools/hostpanel_build_web.py
+      - tools/install-hostpanel-build.sh
+      - tools/patch_custombuild_runtime.py
       - tests/test_auto_install.py
       - tests/test_one_line_install.py
+      - tests/test_hostpanel_build.py
+      - tests/test_custombuild_openlitespeed.py
+      - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   push:
     branches: [main]
@@ -18,9 +31,22 @@ on:
       - quick-install.sh
       - install-one-line.sh
       - SETUP.md
+      - CUSTOMBUILD.md
       - examples/cloud-init-hostpanel.yaml
+      - tools/harden_install.py
+      - tools/hostpanel-build.py
+      - tools/hostpanel_build_config.py
+      - tools/hostpanel_build_packages.py
+      - tools/hostpanel_build_operations.py
+      - tools/hostpanel_build_cli.py
+      - tools/hostpanel_build_web.py
+      - tools/install-hostpanel-build.sh
+      - tools/patch_custombuild_runtime.py
       - tests/test_auto_install.py
       - tests/test_one_line_install.py
+      - tests/test_hostpanel_build.py
+      - tests/test_custombuild_openlitespeed.py
+      - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   workflow_dispatch:
 
@@ -35,15 +61,32 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - name: Parse installer chain
+      - name: Parse installer and CustomBuild chain
         run: |
           bash -n auto-install.sh
           bash -n quick-install.sh
           bash -n install-one-line.sh
-      - name: Run automatic installer regressions
-        run: python3 -m unittest -v tests.test_auto_install tests.test_one_line_install
+          bash -n tools/install-hostpanel-build.sh
+          python3 -m py_compile \
+            tools/hostpanel-build.py \
+            tools/hostpanel_build_config.py \
+            tools/hostpanel_build_packages.py \
+            tools/hostpanel_build_operations.py \
+            tools/hostpanel_build_cli.py \
+            tools/hostpanel_build_web.py \
+            tools/patch_custombuild_runtime.py
+      - name: Run installer and CustomBuild regressions
+        run: |
+          python3 -m unittest -v \
+            tests.test_auto_install \
+            tests.test_one_line_install \
+            tests.test_hostpanel_build \
+            tests.test_custombuild_openlitespeed \
+            tests.test_openlitespeed_fallback
       - name: ShellCheck installer chain
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
-          shellcheck -S error auto-install.sh quick-install.sh install-one-line.sh
+          shellcheck -S error \
+            auto-install.sh quick-install.sh install-one-line.sh \
+            tools/install-hostpanel-build.sh
