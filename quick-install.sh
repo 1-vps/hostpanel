@@ -8,7 +8,7 @@ export PATH
 umask 077
 unset PYTHONPATH PYTHONHOME BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH
 
-readonly REVIEWED_COMMIT_SHA="81afbc7a85a7bf728372fb3e9af2e7c78e7227fc"
+readonly REVIEWED_COMMIT_SHA="6e4d598dfce0d64e993a14a129ce53985d53ea21"
 readonly BOOTSTRAP_BLOB="639fae60ddd5bec36f5e3167dd21733a412a69fd"
 readonly VALIDATOR_BLOB="2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9"
 readonly REPOSITORY_API="https://api.github.com/repos/1-vps/hostpanel"
