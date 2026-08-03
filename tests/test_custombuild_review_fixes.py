@@ -60,6 +60,32 @@ class CustomBuildReviewFixTests(unittest.TestCase):
         self.assertIn('ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;', rendered)
         self.assertIn('proxy_pass http://127.0.0.1:8080;', rendered)
 
+    def test_apache_support_migrates_pristine_and_v1_shapes_idempotently(self):
+        anchor = 'OLS_PROXY_VHOST = """server {{\n'
+        for original in (
+            anchor,
+            PATCH.APACHE_EDGE_SUPPORT_V1 + '\n' + anchor,
+        ):
+            migrated = PATCH.install_apache_edge_support(original, anchor)
+            self.assertEqual(migrated.count('APACHE_EDGE_TLS_VHOST = """'), 1)
+            self.assertEqual(migrated.count(anchor), 1)
+            self.assertEqual(
+                PATCH.install_apache_edge_support(migrated, anchor), migrated
+            )
+
+    def test_reviewed_variant_replacement_is_idempotent(self):
+        first = 'old-a\n'
+        second = 'old-b\n'
+        new = 'new\n'
+        self.assertEqual(
+            PATCH.replace_variant_once(first, (first, second), new, 'test'), new
+        )
+        self.assertEqual(
+            PATCH.replace_variant_once(new, (first, second), new, 'test'), new
+        )
+        with self.assertRaises(SystemExit):
+            PATCH.replace_variant_once(first + second, (first, second), new, 'test')
+
 
 if __name__ == '__main__':
     unittest.main()
