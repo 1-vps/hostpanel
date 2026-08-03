@@ -22,7 +22,8 @@ from hostpanel_build_operations import (
 )
 from hostpanel_build_packages import check_system_updates, package_states, run_command
 from hostpanel_build_ssl import (
-    certificate_status, issue_certificate, print_ssl_plan, renew_certificates,
+    DEFAULT_EAB_HMAC_FILE, DEFAULT_EAB_KID_FILE, certificate_status,
+    issue_certificate, print_ssl_plan, renew_certificates,
 )
 
 
@@ -130,12 +131,23 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     update_panel_parser.add_argument('--apply', action='store_true')
     ssl_parser = subparsers.add_parser(
-        'ssl', help="issue, renew, or inspect free Let's Encrypt certificates"
+        'ssl', help='issue, renew, or inspect free ACME certificates'
     )
     ssl_commands = ssl_parser.add_subparsers(dest='ssl_command', required=True)
     ssl_issue = ssl_commands.add_parser('issue', help='issue and install a certificate')
     ssl_issue.add_argument('domain')
     ssl_issue.add_argument('--email', required=True)
+    ssl_issue.add_argument(
+        '--provider', choices=('letsencrypt', 'zerossl'), default='letsencrypt'
+    )
+    ssl_issue.add_argument(
+        '--eab-kid-file', default=str(DEFAULT_EAB_KID_FILE),
+        help='root-protected ZeroSSL EAB KID file',
+    )
+    ssl_issue.add_argument(
+        '--eab-hmac-file', default=str(DEFAULT_EAB_HMAC_FILE),
+        help='root-protected ZeroSSL EAB HMAC file',
+    )
     ssl_issue.add_argument('--www', action='store_true', help='include www.DOMAIN')
     ssl_issue.add_argument('--apply', action='store_true')
     ssl_renew = ssl_commands.add_parser('renew', help='renew due certificates')
@@ -169,7 +181,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.ssl_command == 'status':
                 return certificate_status(args.domain)
             if args.ssl_command == 'issue' and not args.apply:
-                print_ssl_plan('issue', args.domain, args.email, args.www)
+                print_ssl_plan(
+                    'issue', args.domain, args.email, args.www, args.provider
+                )
                 return 0
             if args.ssl_command == 'renew' and not args.apply:
                 print_ssl_plan('renew', args.domain)
@@ -200,8 +214,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.command == 'ssl':
                 require_root()
                 if args.ssl_command == 'issue':
-                    issue_certificate(args.domain, args.email, args.www, log_path)
-                    print(f"Free SSL installed for {args.domain}. Log: {log_path}")
+                    issue_certificate(
+                        args.domain, args.email, args.www, log_path,
+                        provider=args.provider,
+                        eab_kid_file=pathlib.Path(args.eab_kid_file),
+                        eab_hmac_file=pathlib.Path(args.eab_hmac_file),
+                    )
+                    print(
+                        f"Free SSL installed for {args.domain} with "
+                        f"{args.provider}. Log: {log_path}"
+                    )
                     return 0
                 if args.ssl_command == 'renew':
                     renew_certificates(args.domain, log_path)
