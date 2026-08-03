@@ -93,6 +93,7 @@ dns_mode(){
 
 unit_exists(){ systemctl list-unit-files "$1.service" --no-legend 2>/dev/null | grep -q .; }
 full_unit_exists(){ systemctl list-unit-files "$1" --no-legend 2>/dev/null | grep -q .; }
+dns_present(){ unit_exists bind9 || unit_exists named || unit_exists pdns; }
 check_unit(){
   local unit="$1" state=""
   unit_exists "$unit" || return 0
@@ -116,6 +117,10 @@ check_full_unit(){
 
 check_dns_systemd(){
   local mode="" bind_unit=""
+  if ! dns_present; then
+    pass 'DNS role is not installed'
+    return
+  fi
   if unit_exists bind9; then bind_unit=bind9; elif unit_exists named; then bind_unit=named; fi
   mode="$(dns_mode 2>/dev/null || true)"
   case "$mode" in
@@ -216,6 +221,10 @@ check_configs(){
   command -v postfix >/dev/null 2>&1 && run_required 'Postfix configuration is valid' postfix check
   command -v dovecot >/dev/null 2>&1 && run_required 'Dovecot configuration is readable' dovecot -n
   command -v rspamadm >/dev/null 2>&1 && run_required 'Rspamd configuration is valid' rspamadm configtest
+  if ! dns_present; then
+    pass 'DNS configuration is not installed on this node'
+    return
+  fi
   mode="$(dns_mode 2>/dev/null || true)"
   case "$mode" in
     bind)
@@ -244,7 +253,9 @@ check_listeners(){
   [[ -n "$panel_host" ]] || panel_host="$(config_value HP_PANEL_HOST 2>/dev/null || true)"
   [[ -n "$panel_host" ]] || panel_host="$(config_value PANEL_HOST 2>/dev/null || true)"
   listener "$panel_port" && pass "panel port $panel_port is listening" || fail "panel port $panel_port is not listening"
-  listener 53 && pass 'authoritative DNS TCP port 53 is listening' || fail 'authoritative DNS TCP port 53 is not listening'
+  if dns_present; then
+    listener 53 && pass 'authoritative DNS TCP port 53 is listening' || fail 'authoritative DNS TCP port 53 is not listening'
+  fi
   ssh_ports="$(sshd -T 2>/dev/null | awk '$1=="port" {print $2}' | sort -u || true)"; [[ -n "$ssh_ports" ]] || ssh_ports=22
   while IFS= read -r port; do [[ -n "$port" ]] || continue; listener "$port" && pass "SSH port $port is listening" || fail "SSH port $port is not listening"; done <<<"$ssh_ports"
   if command -v curl >/dev/null 2>&1; then
