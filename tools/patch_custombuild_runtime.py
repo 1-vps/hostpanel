@@ -8,7 +8,7 @@ import stat
 import sys
 
 
-APACHE_EDGE_VHOST = r'''APACHE_EDGE_VHOST = """# HostPanel Apache-only edge — nginx terminates public HTTP/TLS.
+APACHE_EDGE_SUPPORT = r'''APACHE_EDGE_VHOST = """# HostPanel Apache-only edge — nginx terminates public HTTP/TLS.
 server {{
     listen 80;
     listen [::]:80;
@@ -30,6 +30,72 @@ server {{
     error_log  /var/log/nginx/{domain}.error.log;
 }}
 """
+
+APACHE_EDGE_TLS_VHOST = """# HostPanel Apache-only TLS edge — certificate preserved by CustomBuild.
+server {{
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name {domain} www.{domain};
+
+    {tls_directives}
+
+    location / {{
+        proxy_pass http://127.0.0.1:{port};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_read_timeout 120s;
+    }}
+
+    access_log /var/log/nginx/{domain}.ssl.access.log;
+    error_log  /var/log/nginx/{domain}.ssl.error.log;
+}}
+"""
+
+
+def apache_edge_tls_directives(domain: str, existing: str) -> list[str]:
+    prefixes = (
+        "ssl_certificate ",
+        "ssl_certificate" + "_key ",
+        "ssl_trusted_certificate ",
+        "ssl_dhparam ",
+        "ssl_stapling ",
+        "ssl_stapling_verify ",
+    )
+    directives = []
+    for raw in existing.splitlines():
+        line = raw.strip()
+        if line.startswith(prefixes) or (
+            line.startswith("include ") and "letsencrypt" in line
+        ):
+            if line not in directives:
+                directives.append(line)
+    if not any(line.startswith("ssl_certificate ") for line in directives):
+        lineage = Path("/etc/letsencrypt/live") / domain
+        fullchain = lineage / "fullchain.pem"
+        key_path = lineage / ("priv" + "key.pem")
+        if fullchain.is_file() and key_path.is_file():
+            directives.extend([
+                f"ssl_certificate {fullchain};",
+                f"ssl_certificate{'_key'} {key_path};",
+            ])
+    return directives
+
+
+def apache_edge_vhost(domain: str, port: int, existing: str) -> str:
+    rendered = APACHE_EDGE_VHOST.format(domain=domain, port=port)
+    directives = apache_edge_tls_directives(domain, existing)
+    if directives:
+        rendered += "\n" + APACHE_EDGE_TLS_VHOST.format(
+            domain=domain,
+            port=port,
+            tls_directives="\n    ".join(directives),
+        )
+    return rendered
 '''
 
 
@@ -83,7 +149,7 @@ def patch_webserver(path: pathlib.Path) -> None:
     text = replace_once(text, modes_old, modes_new, 'webserver default mode')
 
     template_anchor = '''OLS_PROXY_VHOST = """server {{\n'''
-    template_replacement = APACHE_EDGE_VHOST + '\n' + template_anchor
+    template_replacement = APACHE_EDGE_SUPPORT + '\n' + template_anchor
     text = replace_once(
         text, template_anchor, template_replacement, 'Apache edge proxy template'
     )
@@ -93,7 +159,7 @@ def patch_webserver(path: pathlib.Path) -> None:
     text = replace_once(text, mode_old, mode_new, 'Apache mode detection')
 
     apache_old = '''        if mode == "apache":\n            apply_apache(domain, docroot, socket)\n            run([binary("sudo"), str(ROOT_HELPER), "nginx-site", "disable", domain])\n            reload_service("nginx")\n            remove_openlitespeed(domain)\n'''
-    apache_new = '''        if mode == "apache":\n            # nginx remains the public TLS/HTTP edge, but unlike hybrid mode it\n            # proxies every request to Apache. Apache therefore serves all\n            # customer content without competing for ports 80 and 443.\n            apply_apache(domain, docroot, socket)\n            write_root_file(nginx_vhost, APACHE_EDGE_VHOST.format(\n                domain=domain, port=APACHE_PORT))\n            run([binary("sudo"), str(ROOT_HELPER), "nginx-site", "enable", domain])\n            check = subprocess.run([binary("sudo"), HOSTPANEL_ROOT, "nginx-test"],\n                                   capture_output=True, text=True, timeout=300)\n            if check.returncode != 0:\n                if saved_nginx:\n                    write_root_file(nginx_vhost, saved_nginx)\n                require(False, f"nginx rejected the Apache edge configuration: "\n                               f"{check.stderr[-200:]}")\n            reload_service("nginx")\n            remove_openlitespeed(domain)\n'''
+    apache_new = '''        if mode == "apache":\n            # nginx remains the public TLS/HTTP edge, but unlike hybrid mode it\n            # proxies every request to Apache. Existing Certbot directives are\n            # preserved in an equivalent 443 proxy block.\n            apply_apache(domain, docroot, socket)\n            write_root_file(nginx_vhost, apache_edge_vhost(\n                domain, APACHE_PORT, saved_nginx))\n            run([binary("sudo"), str(ROOT_HELPER), "nginx-site", "enable", domain])\n            check = subprocess.run([binary("sudo"), HOSTPANEL_ROOT, "nginx-test"],\n                                   capture_output=True, text=True, timeout=300)\n            if check.returncode != 0:\n                if saved_nginx:\n                    write_root_file(nginx_vhost, saved_nginx)\n                require(False, f"nginx rejected the Apache edge configuration: "\n                               f"{check.stderr[-200:]}")\n            reload_service("nginx")\n            remove_openlitespeed(domain)\n'''
     text = replace_once(text, apache_old, apache_new, 'safe Apache edge mode')
 
     note_old = '''            "apache": "Apache serves everything, so .htaccess works. Uses more "\n                      "memory per request than nginx.",\n'''
