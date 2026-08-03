@@ -47,16 +47,43 @@ class CustomBuildExtrasStateTests(unittest.TestCase):
         with self.assertRaisesRegex(CONFIG.BuildError, 'multiple top-level net'):
             STATE.harden_mongod_config('net:\nnet:\n')
 
-    def test_varnish_validation_requires_loopback_admin_port(self):
+    def test_varnish_validation_requires_authenticated_management(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
         options['varnish'] = 'on'
         with mock.patch.object(STATE.base, 'validate_varnish'), \
              mock.patch.object(STATE.base, 'loopback_listener', return_value=False):
             with self.assertRaisesRegex(CONFIG.BuildError, 'management port'):
                 STATE.validate_varnish(options, pathlib.Path('/tmp/log'))
-        with mock.patch.object(STATE.base, 'validate_varnish'), \
-             mock.patch.object(STATE.base, 'loopback_listener', return_value=True):
-            STATE.validate_varnish(options, pathlib.Path('/tmp/log'))
+
+        commands: list[list[str]] = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            secret = root / 'secret'
+            secret.write_text('a' * 48 + '\n', encoding='ascii')
+            dropin = root / 'hostpanel.conf'
+            dropin.write_text(
+                f'[Service]\nExecStart=/usr/sbin/varnishd -S {secret}\n',
+                encoding='utf-8',
+            )
+            with mock.patch.object(STATE.base, 'validate_varnish'), \
+                 mock.patch.object(STATE.base, 'loopback_listener', return_value=True), \
+                 mock.patch.object(STATE, '_existing_varnish_secret', return_value=secret), \
+                 mock.patch.object(STATE, '_trusted_config'), \
+                 mock.patch.object(STATE.base, 'VARNISH_DROPIN', dropin), \
+                 mock.patch.object(STATE.shutil, 'which', return_value='/usr/bin/varnishadm'), \
+                 mock.patch.object(
+                     STATE, 'run_command',
+                     side_effect=lambda command, **kwargs: commands.append(command)
+                     or subprocess.CompletedProcess(command, 0, '', ''),
+                 ):
+                STATE.validate_varnish(options, pathlib.Path('/tmp/log'))
+        self.assertEqual(
+            commands,
+            [[
+                '/usr/bin/varnishadm', '-T', '127.0.0.1:6082',
+                '-S', str(secret), 'ping',
+            ]],
+        )
 
     def test_active_varnish_blocks_webserver_mode_change(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
