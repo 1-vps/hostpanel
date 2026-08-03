@@ -14,7 +14,7 @@ import hostpanel_build_powerdns_adapter as ADAPTER
 
 
 class PowerDnsPermissionsAdapterTests(unittest.TestCase):
-    def test_readable_backend_paths_rejects_unsafe_objects(self):
+    def test_readable_backend_paths_validates_directory_chain_and_file(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             include = root / 'pdns.d'
@@ -27,9 +27,11 @@ class PowerDnsPermissionsAdapterTests(unittest.TestCase):
                 ADAPTER.operations, 'powerdns_include_dir', return_value=include
             ), mock.patch.object(
                 ADAPTER.operations, 'select_powerdns_backend_config', return_value=target
-            ), mock.patch.object(ADAPTER, 'trusted_root_directory'), \
-                 mock.patch.object(ADAPTER, 'trusted_root_file'):
+            ), mock.patch.object(ADAPTER, 'trusted_root_directory_chain') as chain, \
+                 mock.patch.object(ADAPTER, 'trusted_root_file') as trusted_file:
                 self.assertEqual(ADAPTER.readable_backend_paths(), (include, target))
+        chain.assert_called_once_with(include)
+        trusted_file.assert_called_once_with(target)
 
     def test_install_wraps_configuration_before_service_start(self):
         calls: list[str] = []
@@ -52,6 +54,11 @@ class PowerDnsPermissionsAdapterTests(unittest.TestCase):
             chown.call_args_list,
             [mock.call(include, 0, 0), mock.call(target, 0, 0)],
         )
+
+    def test_install_replaces_dns_reconciler_with_fail_closed_adapter(self):
+        with mock.patch.object(ADAPTER.operations, 'configure_powerdns'):
+            ADAPTER.install()
+        self.assertIs(ADAPTER.operations.reconcile_dns_services, ADAPTER.reconcile_dns_services)
 
 
 if __name__ == '__main__':
