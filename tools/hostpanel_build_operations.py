@@ -1,7 +1,6 @@
 """Safe component maintenance operations for hostpanel-build."""
 from __future__ import annotations
 
-import contextlib
 import datetime as dt
 import fcntl
 import os
@@ -41,8 +40,8 @@ CONFIG_PATHS = {
     ),
     'mail': ('/etc/postfix', '/etc/exim4', '/etc/exim', '/etc/dovecot', '/etc/rspamd'),
     'dns': (
-        '/etc/bind', '/etc/named.conf', '/etc/named', '/etc/powerdns',
-        '/etc/pdns', '/etc/hostpanel/dns-mode',
+        '/etc/bind', '/etc/named.conf', '/etc/named', '/var/named/hostpanel',
+        '/etc/powerdns', '/etc/pdns', '/etc/hostpanel/dns-mode',
         '/etc/systemd/system/hostpanel-pdns-zones.path',
         '/etc/systemd/system/hostpanel-pdns-reload.service',
         '/etc/systemd/system/pdns.service.d',
@@ -360,10 +359,9 @@ def service_active(name: str) -> bool:
 
 def mask_service(name: str, log_path: pathlib.Path) -> bool:
     was_active = service_active(name)
-    run_command(
-        ['systemctl', 'mask', '--runtime', '--now', name],
-        log_path=log_path,
-    )
+    if was_active:
+        run_command(['systemctl', 'stop', name], log_path=log_path)
+    run_command(['systemctl', 'mask', '--runtime', name], log_path=log_path)
     return was_active
 
 
@@ -443,11 +441,10 @@ def reject_conflicting_powerdns_backends(
         if path == managed or not path.is_file() or path.is_symlink():
             continue
         backends.update(launch_values(path.read_text(encoding='utf-8')))
-    unsupported = backends - {'bind'}
-    if unsupported:
+    if backends:
         raise BuildError(
             'PowerDNS has unmanaged backend configuration; refusing to overwrite: '
-            + ', '.join(sorted(unsupported))
+            + ', '.join(sorted(backends))
         )
 
 
@@ -545,6 +542,7 @@ def reconcile_dns_services(
                 ['systemctl', 'is-active', '--quiet', path_service],
                 log_path=log_path,
             )
+        persist_dns_mode(mode)
     except BuildError:
         run_command(['systemctl', 'stop', target], check=False, log_path=log_path)
         if other_was_active:
@@ -565,7 +563,6 @@ def reconcile_dns_services(
         run_command(
             ['systemctl', 'disable', path_service], check=False, log_path=log_path
         )
-    persist_dns_mode(mode)
 
 
 def reconcile_webserver_services(
@@ -626,17 +623,18 @@ def apply_build(
     dns_requested = 'dns' in components
     dns_target = ''
     dns_was_active = False
-    if dns_requested:
-        _, _, _, bind_service = dns_layout(platform)
-        dns_target = 'pdns.service' if options['dns'] == 'powerdns' else bind_service
-        dns_was_active = mask_service(dns_target, log_path)
-
     succeeded = False
     try:
         for item in components:
             snapshot = config_snapshot(item, backup_dir)
             if snapshot is not None:
                 print(f'Configuration snapshot: {snapshot}')
+            if item == 'dns':
+                _, _, _, bind_service = dns_layout(platform)
+                dns_target = (
+                    'pdns.service' if options['dns'] == 'powerdns' else bind_service
+                )
+                dns_was_active = mask_service(dns_target, log_path)
             reinstall_packages(component_packages(item, options, platform), platform, log_path)
             if item == 'dns' and options['dns'] == 'powerdns':
                 configure_powerdns(platform, log_path)
@@ -662,7 +660,7 @@ def apply_build(
                     ['systemctl', 'restart', 'lsws.service'],
                     check=False, log_path=log_path,
                 )
-        if dns_requested:
+        if dns_requested and dns_target:
             unmask_service(dns_target, log_path)
             if not succeeded and dns_was_active:
                 run_command(
