@@ -66,7 +66,10 @@ def print_plan(
             else:
                 print('      repository: verified official MongoDB 8.0 repository')
                 print(f"      packages: {', '.join(packages)}")
-                print('      actions: snapshot, install, localhost bind, authorization, ping')
+                print(
+                    '      actions: snapshot, install, localhost bind, '
+                    'authorization, service and listener validation'
+                )
         elif item == 'varnish':
             if options['varnish'] == 'off':
                 print('      actions: restore direct nginx backend routing; stop Varnish')
@@ -124,6 +127,40 @@ def update_panel(apply: bool, updater: pathlib.Path) -> int:
     if completed.returncode not in {0, 10}:
         raise BuildError(f'signed HostPanel updater failed with exit status {completed.returncode}')
     return completed.returncode
+
+
+def execute_build(
+    component: str, options: dict[str, str], platform: Platform,
+    log_path: pathlib.Path, backup_dir: pathlib.Path,
+    python_path: pathlib.Path, doctor_path: pathlib.Path, roles: set[str],
+    web_helper: pathlib.Path, web_mode_file: pathlib.Path,
+) -> None:
+    """Apply one complete build transaction and run the final doctor once needed."""
+    final_doctor_required = component in {'mongodb', 'varnish'}
+    if component == 'mongodb':
+        apply_mongodb(options, platform, log_path, backup_dir)
+    elif component == 'varnish':
+        apply_varnish(options, platform, log_path, backup_dir)
+    else:
+        if component in {'web', 'all'} and options['varnish'] == 'on':
+            varnish_origin_port(options)
+        apply_build(
+            component, options, platform, log_path,
+            backup_dir, python_path, doctor_path, roles,
+            web_helper, web_mode_file,
+        )
+        if component == 'all' and 'database' in roles \
+                and options['mongodb'] == '8.0':
+            apply_mongodb(options, platform, log_path, backup_dir)
+            final_doctor_required = True
+        if component == 'web' or (component == 'all' and 'web' in roles):
+            apply_varnish(options, platform, log_path, backup_dir)
+            final_doctor_required = True
+    # Core apply_build already runs doctor after its own service transaction.
+    # Re-run only when optional components changed after that checkpoint, or
+    # when the command consisted solely of an optional component.
+    if final_doctor_required:
+        run_doctor(log_path, python_path, doctor_path)
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -267,29 +304,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     return 0
                 if args.ssl_command == 'renew':
                     renew_certificates(args.domain, log_path)
-                    print(f"Certificate renewal completed. Log: {log_path}")
+                    print(f'Certificate renewal completed. Log: {log_path}')
                     return 0
             if args.command == 'build':
-                if args.component == 'mongodb':
-                    apply_mongodb(options, platform, log_path, backup_dir)
-                elif args.component == 'varnish':
-                    apply_varnish(options, platform, log_path, backup_dir)
-                else:
-                    if args.component in {'web', 'all'} and options['varnish'] == 'on':
-                        varnish_origin_port(options)
-                    apply_build(
-                        args.component, options, platform, log_path,
-                        backup_dir, python_path, doctor_path, roles,
-                        pathlib.Path(args.web_helper), pathlib.Path(args.web_mode_file),
-                    )
-                    if args.component == 'all' and 'database' in roles \
-                            and options['mongodb'] == '8.0':
-                        apply_mongodb(options, platform, log_path, backup_dir)
-                    if args.component == 'web' or (
-                        args.component == 'all' and 'web' in roles
-                    ):
-                        apply_varnish(options, platform, log_path, backup_dir)
-                run_doctor(log_path, python_path, doctor_path)
+                execute_build(
+                    args.component, options, platform, log_path, backup_dir,
+                    python_path, doctor_path, roles,
+                    pathlib.Path(args.web_helper), pathlib.Path(args.web_mode_file),
+                )
                 print(f'Build completed. Log: {log_path}')
                 return 0
             if args.command == 'validate':
