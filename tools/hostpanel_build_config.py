@@ -290,7 +290,7 @@ def component_packages(component: str, options: dict[str, str], platform: Platfo
             return [mta, 'dovecot-core', 'rspamd', 'clamav-daemon']
         return [mta, 'dovecot', 'rspamd', 'clamd']
     if component == 'dns':
-        return ['bind9'] if platform.family == 'debian' else ['bind']
+        return ['bind9', 'bind9-utils'] if platform.family == 'debian' else ['bind', 'bind-utils']
     if component == 'redis':
         return ['redis-server'] if platform.family == 'debian' else ['redis']
     raise BuildError(f'unsupported component: {component}')
