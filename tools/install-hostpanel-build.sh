@@ -20,16 +20,19 @@ MODULES=(
   hostpanel_build_operations.py
   hostpanel_build_cli.py
   hostpanel_build_ssl.py
+  hostpanel_build_extras.py
 )
 EXECUTABLES=(
   hostpanel_build_web.py
   patch_custombuild_runtime.py
+  patch_varnish_runtime.py
 )
 TARGET=/opt/hostpanel/tools/hostpanel-build
 COMMAND=/usr/local/sbin/hostpanel-build
 CONFIG=/etc/hostpanel/build.conf
 MODE_FILE=/etc/hostpanel/webserver-mode
 DNS_MODE_FILE=/etc/hostpanel/dns-mode
+VARNISH_MODE_FILE=/etc/hostpanel/varnish-mode
 PHP_STATE=/etc/hostpanel/php-versions
 
 for path in "$SOURCE" "${MODULES[@]/#/$SOURCE_ROOT/tools/}" "${EXECUTABLES[@]/#/$SOURCE_ROOT/tools/}"; do
@@ -62,6 +65,9 @@ install -o root -g root -m 0755 \
 install -o root -g root -m 0755 \
   "$SOURCE_ROOT/tools/patch_custombuild_runtime.py" \
   /opt/hostpanel/tools/patch-custombuild-runtime
+install -o root -g root -m 0755 \
+  "$SOURCE_ROOT/tools/patch_varnish_runtime.py" \
+  /opt/hostpanel/tools/patch-varnish-runtime
 
 cat >"$COMMAND" <<'EOF'
 #!/usr/bin/env bash
@@ -105,6 +111,8 @@ webserver=nginx_apache
 database=both
 mta=postfix
 dns=bind
+mongodb=off
+varnish=off
 php_versions=$PHP_VERSIONS
 EOF
   chown root:root "$CONFIG"
@@ -140,10 +148,33 @@ printf '%s\n' "$DNS_MODE" >"$DNS_MODE_FILE"
 chown root:root "$DNS_MODE_FILE"
 chmod 0644 "$DNS_MODE_FILE"
 
+MONGODB_MODE="$(awk -F= '$1=="mongodb" {print $2; exit}' "$CONFIG")"
+MONGODB_MODE="${MONGODB_MODE:-off}"
+[[ "$MONGODB_MODE" =~ ^(off|8\.0)$ ]] || {
+  printf '%s\n' 'Error: build.conf contains an invalid mongodb option.' >&2
+  exit 1
+}
+
+VARNISH_MODE="$(awk -F= '$1=="varnish" {print $2; exit}' "$CONFIG")"
+VARNISH_MODE="${VARNISH_MODE:-off}"
+[[ "$VARNISH_MODE" =~ ^(off|on)$ ]] || {
+  printf '%s\n' 'Error: build.conf contains an invalid varnish option.' >&2
+  exit 1
+}
+if [[ "$VARNISH_MODE" == on && "$WEB_MODE" == nginx ]]; then
+  printf '%s\n' 'Error: varnish=on is incompatible with webserver=nginx.' >&2
+  exit 1
+fi
+printf '%s\n' "$VARNISH_MODE" >"$VARNISH_MODE_FILE"
+chown root:root "$VARNISH_MODE_FILE"
+chmod 0644 "$VARNISH_MODE_FILE"
+
 if [[ -d /opt/hostpanel/app ]]; then
   /opt/hostpanel/tools/patch-custombuild-runtime
+  /opt/hostpanel/tools/patch-varnish-runtime
 fi
 
 printf '%s\n' 'HostPanel build tool installed as /usr/local/sbin/hostpanel-build.'
-printf 'Base mode: nginx_apache. DNS mode: %s. PHP branches: %s. Start with: sudo hostpanel-build versions\n' \
-  "$DNS_MODE" "$PHP_VERSIONS"
+printf 'Base mode: nginx_apache. DNS: %s. MongoDB: %s. Varnish: %s. PHP branches: %s.\n' \
+  "$DNS_MODE" "$MONGODB_MODE" "$VARNISH_MODE" "$PHP_VERSIONS"
+printf '%s\n' 'Start with: sudo hostpanel-build versions'
