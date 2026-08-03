@@ -40,6 +40,12 @@ VALID_COMPONENTS = {
 PHP_RE = re.compile(r'^(?:7\.4|8\.[0-5])$')
 KEY_RE = re.compile(r'^[a-z][a-z0-9_]{0,63}$')
 MAX_CONFIG_BYTES = 64 * 1024
+LSPHP_DEBIAN_SUFFIXES = (
+    'common', 'mysql', 'curl', 'mbstring', 'xml', 'zip', 'gd', 'opcache',
+)
+LSPHP_RHEL_SUFFIXES = (
+    'common', 'mysqlnd', 'pdo', 'curl', 'mbstring', 'xml', 'zip', 'gd', 'opcache',
+)
 
 
 class BuildError(RuntimeError):
@@ -224,6 +230,21 @@ def php_versions(options: dict[str, str]) -> tuple[str, ...]:
     return tuple(options['php_versions'].split(','))
 
 
+def lsphp_runtime_packages(
+    options: dict[str, str], platform: Platform
+) -> list[str]:
+    packages: list[str] = []
+    suffixes = (
+        LSPHP_DEBIAN_SUFFIXES if platform.family == 'debian'
+        else LSPHP_RHEL_SUFFIXES
+    )
+    for version in php_versions(options):
+        base = f"lsphp{version.replace('.', '')}"
+        packages.append(base)
+        packages.extend(f'{base}-{suffix}' for suffix in suffixes)
+    return packages
+
+
 def web_components(options: dict[str, str]) -> list[str]:
     mode = options['webserver']
     if mode == 'nginx_apache':
@@ -250,7 +271,7 @@ def component_packages(component: str, options: dict[str, str], platform: Platfo
     if component == 'apache':
         return ['apache2'] if platform.family == 'debian' else ['httpd']
     if component == 'openlitespeed':
-        return ['openlitespeed']
+        return ['openlitespeed', *lsphp_runtime_packages(options, platform)]
     if component == 'php':
         if platform.family == 'debian':
             return [f'php{version}-fpm' for version in php_versions(options)]
