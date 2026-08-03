@@ -145,4 +145,5 @@ if [[ -d /opt/hostpanel/app ]]; then
 fi
 
 printf '%s\n' 'HostPanel build tool installed as /usr/local/sbin/hostpanel-build.'
-printf 'Base modes: web=nginx_apache, dns=bind. PHP branches: %s. Start with: sudo hostpanel-build versions\n' "$PHP_VERSIONS"
+printf 'Base mode: nginx_apache. DNS mode: %s. PHP branches: %s. Start with: sudo hostpanel-build versions\n' \
+  "$DNS_MODE" "$PHP_VERSIONS"
