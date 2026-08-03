@@ -11,6 +11,7 @@ from hostpanel_build_packages import run_command
 MONGODB_MODE_FILE = pathlib.Path('/etc/hostpanel/mongodb-mode')
 VARNISH_MODE_FILE = base.VARNISH_MODE_FILE
 MONGODB_VERSION = base.MONGODB_VERSION
+WEB_MODE_FILE = pathlib.Path('/etc/hostpanel/webserver-mode')
 
 extra_components = base.extra_components
 varnish_origin_port = base.varnish_origin_port
@@ -74,13 +75,24 @@ def apply_varnish(
     options: dict[str, str], platform: Platform, log_path: pathlib.Path,
     backup_dir: pathlib.Path,
 ) -> None:
+    selected = options.get('webserver', 'nginx_apache')
+    applied = _runtime_mode(WEB_MODE_FILE, 'nginx_apache')
+    configured = options.get('varnish', 'off')
+    runtime = _runtime_mode(VARNISH_MODE_FILE, 'off')
+    if applied not in {'nginx_apache', 'nginx', 'apache', 'openlitespeed'}:
+        raise BuildError('invalid applied webserver mode')
+    if configured == 'on' and selected != applied:
+        raise BuildError('apply the selected webserver mode before enabling Varnish')
+    effective = dict(options)
+    if configured == 'off' and runtime == 'on':
+        effective['webserver'] = applied
     origin_port = (
-        base.varnish_origin_port(options)
-        if options.get('varnish') == 'on'
-        else (8088 if options.get('webserver') == 'openlitespeed' else 8080)
+        base.varnish_origin_port(effective)
+        if configured == 'on'
+        else (8088 if effective.get('webserver') == 'openlitespeed' else 8080)
     )
     try:
-        base.apply_varnish(options, platform, log_path, backup_dir)
+        base.apply_varnish(effective, platform, log_path, backup_dir)
     except Exception:
         # The base transaction restores files when nginx rejects a rewrite. A
         # later validation failure also needs an explicit direct-origin repair
