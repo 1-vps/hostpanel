@@ -13,13 +13,13 @@ It installs HostPanel version `3.4.1` from reviewed, immutable Git objects. The
 installer is pinned to commit:
 
 ```text
-7045851e31014a697ae9571f65e2f237d47040fc
+0722d75dd0dd2b64f730012700b5bd45a7ce0c41
 ```
 
 Its verified Git blob is:
 
 ```text
-b1b79b4ab0d5e5697e9b017c7f2308807b50ab91
+984c23040306429858662a6b51a62e983e7f2796
 ```
 
 ## Requirements
@@ -37,9 +37,9 @@ Create a provider snapshot and retain console access before installation.
 ## Obtain the installer
 
 Obtain the exact `auto-install.sh` bytes from immutable commit
-`7045851e31014a697ae9571f65e2f237d47040fc` through an authenticated checkout or
+`0722d75dd0dd2b64f730012700b5bd45a7ce0c41` through an authenticated checkout or
 reviewed file transfer. Verify that its Git blob is
-`b1b79b4ab0d5e5697e9b017c7f2308807b50ab91`.
+`984c23040306429858662a6b51a62e983e7f2796`.
 
 Do not execute a moving `main` branch as root.
 
@@ -192,7 +192,13 @@ Changing the option alone does not modify packages, services, or domains.
 `build web --apply` refreshes package metadata, performs package-candidate
 preflight before service mutation, snapshots relevant configuration, validates
 services, converts all managed domains through HostPanel's existing webserver
-engine, and runs `hostpanel-doctor`.
+engine, disables unused backend services, and runs `hostpanel-doctor`.
+
+nginx remains the public HTTP/TLS edge in every mode. In `apache` mode, nginx
+proxies every customer request to Apache on `127.0.0.1:8080`; Apache therefore
+handles all customer content and `.htaccess` without competing for ports 80 or
+443. In `nginx_apache` mode, nginx additionally serves static files directly and
+uses Apache for dynamic or fallback requests.
 
 For `openlitespeed`, both `openlitespeed` and the complete matching LSPHP package
 set for every selected PHP branch must be available. If any package is missing,
