@@ -1,8 +1,10 @@
 """Runtime compatibility adapter for PowerDNS BIND-backend operation."""
 from __future__ import annotations
 
+import grp
 import os
 import pathlib
+import pwd
 import stat
 from collections.abc import Callable
 
@@ -33,7 +35,7 @@ def trusted_root_directory(path: pathlib.Path) -> None:
         or metadata.st_uid != 0
         or stat.S_IMODE(metadata.st_mode) & 0o022
     ):
-        raise BuildError(f'unsafe PowerDNS include directory: {path}')
+        raise BuildError(f'unsafe root-managed directory: {path}')
 
 
 def trusted_root_directory_chain(path: pathlib.Path) -> None:
@@ -43,6 +45,37 @@ def trusted_root_directory_chain(path: pathlib.Path) -> None:
         if current.parent == current:
             return
         current = current.parent
+
+
+def trusted_root_file(path: pathlib.Path) -> None:
+    trusted_root_directory_chain(path.parent)
+    metadata = path.lstat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise BuildError(f'unsafe root-managed configuration file: {path}')
+
+
+def trusted_managed_zone_directory(path: pathlib.Path, service_group: str) -> None:
+    trusted_root_directory_chain(path.parent)
+    try:
+        group = grp.getgrnam(service_group)
+        service_user = pwd.getpwnam(service_group)
+    except KeyError as exc:
+        raise BuildError(f'DNS service account or group is missing: {service_group}') from exc
+    metadata = path.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid not in {0, service_user.pw_uid}
+        or metadata.st_gid != group.gr_gid
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise BuildError(f'unsafe HostPanel managed zone directory: {path}')
 
 
 def prepare_include_directory(path: pathlib.Path) -> None:
@@ -56,7 +89,23 @@ def prepare_include_directory(path: pathlib.Path) -> None:
     trusted_root_directory_chain(path)
 
 
+def native_powerdns_config() -> pathlib.Path:
+    existing = [
+        path for path in operations.PDNS_CONFIG_CANDIDATES
+        if os.path.lexists(path)
+    ]
+    if len(existing) != 1:
+        detail = ', '.join(str(path) for path in existing) or 'none'
+        raise BuildError(
+            'PowerDNS must have exactly one native pdns.conf; found: ' + detail
+        )
+    native = existing[0]
+    trusted_root_file(native)
+    return native
+
+
 def powerdns_include_dir(native: pathlib.Path) -> pathlib.Path:
+    trusted_root_file(native)
     text = native.read_text(encoding='utf-8')
     configured = [
         pathlib.Path(value) if pathlib.Path(value).is_absolute()
@@ -92,19 +141,6 @@ def launch_values(text: str) -> set[str]:
 
 def active_setting_keys(text: str) -> set[str]:
     return {key for key, _append, _value in setting_pairs(text)}
-
-
-def trusted_root_file(path: pathlib.Path) -> None:
-    trusted_root_directory_chain(path.parent)
-    metadata = path.lstat()
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or stat.S_ISLNK(metadata.st_mode)
-        or metadata.st_uid != 0
-        or metadata.st_nlink != 1
-        or stat.S_IMODE(metadata.st_mode) & 0o022
-    ):
-        raise BuildError(f'unsafe PowerDNS backend configuration: {path}')
 
 
 def readable_backend_paths() -> tuple[pathlib.Path, pathlib.Path]:
@@ -224,6 +260,7 @@ def guarded_apply_build(
 
 
 def install() -> None:
+    operations.native_powerdns_config = native_powerdns_config
     operations.powerdns_include_dir = powerdns_include_dir
     operations.launch_values = launch_values
     operations.active_setting_keys = active_setting_keys
@@ -234,6 +271,9 @@ def install() -> None:
         return
 
     def configure(platform: Platform, log_path: pathlib.Path) -> None:
+        managed_conf, zone_dir, dns_group, _ = operations.dns_layout(platform)
+        trusted_root_file(managed_conf)
+        trusted_managed_zone_directory(zone_dir, dns_group)
         original(platform, log_path)
         include_dir, target = readable_backend_paths()
         os.chown(include_dir, 0, 0)
