@@ -13,11 +13,11 @@ SETUP = ROOT / "SETUP.md"
 CUSTOMBUILD = ROOT / "CUSTOMBUILD.md"
 CLOUD_INIT = ROOT / "examples" / "cloud-init-hostpanel.yaml"
 WORKFLOW = ROOT / ".github" / "workflows" / "automatic-installer.yml"
-AUTO_COMMIT = "bac349ca093e4dd5c760efa03c8ec9410d33deef"
-AUTO_BLOB = "0613e8b88af414b961c03d5adeee141e206ded2b"
-QUICK_COMMIT = "3fc7509b35518d2451f768c5372582087a0eed10"
-QUICK_BLOB = "54001b0317c5dbd7fc99cb8d48fc418dd4513afc"
-PRODUCT_COMMIT = "62e356febf2e8a87f9cd4db0518bad140bab7631"
+AUTO_COMMIT = "1a86d380e7ebab287c767d183013b599cb116f7f"
+AUTO_BLOB = "db23963e101b9194994da2ff8077b40a6b1cb99c"
+QUICK_COMMIT = "7c7089da057c0f301ce98ead35f988435e10a0b6"
+QUICK_BLOB = "a560d8da6ede9a68b63db5d36644a011c62d0b23"
+PRODUCT_COMMIT = "755dcd5e47b7c82404b267e8df4dec27626fe341"
 
 
 class AutomaticInstallTests(unittest.TestCase):
@@ -147,6 +147,7 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn("package-candidate preflight before service mutation", self.setup_words)
         self.assertIn("complete matching LSPHP package", self.setup_words)
         self.assertIn("nginx remains the public HTTP/TLS edge", self.setup_words)
+        self.assertIn("HTTP-to-HTTPS redirect behavior", self.setup_words)
         self.assertNotIn("install-one-line.sh", self.setup)
         self.assertNotIn("quick-install.sh", self.setup)
         self.assertNotIn("auto-install.sh?ref=main", self.setup)
