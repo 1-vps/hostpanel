@@ -13,11 +13,11 @@ SETUP = ROOT / "SETUP.md"
 CUSTOMBUILD = ROOT / "CUSTOMBUILD.md"
 CLOUD_INIT = ROOT / "examples" / "cloud-init-hostpanel.yaml"
 WORKFLOW = ROOT / ".github" / "workflows" / "automatic-installer.yml"
-AUTO_COMMIT = "f8606cf116f4698afaecd086aa5faa744fb56f42"
-AUTO_BLOB = "cbeda8287321ac92d08e015e7149918a503f8bfc"
-QUICK_COMMIT = "3a6a221558d5f103071fabbc7b0f56a633df408c"
-QUICK_BLOB = "4c6864ccf644099b0e8e690664ce81cef64af662"
-PRODUCT_COMMIT = "2f28c567ef6514f79be5f0dc1eecbffbb2105942"
+AUTO_COMMIT = "7045851e31014a697ae9571f65e2f237d47040fc"
+AUTO_BLOB = "b1b79b4ab0d5e5697e9b017c7f2308807b50ab91"
+QUICK_COMMIT = "4a38274ab8b3b2e21bda0a50fdeb3642b72815b7"
+QUICK_BLOB = "465999ea472852cbf51db0e239cf67ac7eb656a0"
+PRODUCT_COMMIT = "be06f865e3404a76c85888e11c245e728782aa5c"
 
 
 class AutomaticInstallTests(unittest.TestCase):
@@ -101,6 +101,13 @@ class AutomaticInstallTests(unittest.TestCase):
     def test_custombuild_inputs_are_blob_verified(self) -> None:
         self.assertIn('readonly CUSTOMBUILD_PATHS=(', self.quick)
         self.assertIn('readonly CUSTOMBUILD_BLOBS=(', self.quick)
+        for blob in (
+            '82ba3440f90b0f241abf78e5b3aa9f44733a4e61',
+            'c3bd21fb3bf1bba4fe49eebbddb430e422c5243d',
+            '674144e2628b3048c51bf3487d781a5aeb07e73d',
+            '1a27de38dd4d8d4262473bdf7bd8e70898c07559',
+        ):
+            self.assertIn(blob, self.quick)
         self.assertIn('git hash-object --no-filters "$destination"', self.quick)
         self.assertIn('CustomBuild Git blob verification failed', self.quick)
         self.assertIn('python3 -m py_compile', self.quick)
@@ -142,7 +149,8 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn("descriptor is consumed", self.setup)
         self.assertIn("marked `unverified`", self.setup)
         self.assertIn("sudo hostpanel-build set webserver openlitespeed", self.setup)
-        self.assertIn("package-candidate preflight before any service", self.setup)
+        self.assertIn("package-candidate preflight before service mutation", self.setup)
+        self.assertIn("complete matching LSPHP package", self.setup)
         self.assertNotIn("install-one-line.sh", self.setup)
         self.assertNotIn("quick-install.sh", self.setup)
         self.assertNotIn("auto-install.sh?ref=main", self.setup)
@@ -162,9 +170,17 @@ class AutomaticInstallTests(unittest.TestCase):
     def test_read_only_workflow_checks_installer_chain(self) -> None:
         self.assertIn("permissions:\n  contents: read", self.workflow)
         self.assertIn("persist-credentials: false", self.workflow)
-        for path in ("auto-install.sh", "quick-install.sh", "install-one-line.sh"):
+        for path in (
+            "auto-install.sh", "quick-install.sh", "install-one-line.sh",
+            "tools/install-hostpanel-build.sh",
+        ):
             self.assertIn(f"bash -n {path}", self.workflow)
-        self.assertIn("tests.test_hostpanel_build", self.workflow)
+        for module in (
+            "tests.test_hostpanel_build",
+            "tests.test_custombuild_openlitespeed",
+            "tests.test_openlitespeed_fallback",
+        ):
+            self.assertIn(module, self.workflow)
         self.assertRegex(
             self.workflow,
             re.compile(r"shellcheck .*auto-install\.sh .*quick-install\.sh .*install-one-line\.sh", re.DOTALL),
