@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import os
 import pathlib
 import re
@@ -41,6 +42,12 @@ systemctl reload nginx.service
 
 def validate_domain(value: str) -> str:
     domain = value.strip().lower().rstrip('.')
+    try:
+        ipaddress.ip_address(domain)
+    except ValueError:
+        pass
+    else:
+        raise BuildError(f'certificate domain must not be an IP address: {value}')
     if DOMAIN_RE.fullmatch(domain) is None or domain.endswith('.localdomain'):
         raise BuildError(f'invalid certificate domain: {value}')
     return domain
@@ -229,17 +236,20 @@ def print_ssl_plan(
     action: str, domain: str | None = None, email: str | None = None,
     include_www: bool = False, provider: str = 'letsencrypt',
 ) -> None:
-    provider = validate_provider(provider)
+    selected_provider = validate_provider(provider) if action == 'issue' else None
     print('HostPanel free SSL plan')
     print(f'  action:   {action}')
-    print(f'  provider: {provider}')
+    if selected_provider is not None:
+        print(f'  provider: {selected_provider}')
+    elif action == 'renew':
+        print('  provider: stored renewal configuration')
     if domain:
         print(f'  domain:   {validate_domain(domain)}')
     if email:
         print(f'  email:    {validate_email(email)}')
     if action == 'issue':
         print(f'  names:    {domain}' + (f', www.{domain}' if include_www else ''))
-        if provider == 'zerossl':
+        if selected_provider == 'zerossl':
             print('  account:  ZeroSSL ACME with root-protected EAB credentials')
         print('  result:   HTTPS installation, HTTP redirect, automatic renewal hook')
     elif action == 'renew':
