@@ -116,7 +116,7 @@ PY
   exit 1
 }
 
-if [[ ! -e "$CONFIG" ]]; then
+if [[ ! -e "$CONFIG" && ! -L "$CONFIG" ]]; then
   cat >"$CONFIG" <<EOF_CONFIG
 # HostPanel CustomBuild-style service options.
 # Managed with: hostpanel-build set KEY VALUE
@@ -144,7 +144,7 @@ fi
 
 ensure_mode_file(){
   local path="$1" default="$2" pattern="$3" label="$4" value=""
-  if [[ ! -e "$path" ]]; then
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
     printf '%s\n' "$default" >"$path"
     chown root:root "$path"
     chmod 0644 "$path"
