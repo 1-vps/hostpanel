@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # DirectAdmin-style HostPanel installer for the private repository.
-# Prompts for a short-lived GitHub Contents:Read token, verifies the pinned
-# installer objects, runs preflight, then installs from the reviewed commit.
+# Installs the reviewed nginx+Apache base and the verified CustomBuild tool.
 set -Eeuo pipefail
 
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -9,21 +8,41 @@ export PATH
 umask 077
 unset PYTHONPATH PYTHONHOME BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH
 
-readonly REVIEWED_COMMIT_SHA="d50ccea35aa6356f7f815a606fa91f6186b66a6f"
+readonly REVIEWED_COMMIT_SHA="2f28c567ef6514f79be5f0dc1eecbffbb2105942"
 readonly BOOTSTRAP_BLOB="639fae60ddd5bec36f5e3167dd21733a412a69fd"
 readonly VALIDATOR_BLOB="2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9"
 readonly REPOSITORY_API="https://api.github.com/repos/1-vps/hostpanel"
+readonly CUSTOMBUILD_PATHS=(
+  tools/hostpanel-build.py
+  tools/hostpanel_build_config.py
+  tools/hostpanel_build_packages.py
+  tools/hostpanel_build_operations.py
+  tools/hostpanel_build_cli.py
+  tools/hostpanel_build_web.py
+  tools/patch_custombuild_runtime.py
+  tools/install-hostpanel-build.sh
+)
+readonly CUSTOMBUILD_BLOBS=(
+  de2f5aac8ea7880f341ff93851eb744a5fcb0bda
+  fe91cc245a58ce63a5f1a8b79385093e08de4d60
+  d2b49d6da0735b144c4937b6fa26ec546afc14f6
+  acec0a351e086c7cb63e6098992079d5995f32aa
+  6c7dddf06679f3d76e2c6a2024f215be1d684db5
+  b31fe7c27c9b342cd2f60e01713be2728534e885
+  b7f93ded9d564832de5c5fee54e236e927cb5423
+  e82d0e78d2c7e8449dc6b8a722e051c70252a3ee
+)
 
 PANEL_HOST="${HP_PANEL_HOST:-}"
 ADMIN_CIDR="${HP_PANEL_ADMIN_CIDR:-}"
 MTA="${HP_MTA:-postfix}"
-LITESPEED_REPO_MODE="${HP_LITESPEED_REPO:-auto}"
 REINSTALL=no
 CHECK_ONLY=no
 ASSUME_YES=no
 TOKEN=""
 AUTH_FILE=""
 WORK_DIR=""
+PRODUCT_DIR=""
 TOKEN_FD="${HP_GITHUB_TOKEN_FD:-}"
 TOKEN_FILE="${HP_GITHUB_TOKEN_FILE:-}"
 declare -a ROLES=()
@@ -45,6 +64,10 @@ Options:
   --yes                 Skip the final confirmation
   -h, --help            Show this help
 
+The base web stack is always nginx_apache: nginx is public and Apache is the
+private backend. After installation use hostpanel-build to select nginx,
+Apache, OpenLiteSpeed, or nginx_apache.
+
 Authentication:
   By default the installer prompts without echo for a short-lived GitHub token
   with Contents: Read-only access to 1-vps/hostpanel.
@@ -52,11 +75,6 @@ Authentication:
   Automation may provide a root-owned mode-0600 token file through
   HP_GITHUB_TOKEN_FILE, or a numeric inherited descriptor through
   HP_GITHUB_TOKEN_FD. The token is never placed in a URL or command argument.
-
-Repository control:
-  HP_LITESPEED_REPO=auto enables the official LiteSpeed repository when the web
-  role needs OpenLiteSpeed. Set HP_LITESPEED_REPO=off only when an equivalent
-  repository is already configured by the operator.
 HELP
 }
 
@@ -89,16 +107,11 @@ while (($#)); do
     --role)
       (($# >= 2)) || die "--role requires a value"
       ROLES+=("$2"); shift 2 ;;
-    --reinstall)
-      REINSTALL=yes; shift ;;
-    --check-only)
-      CHECK_ONLY=yes; shift ;;
-    --yes)
-      ASSUME_YES=yes; shift ;;
-    -h|--help)
-      usage; exit 0 ;;
-    *)
-      die "Unknown option: $1" ;;
+    --reinstall) REINSTALL=yes; shift ;;
+    --check-only) CHECK_ONLY=yes; shift ;;
+    --yes) ASSUME_YES=yes; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown option: $1" ;;
   esac
 done
 
@@ -110,22 +123,21 @@ ensure_prerequisites(){
     command -v "$command" >/dev/null 2>&1 || missing+=("$command")
   done
   ((${#missing[@]} == 0)) && return 0
-
-  if [[ "$CHECK_ONLY" == yes ]]; then
-    die "Missing commands (${missing[*]}); check-only never installs packages"
-  fi
+  [[ "$CHECK_ONLY" != yes ]] \
+    || die "Missing commands (${missing[*]}); check-only never installs packages"
 
   say "Installing bootstrap prerequisites"
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get -o Acquire::Retries=3 update -qq
-    apt-get -o Acquire::Retries=3 install -y -qq ca-certificates curl git openssl python3 coreutils
+    apt-get -o Acquire::Retries=3 install -y -qq \
+      ca-certificates curl git openssl python3 coreutils
   elif command -v dnf >/dev/null 2>&1; then
-    dnf -y --setopt=retries=3 install ca-certificates curl git openssl python3 coreutils
+    dnf -y --setopt=retries=3 install \
+      ca-certificates curl git openssl python3 coreutils
   else
     die "Missing commands (${missing[*]}) and no supported package manager was found"
   fi
-
   for command in curl git openssl python3 base64 mktemp; do
     command -v "$command" >/dev/null 2>&1 || die "$command is still unavailable"
   done
@@ -136,7 +148,6 @@ validate_hostname(){
 import ipaddress
 import re
 import sys
-
 value = sys.argv[1].strip().lower().rstrip(".")
 if not value or len(value) > 253 or "." not in value or value.endswith(".localdomain"):
     raise SystemExit(1)
@@ -157,7 +168,6 @@ validate_cidr(){
   python3 - "$1" <<'PY'
 import ipaddress
 import sys
-
 value = sys.argv[1].strip()
 if "/" not in value:
     raise SystemExit(1)
@@ -169,7 +179,6 @@ default_admin_cidr(){
   python3 - "${SSH_CONNECTION:-}" <<'PY'
 import ipaddress
 import sys
-
 parts = sys.argv[1].split()
 if not parts:
     raise SystemExit(0)
@@ -195,7 +204,6 @@ import os
 import pathlib
 import stat
 import sys
-
 path = pathlib.Path(sys.argv[1])
 flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
 try:
@@ -207,9 +215,7 @@ try:
     if not stat.S_ISREG(before.st_mode):
         raise SystemExit("HP_GITHUB_TOKEN_FILE must be a regular file")
     if before.st_uid != 0 or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1:
-        raise SystemExit(
-            "HP_GITHUB_TOKEN_FILE must be root-owned, single-linked and mode 0600"
-        )
+        raise SystemExit("HP_GITHUB_TOKEN_FILE must be root-owned, single-linked and mode 0600")
     if before.st_size < 20 or before.st_size > 512:
         raise SystemExit("HP_GITHUB_TOKEN_FILE has an unsafe size")
     data = bytearray()
@@ -220,18 +226,13 @@ try:
         data.extend(chunk)
     after = os.fstat(descriptor)
     path_state = os.lstat(path)
-    if (
-        (before.st_dev, before.st_ino, before.st_size)
+    if ((before.st_dev, before.st_ino, before.st_size)
         != (after.st_dev, after.st_ino, after.st_size)
-        or (after.st_dev, after.st_ino) != (path_state.st_dev, path_state.st_ino)
-    ):
+        or (after.st_dev, after.st_ino) != (path_state.st_dev, path_state.st_ino)):
         raise SystemExit("HP_GITHUB_TOKEN_FILE changed while it was being read")
     if len(data) != before.st_size:
         raise SystemExit("HP_GITHUB_TOKEN_FILE could not be read completely")
-    try:
-        token = bytes(data).decode("ascii", errors="strict")
-    except UnicodeError as exc:
-        raise SystemExit("HP_GITHUB_TOKEN_FILE is not ASCII") from exc
+    token = bytes(data).decode("ascii", errors="strict")
     if "\n" in token or "\r" in token:
         raise SystemExit("HP_GITHUB_TOKEN_FILE must not contain a newline")
     print(token, end="")
@@ -249,7 +250,7 @@ PYTOKEN
 }
 
 prompt_inputs(){
-  local detected=""
+  local detected="" role
   if [[ -z "$PANEL_HOST" ]]; then
     read -r -p "Panel hostname (for example panel.example.com): " PANEL_HOST </dev/tty
   fi
@@ -268,16 +269,7 @@ prompt_inputs(){
   ADMIN_CIDR="$(validate_cidr "$ADMIN_CIDR")" \
     || die "Invalid administrative CIDR: $ADMIN_CIDR"
 
-  case "$MTA" in
-    postfix|exim) ;;
-    *) die "MTA must be postfix or exim" ;;
-  esac
-  case "$LITESPEED_REPO_MODE" in
-    auto|off) ;;
-    *) die "HP_LITESPEED_REPO must be auto or off" ;;
-  esac
-
-  local role
+  case "$MTA" in postfix|exim) ;; *) die "MTA must be postfix or exim" ;; esac
   for role in "${ROLES[@]}"; do
     case "$role" in
       control|web|database|mail|dns|backup|edge) ;;
@@ -292,13 +284,13 @@ show_plan_and_confirm(){
   printf '  panel hostname: %s\n' "$PANEL_HOST"
   printf '  admin CIDR:     %s\n' "$ADMIN_CIDR"
   printf '  MTA:            %s\n' "$MTA"
+  printf '  webserver:      nginx_apache\n'
   printf '  mode:           %s\n' "$([[ "$CHECK_ONLY" == yes ]] && printf check-only || { [[ "$REINSTALL" == yes ]] && printf reinstall || printf install; })"
   if ((${#ROLES[@]})); then
     printf '  roles:          %s\n' "${ROLES[*]}"
   else
     printf '  roles:          all\n'
   fi
-
   if [[ "$ASSUME_YES" == no && "$CHECK_ONLY" == no ]]; then
     read -r -p "Run preflight and install HostPanel? [y/N] " reply </dev/tty
     [[ "$reply" =~ ^[Yy]$ ]] || die "Installation cancelled"
@@ -307,6 +299,7 @@ show_plan_and_confirm(){
 
 download_reviewed_file(){
   local repository_path="$1" destination="$2"
+  mkdir -p -- "$(dirname -- "$destination")"
   curl -q --proto '=https' --tlsv1.2 \
     --fail --location --silent --show-error \
     --retry 3 --retry-all-errors --connect-timeout 15 --max-time 180 \
@@ -315,63 +308,28 @@ download_reviewed_file(){
     -o "$destination"
 }
 
-web_role_selected(){
-  local role
-  ((${#ROLES[@]} == 0)) && return 0
-  for role in "${ROLES[@]}"; do
-    [[ "$role" == web ]] && return 0
+verify_custombuild_files(){
+  local index path destination actual
+  ((${#CUSTOMBUILD_PATHS[@]} == ${#CUSTOMBUILD_BLOBS[@]})) \
+    || die "Internal CustomBuild manifest length mismatch"
+  for index in "${!CUSTOMBUILD_PATHS[@]}"; do
+    path="${CUSTOMBUILD_PATHS[$index]}"
+    destination="$PRODUCT_DIR/$path"
+    download_reviewed_file "$path" "$destination"
+    actual="$(git hash-object --no-filters "$destination")" \
+      || die "Could not hash reviewed CustomBuild input: $path"
+    [[ "$actual" == "${CUSTOMBUILD_BLOBS[$index]}" ]] \
+      || die "CustomBuild Git blob verification failed: $path"
   done
-  return 1
-}
-
-litespeed_package_available(){
-  local candidate=""
-  if command -v apt-get >/dev/null 2>&1; then
-    candidate="$(apt-cache policy openlitespeed 2>/dev/null | awk '/^[[:space:]]*Candidate:/ {print $2; exit}')"
-    [[ -n "$candidate" && "$candidate" != "(none)" ]]
-  elif command -v dnf >/dev/null 2>&1; then
-    dnf -q list --available openlitespeed >/dev/null 2>&1 \
-      || dnf -q list --installed openlitespeed >/dev/null 2>&1
-  else
-    return 1
-  fi
-}
-
-ensure_litespeed_repository(){
-  local repository_script
-  web_role_selected || return 0
-  litespeed_package_available && return 0
-  [[ "$LITESPEED_REPO_MODE" != off ]] \
-    || die "OpenLiteSpeed is unavailable and HP_LITESPEED_REPO=off prevents enabling its repository"
-
-  say "Enabling the official LiteSpeed repository"
-  repository_script="$WORK_DIR/litespeed-repo.sh"
-  curl -q --proto '=https' --tlsv1.2 \
-    --fail --location --silent --show-error \
-    --retry 5 --retry-all-errors --connect-timeout 15 --max-time 180 \
-    https://repo.litespeed.sh -o "$repository_script" \
-    || die "Could not download the official LiteSpeed repository installer"
-  [[ -s "$repository_script" ]] || die "The LiteSpeed repository installer is empty"
-  bash -n "$repository_script" \
-    || die "The LiteSpeed repository installer has invalid Bash syntax"
-  bash "$repository_script" \
-    || die "Could not enable the official LiteSpeed repository"
-  rm -f -- "$repository_script"
-
-  if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3 update -qq \
-      || die "Could not refresh APT metadata after enabling the LiteSpeed repository"
-  elif command -v dnf >/dev/null 2>&1; then
-    dnf -q --setopt=timeout=60 --setopt=retries=5 makecache \
-      || die "Could not refresh DNF metadata after enabling the LiteSpeed repository"
-  else
-    die "No supported package manager is available for OpenLiteSpeed"
-  fi
-
-  litespeed_package_available \
-    || die "The official LiteSpeed repository does not publish openlitespeed for this OS or architecture"
-  printf '  ok OpenLiteSpeed package is available from the official repository\n'
+  python3 -m py_compile \
+    "$PRODUCT_DIR/tools/hostpanel-build.py" \
+    "$PRODUCT_DIR/tools/hostpanel_build_config.py" \
+    "$PRODUCT_DIR/tools/hostpanel_build_packages.py" \
+    "$PRODUCT_DIR/tools/hostpanel_build_operations.py" \
+    "$PRODUCT_DIR/tools/hostpanel_build_cli.py" \
+    "$PRODUCT_DIR/tools/hostpanel_build_web.py" \
+    "$PRODUCT_DIR/tools/patch_custombuild_runtime.py"
+  bash -n "$PRODUCT_DIR/tools/install-hostpanel-build.sh"
 }
 
 ensure_prerequisites
@@ -382,6 +340,8 @@ read_token
 WORK_DIR="$(mktemp -d /tmp/hostpanel-quick-install.XXXXXX)" \
   || die "Could not create the private installer directory"
 chmod 700 "$WORK_DIR"
+PRODUCT_DIR="$WORK_DIR/product"
+mkdir -m 700 "$PRODUCT_DIR"
 AUTH_FILE="$WORK_DIR/github-curl.conf"
 {
   printf 'header = "Accept: application/vnd.github.raw+json"\n'
@@ -390,13 +350,14 @@ AUTH_FILE="$WORK_DIR/github-curl.conf"
 } >"$AUTH_FILE"
 chmod 600 "$AUTH_FILE"
 
-say "Downloading the pinned HostPanel bootstrap"
+say "Downloading reviewed HostPanel and CustomBuild inputs"
 download_reviewed_file bootstrap-install.sh "$WORK_DIR/bootstrap-install.sh"
 download_reviewed_file tools/validate-production-vm.sh "$WORK_DIR/validate-production-vm.sh"
+verify_custombuild_files
 
-[[ "$(git hash-object "$WORK_DIR/bootstrap-install.sh")" == "$BOOTSTRAP_BLOB" ]] \
+[[ "$(git hash-object --no-filters "$WORK_DIR/bootstrap-install.sh")" == "$BOOTSTRAP_BLOB" ]] \
   || die "Bootstrap Git blob verification failed"
-[[ "$(git hash-object "$WORK_DIR/validate-production-vm.sh")" == "$VALIDATOR_BLOB" ]] \
+[[ "$(git hash-object --no-filters "$WORK_DIR/validate-production-vm.sh")" == "$VALIDATOR_BLOB" ]] \
   || die "Validator Git blob verification failed"
 bash -n "$WORK_DIR/bootstrap-install.sh"
 bash -n "$WORK_DIR/validate-production-vm.sh"
@@ -420,6 +381,7 @@ common_env=(
   HP_PANEL_ADMIN_CIDR="$ADMIN_CIDR"
   HP_MULTI_PHP_REPO=off
   HP_RSPAMD_REPO=off
+  HP_WEBSERVER_MODE=nginx_apache
 )
 
 say "Running HostPanel preflight"
@@ -430,14 +392,18 @@ if [[ "$CHECK_ONLY" == yes ]]; then
   exit 0
 fi
 
-ensure_litespeed_repository
 install -o root -g root -m 0700 "$WORK_DIR/bootstrap-install.sh" /root/bootstrap-install.sh
 install -o root -g root -m 0700 "$WORK_DIR/validate-production-vm.sh" /root/validate-production-vm.sh
 
-say "Installing HostPanel"
+say "Installing HostPanel with nginx and Apache"
 env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}"
+
+say "Installing the verified HostPanel CustomBuild tool"
+HP_WEBSERVER_MODE=nginx_apache bash "$PRODUCT_DIR/tools/install-hostpanel-build.sh"
 
 printf '\nHostPanel %s installed from reviewed commit %s.\n' \
   "$(cat /opt/hostpanel/VERSION 2>/dev/null || printf unknown)" \
   "$REVIEWED_COMMIT_SHA"
+printf 'Base webserver: nginx_apache\n'
+printf 'CustomBuild: sudo hostpanel-build options\n'
 printf 'Installer log: /var/log/hostpanel-install.log\n'
