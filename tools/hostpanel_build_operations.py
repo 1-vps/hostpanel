@@ -28,6 +28,7 @@ PDNS_PATH_UNIT = SYSTEMD_ROOT / 'hostpanel-pdns-zones.path'
 PDNS_RELOAD_UNIT = SYSTEMD_ROOT / 'hostpanel-pdns-reload.service'
 PDNS_SERVICE_DROPIN = SYSTEMD_ROOT / 'pdns.service.d/hostpanel.conf'
 PDNS_DROPIN_NAME = '99-hostpanel.conf'
+PDNS_MANAGED_MARKER = '# Managed by HostPanel CustomBuild.'
 
 CONFIG_PATHS = {
     'nginx': ('/etc/nginx',),
@@ -433,19 +434,48 @@ def launch_values(text: str) -> set[str]:
     return values
 
 
-def reject_conflicting_powerdns_backends(
-    native: pathlib.Path, include_dir: pathlib.Path, managed: pathlib.Path
-) -> None:
-    backends = launch_values(native.read_text(encoding='utf-8'))
-    for path in sorted(include_dir.glob('*.conf')):
-        if path == managed or not path.is_file() or path.is_symlink():
+def active_setting_keys(text: str) -> set[str]:
+    keys: set[str] = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#') or '=' not in line:
             continue
-        backends.update(launch_values(path.read_text(encoding='utf-8')))
-    if backends:
+        keys.add(line.split('=', 1)[0].rstrip('+').strip())
+    return keys
+
+
+def select_powerdns_backend_config(
+    native: pathlib.Path, include_dir: pathlib.Path, default: pathlib.Path
+) -> pathlib.Path:
+    native_backends = launch_values(native.read_text(encoding='utf-8'))
+    if native_backends:
         raise BuildError(
-            'PowerDNS has unmanaged backend configuration; refusing to overwrite: '
-            + ', '.join(sorted(backends))
+            'PowerDNS native configuration has an unmanaged backend: '
+            + ', '.join(sorted(native_backends))
         )
+    candidates: list[pathlib.Path] = []
+    for path in sorted(include_dir.glob('*.conf')):
+        if path.is_symlink() or not path.is_file():
+            raise BuildError(f'unsafe PowerDNS backend configuration: {path}')
+        text = path.read_text(encoding='utf-8')
+        backends = launch_values(text)
+        if not backends:
+            continue
+        if backends != {'bind'}:
+            raise BuildError(
+                'PowerDNS has an unmanaged backend configuration: '
+                + ', '.join(sorted(backends))
+            )
+        if PDNS_MANAGED_MARKER not in text:
+            keys = active_setting_keys(text)
+            if path.name != 'bind.conf' or not keys <= {'launch', 'bind-config'}:
+                raise BuildError(
+                    f'PowerDNS BIND backend configuration is not a safe package default: {path}'
+                )
+        candidates.append(path)
+    if len(candidates) > 1:
+        raise BuildError('PowerDNS has multiple BIND backend configurations')
+    return candidates[0] if candidates else default
 
 
 def install_powerdns_units(
@@ -495,11 +525,12 @@ def configure_powerdns(platform: Platform, log_path: pathlib.Path) -> None:
         raise BuildError(f'HostPanel managed zone directory is missing: {zone_dir}')
     native = native_powerdns_config()
     include_dir = powerdns_include_dir(native)
-    managed = include_dir / PDNS_DROPIN_NAME
-    reject_conflicting_powerdns_backends(native, include_dir, managed)
+    target = select_powerdns_backend_config(
+        native, include_dir, include_dir / PDNS_DROPIN_NAME
+    )
     write_atomic_root(
-        managed,
-        '# Managed by HostPanel CustomBuild.\n'
+        target,
+        PDNS_MANAGED_MARKER + '\n'
         'launch=bind\n'
         f'bind-config={managed_conf}\n'
         'bind-check-interval=60\n'
