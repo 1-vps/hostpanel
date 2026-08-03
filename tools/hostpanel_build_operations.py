@@ -293,6 +293,43 @@ def unmask_openlitespeed(log_path: pathlib.Path) -> None:
     )
 
 
+def reconcile_webserver_services(
+    options: dict[str, str], platform: Platform, log_path: pathlib.Path
+) -> None:
+    """Enable only the services required by the selected global web mode."""
+    mode = options['webserver']
+    apache_service = 'apache2' if platform.family == 'debian' else 'httpd'
+
+    run_command(['systemctl', 'enable', '--now', 'nginx.service'], log_path=log_path)
+    run_command(['systemctl', 'is-active', '--quiet', 'nginx.service'], log_path=log_path)
+
+    if mode in {'nginx_apache', 'apache'}:
+        run_command(
+            ['systemctl', 'enable', '--now', f'{apache_service}.service'],
+            log_path=log_path,
+        )
+        run_command(
+            ['systemctl', 'is-active', '--quiet', f'{apache_service}.service'],
+            log_path=log_path,
+        )
+    else:
+        run_command(
+            ['systemctl', 'disable', '--now', f'{apache_service}.service'],
+            check=False, log_path=log_path,
+        )
+
+    if mode == 'openlitespeed':
+        run_command(
+            ['systemctl', 'is-active', '--quiet', 'lsws.service'],
+            log_path=log_path,
+        )
+    else:
+        run_command(
+            ['systemctl', 'disable', '--now', 'lsws.service'],
+            check=False, log_path=log_path,
+        )
+
+
 def apply_build(
     component: str, options: dict[str, str], platform: Platform,
     log_path: pathlib.Path, backup_dir: pathlib.Path,
@@ -325,6 +362,7 @@ def apply_build(
                 restart_component(item, options, platform, log_path)
         if component == 'web' or (component == 'all' and 'web' in roles):
             reconcile_webserver(options, web_helper, python_path, mode_file, log_path)
+            reconcile_webserver_services(options, platform, log_path)
             validate_webserver_mode(options, web_helper, python_path, log_path)
         run_doctor(log_path, python_path, doctor_path)
         succeeded = True
