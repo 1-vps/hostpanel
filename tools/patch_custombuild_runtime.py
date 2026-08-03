@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Patch the installed HostPanel runtime to honour the global webserver mode."""
+"""Patch the installed HostPanel runtime to honour global service modes."""
 from __future__ import annotations
 
 import os
@@ -205,9 +205,10 @@ def trusted_file(path: pathlib.Path) -> None:
 
 
 def write_atomic(path: pathlib.Path, text: str) -> None:
+    mode = stat.S_IMODE(path.stat().st_mode)
     temporary = path.with_name(f'.{path.name}.custombuild.{os.getpid()}')
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
-    fd = os.open(temporary, flags, 0o644)
+    fd = os.open(temporary, flags, mode)
     try:
         payload = text.encode('utf-8')
         view = memoryview(payload)
@@ -220,7 +221,7 @@ def write_atomic(path: pathlib.Path, text: str) -> None:
     finally:
         os.close(fd)
     os.chown(temporary, 0, 0)
-    os.chmod(temporary, 0o644)
+    os.chmod(temporary, mode)
     os.replace(temporary, path)
 
 
@@ -259,12 +260,21 @@ def patch_main(path: pathlib.Path) -> None:
     write_atomic(path, replace_once(text, old, new, 'new-domain webserver mode'))
 
 
+def patch_doctor(path: pathlib.Path) -> None:
+    trusted_file(path)
+    text = path.read_text(encoding='utf-8')
+    old = '''    if "dns" in roles:\n        expected[service("dns")] = True\n'''
+    new = '''    if "dns" in roles:\n        dns_mode_path = Path("/etc/hostpanel/dns-mode")\n        try:\n            dns_mode = dns_mode_path.read_text(encoding="ascii").strip()\n        except OSError:\n            dns_mode = "bind"\n        if dns_mode not in {"bind", "powerdns"}:\n            raise RuntimeError("invalid HostPanel DNS mode")\n        expected["pdns" if dns_mode == "powerdns" else service("dns")] = True\n'''
+    write_atomic(path, replace_once(text, old, new, 'doctor DNS service mode'))
+
+
 def main() -> int:
     if os.geteuid() != 0:
         raise SystemExit('patch_custombuild_runtime.py must run as root')
     app = pathlib.Path('/opt/hostpanel/app')
     patch_webserver(app / 'modules/webserver.py')
     patch_main(app / 'main.py')
+    patch_doctor(app / 'hostpanel-doctor')
     return 0
 
 
