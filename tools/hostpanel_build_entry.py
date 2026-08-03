@@ -11,7 +11,7 @@ import hostpanel_build_powerdns_adapter as powerdns_adapter
 import hostpanel_build_mongodb_adapter as mongodb_adapter
 from hostpanel_build_config import DEFAULT_CONFIG, read_config
 
-_BASE_APPLY_BUILD = cli.apply_build
+_BASE_EXECUTE_BUILD = cli.execute_build
 
 
 def config_path(argv: Sequence[str]) -> pathlib.Path:
@@ -37,18 +37,18 @@ def install_runtime_adapters(selected_config: pathlib.Path) -> None:
     cli.validate_mongodb = validate_mongodb
     cli.validate_varnish = state.validate_varnish
 
-    def guarded_apply_build(
+    def guarded_execute_build(
         component, options, platform, log_path, backup_dir,
         python_path, doctor_path, roles, web_helper, mode_file,
     ):
         state.ensure_safe_web_switch(component, options, mode_file)
         return powerdns_adapter.guarded_apply_build(
-            _BASE_APPLY_BUILD,
+            _BASE_EXECUTE_BUILD,
             component, options, platform, log_path, backup_dir,
             python_path, doctor_path, roles, web_helper, mode_file,
         )
 
-    cli.apply_build = guarded_apply_build
+    cli.execute_build = guarded_execute_build
 
 
 def main(argv: Sequence[str] | None = None) -> int:
