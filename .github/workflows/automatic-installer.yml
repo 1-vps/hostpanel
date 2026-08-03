@@ -21,6 +21,7 @@ on:
       - tools/hostpanel_build_extras_state.py
       - tools/hostpanel_build_entry.py
       - tools/hostpanel_build_powerdns_adapter.py
+      - tools/hostpanel_build_mongodb_adapter.py
       - tools/hostpanel_build_web.py
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
@@ -39,6 +40,7 @@ on:
       - tests/test_custombuild_extras_state.py
       - tests/test_custombuild_powerdns_adapter.py
       - tests/test_custombuild_powerdns_runtime.py
+      - tests/test_custombuild_deep_regressions.py
       - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   push:
@@ -62,6 +64,7 @@ on:
       - tools/hostpanel_build_extras_state.py
       - tools/hostpanel_build_entry.py
       - tools/hostpanel_build_powerdns_adapter.py
+      - tools/hostpanel_build_mongodb_adapter.py
       - tools/hostpanel_build_web.py
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
@@ -80,6 +83,7 @@ on:
       - tests/test_custombuild_extras_state.py
       - tests/test_custombuild_powerdns_adapter.py
       - tests/test_custombuild_powerdns_runtime.py
+      - tests/test_custombuild_deep_regressions.py
       - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   workflow_dispatch:
@@ -113,11 +117,13 @@ jobs:
             tools/hostpanel_build_extras_state.py \
             tools/hostpanel_build_entry.py \
             tools/hostpanel_build_powerdns_adapter.py \
+            tools/hostpanel_build_mongodb_adapter.py \
             tools/hostpanel_build_web.py \
             tools/patch_custombuild_runtime.py \
             tools/patch_powerdns_runtime.py \
             tools/patch_varnish_runtime.py \
             tools/patch_extras_doctor.py
+          python3 -m compileall -q tools tests
       - name: Run installer and CustomBuild regressions
         run: |
           python3 -m unittest -v \
@@ -132,6 +138,7 @@ jobs:
             tests.test_custombuild_extras_state \
             tests.test_custombuild_powerdns_adapter \
             tests.test_custombuild_powerdns_runtime \
+            tests.test_custombuild_deep_regressions \
             tests.test_openlitespeed_fallback
       - name: ShellCheck installer chain
         run: |
