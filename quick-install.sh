@@ -8,7 +8,7 @@ export PATH
 umask 077
 unset PYTHONPATH PYTHONHOME BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH
 
-readonly REVIEWED_COMMIT_SHA="62e356febf2e8a87f9cd4db0518bad140bab7631"
+readonly REVIEWED_COMMIT_SHA="755dcd5e47b7c82404b267e8df4dec27626fe341"
 readonly BOOTSTRAP_BLOB="639fae60ddd5bec36f5e3167dd21733a412a69fd"
 readonly VALIDATOR_BLOB="2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9"
 readonly REPOSITORY_API="https://api.github.com/repos/1-vps/hostpanel"
@@ -29,9 +29,9 @@ readonly CUSTOMBUILD_BLOBS=(
   d2b49d6da0735b144c4937b6fa26ec546afc14f6
   ebd99bea7b0c9bea81f736ce56e2e0d04a42dce0
   6a4633a5e2ba99093e8e2ba9e8af94a124970c3e
-  0115c4c5729cd736c49fed65e1435e445a4c1ae4
+  9cc63f3e8b0a49464b89b594bec2c3467ff9428d
   674144e2628b3048c51bf3487d781a5aeb07e73d
-  ae27a446a99e14cc04a8cb59d2403f34c0af547f
+  c3afb152058419d0bf397c18f0bf7c9c5b0121dd
   7a0ad9c287d1000c466d358409ccc7cf856f4313
 )
 
@@ -281,6 +281,7 @@ prompt_inputs(){
 }
 
 show_plan_and_confirm(){
+  local reply=""
   printf '\nHostPanel installation plan\n'
   printf '  release commit: %s\n' "$REVIEWED_COMMIT_SHA"
   printf '  panel hostname: %s\n' "$PANEL_HOST"
