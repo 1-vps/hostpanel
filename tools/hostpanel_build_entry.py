@@ -41,7 +41,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         python_path, doctor_path, roles, web_helper, mode_file,
     ):
         state.ensure_safe_web_switch(component, options, mode_file)
-        return original_apply_build(
+        return powerdns_adapter.guarded_apply_build(
+            original_apply_build,
             component, options, platform, log_path, backup_dir,
             python_path, doctor_path, roles, web_helper, mode_file,
         )
