@@ -8,6 +8,31 @@ import stat
 import sys
 
 
+APACHE_EDGE_VHOST = r'''APACHE_EDGE_VHOST = """# HostPanel Apache-only edge — nginx terminates public HTTP/TLS.
+server {{
+    listen 80;
+    listen [::]:80;
+    server_name {domain} www.{domain};
+
+    location / {{
+        proxy_pass http://127.0.0.1:{port};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_read_timeout 120s;
+    }}
+
+    access_log /var/log/nginx/{domain}.access.log;
+    error_log  /var/log/nginx/{domain}.error.log;
+}}
+"""
+'''
+
+
 def replace_once(text: str, old: str, new: str, label: str) -> str:
     old_count = text.count(old)
     new_count = text.count(new)
@@ -53,9 +78,28 @@ def write_atomic(path: pathlib.Path, text: str) -> None:
 def patch_webserver(path: pathlib.Path) -> None:
     trusted_file(path)
     text = path.read_text(encoding='utf-8')
-    old = '''MODES = ("nginx", "apache", "hybrid", "openlitespeed")\n'''
-    new = '''MODES = ("nginx", "apache", "hybrid", "openlitespeed")\nDEFAULT_MODE_FILE = Path("/etc/hostpanel/webserver-mode")\n\n\ndef default_mode() -> str:\n    """Return the root-managed default for newly created domains."""\n    try:\n        value = DEFAULT_MODE_FILE.read_text(encoding="ascii").strip()\n    except OSError:\n        value = "nginx_apache"\n    mapping = {\n        "nginx_apache": "hybrid",\n        "nginx": "nginx",\n        "apache": "apache",\n        "openlitespeed": "openlitespeed",\n    }\n    require(value in mapping, "Invalid global webserver mode")\n    return mapping[value]\n'''
-    write_atomic(path, replace_once(text, old, new, 'webserver default mode'))
+    modes_old = '''MODES = ("nginx", "apache", "hybrid", "openlitespeed")\n'''
+    modes_new = '''MODES = ("nginx", "apache", "hybrid", "openlitespeed")\nDEFAULT_MODE_FILE = Path("/etc/hostpanel/webserver-mode")\n\n\ndef default_mode() -> str:\n    """Return the root-managed default for newly created domains."""\n    try:\n        value = DEFAULT_MODE_FILE.read_text(encoding="ascii").strip()\n    except OSError:\n        value = "nginx_apache"\n    mapping = {\n        "nginx_apache": "hybrid",\n        "nginx": "nginx",\n        "apache": "apache",\n        "openlitespeed": "openlitespeed",\n    }\n    require(value in mapping, "Invalid global webserver mode")\n    return mapping[value]\n'''
+    text = replace_once(text, modes_old, modes_new, 'webserver default mode')
+
+    template_anchor = '''OLS_PROXY_VHOST = """server {{\n'''
+    template_replacement = APACHE_EDGE_VHOST + '\n' + template_anchor
+    text = replace_once(
+        text, template_anchor, template_replacement, 'Apache edge proxy template'
+    )
+
+    mode_old = '''    has_nginx = nginx_vhost.exists()\n    has_apache = apache_vhost.exists()\n    proxies = has_nginx and "@apache" in (NGINX_AVAIL / domain).read_text() \\\n        if has_nginx and (NGINX_AVAIL / domain).exists() else False\n\n    if has_nginx and has_apache and proxies:\n        return "hybrid"\n    if has_apache and not has_nginx:\n        return "apache"\n    return "nginx"\n'''
+    mode_new = '''    has_nginx = nginx_vhost.exists()\n    has_apache = apache_vhost.exists()\n    nginx_text = (NGINX_AVAIL / domain).read_text() \\\n        if has_nginx and (NGINX_AVAIL / domain).exists() else ""\n    if has_nginx and has_apache and "# HostPanel Apache-only edge" in nginx_text:\n        return "apache"\n    proxies = has_nginx and "@apache" in nginx_text\n\n    if has_nginx and has_apache and proxies:\n        return "hybrid"\n    if has_apache and not has_nginx:\n        # Compatibility with pre-CustomBuild Apache-only state. Reconciliation\n        # replaces it with the safe public nginx edge.\n        return "apache"\n    return "nginx"\n'''
+    text = replace_once(text, mode_old, mode_new, 'Apache mode detection')
+
+    apache_old = '''        if mode == "apache":\n            apply_apache(domain, docroot, socket)\n            run([binary("sudo"), str(ROOT_HELPER), "nginx-site", "disable", domain])\n            reload_service("nginx")\n            remove_openlitespeed(domain)\n'''
+    apache_new = '''        if mode == "apache":\n            # nginx remains the public TLS/HTTP edge, but unlike hybrid mode it\n            # proxies every request to Apache. Apache therefore serves all\n            # customer content without competing for ports 80 and 443.\n            apply_apache(domain, docroot, socket)\n            write_root_file(nginx_vhost, APACHE_EDGE_VHOST.format(\n                domain=domain, port=APACHE_PORT))\n            run([binary("sudo"), str(ROOT_HELPER), "nginx-site", "enable", domain])\n            check = subprocess.run([binary("sudo"), HOSTPANEL_ROOT, "nginx-test"],\n                                   capture_output=True, text=True, timeout=300)\n            if check.returncode != 0:\n                if saved_nginx:\n                    write_root_file(nginx_vhost, saved_nginx)\n                require(False, f"nginx rejected the Apache edge configuration: "\n                               f"{check.stderr[-200:]}")\n            reload_service("nginx")\n            remove_openlitespeed(domain)\n'''
+    text = replace_once(text, apache_old, apache_new, 'safe Apache edge mode')
+
+    note_old = '''            "apache": "Apache serves everything, so .htaccess works. Uses more "\n                      "memory per request than nginx.",\n'''
+    note_new = '''            "apache": "Apache handles every customer request behind nginx's "\n                      "public TLS edge, so .htaccess works without a port conflict.",\n'''
+    text = replace_once(text, note_old, note_new, 'Apache mode note')
+    write_atomic(path, text)
 
 
 def patch_main(path: pathlib.Path) -> None:
