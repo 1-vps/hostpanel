@@ -29,6 +29,7 @@ TARGET=/opt/hostpanel/tools/hostpanel-build
 COMMAND=/usr/local/sbin/hostpanel-build
 CONFIG=/etc/hostpanel/build.conf
 MODE_FILE=/etc/hostpanel/webserver-mode
+DNS_MODE_FILE=/etc/hostpanel/dns-mode
 PHP_STATE=/etc/hostpanel/php-versions
 
 for path in "$SOURCE" "${MODULES[@]/#/$SOURCE_ROOT/tools/}" "${EXECUTABLES[@]/#/$SOURCE_ROOT/tools/}"; do
@@ -103,6 +104,7 @@ if [[ ! -e "$CONFIG" ]]; then
 webserver=nginx_apache
 database=both
 mta=postfix
+dns=bind
 php_versions=$PHP_VERSIONS
 EOF
   chown root:root "$CONFIG"
@@ -128,9 +130,19 @@ printf '%s\n' "$WEB_MODE" >"$MODE_FILE"
 chown root:root "$MODE_FILE"
 chmod 0644 "$MODE_FILE"
 
+DNS_MODE="$(awk -F= '$1=="dns" {print $2; exit}' "$CONFIG")"
+DNS_MODE="${DNS_MODE:-bind}"
+[[ "$DNS_MODE" =~ ^(bind|powerdns)$ ]] || {
+  printf '%s\n' 'Error: build.conf contains an invalid dns option.' >&2
+  exit 1
+}
+printf '%s\n' "$DNS_MODE" >"$DNS_MODE_FILE"
+chown root:root "$DNS_MODE_FILE"
+chmod 0644 "$DNS_MODE_FILE"
+
 if [[ -d /opt/hostpanel/app ]]; then
   /opt/hostpanel/tools/patch-custombuild-runtime
 fi
 
 printf '%s\n' 'HostPanel build tool installed as /usr/local/sbin/hostpanel-build.'
-printf 'Base mode: nginx_apache. PHP branches: %s. Start with: sudo hostpanel-build versions\n' "$PHP_VERSIONS"
+printf 'Base modes: web=nginx_apache, dns=bind. PHP branches: %s. Start with: sudo hostpanel-build versions\n' "$PHP_VERSIONS"
