@@ -252,7 +252,8 @@ def web_components(options: dict[str, str]) -> list[str]:
     if mode == 'nginx':
         return ['nginx', 'php']
     if mode == 'apache':
-        return ['apache', 'php']
+        # nginx remains the public TLS edge while Apache handles every request.
+        return ['nginx', 'apache', 'php']
     if mode == 'openlitespeed':
         # nginx remains the public TLS/HTTP edge; OpenLiteSpeed is loopback-only.
         return ['nginx', 'openlitespeed', 'php']
