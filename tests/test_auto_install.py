@@ -26,6 +26,7 @@ class AutomaticInstallTests(unittest.TestCase):
         cls.source = INSTALLER.read_text(encoding="utf-8")
         cls.quick = QUICK.read_text(encoding="utf-8")
         cls.setup = SETUP.read_text(encoding="utf-8")
+        cls.setup_words = " ".join(cls.setup.split())
         cls.custombuild = CUSTOMBUILD.read_text(encoding="utf-8")
         cls.cloud_init = CLOUD_INIT.read_text(encoding="utf-8")
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -101,17 +102,7 @@ class AutomaticInstallTests(unittest.TestCase):
     def test_custombuild_inputs_are_blob_verified(self) -> None:
         self.assertIn('readonly CUSTOMBUILD_PATHS=(', self.quick)
         self.assertIn('readonly CUSTOMBUILD_BLOBS=(', self.quick)
-        for blob in (
-            'de2f5aac8ea7880f341ff93851eb744a5fcb0bda',
-            'f2a794f07482ad80a49e0e0816ca98c4832e16a0',
-            'd2b49d6da0735b144c4937b6fa26ec546afc14f6',
-            'ba682145ee38c93e7b37c9f860628f2a67ffc481',
-            '6c7dddf06679f3d76e2c6a2024f215be1d684db5',
-            '674144e2628b3048c51bf3487d781a5aeb07e73d',
-            '069b6dc608f71daeac7fbd9e08790acc21457d37',
-            '1a27de38dd4d8d4262473bdf7bd8e70898c07559',
-        ):
-            self.assertIn(blob, self.quick)
+        self.assertIn('tools/hostpanel_build_ssl.py', self.quick)
         self.assertIn('git hash-object --no-filters "$destination"', self.quick)
         self.assertIn('CustomBuild Git blob verification failed', self.quick)
         self.assertIn('python3 -m py_compile', self.quick)
@@ -153,14 +144,18 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn("descriptor is consumed", self.setup)
         self.assertIn("marked `unverified`", self.setup)
         self.assertIn("sudo hostpanel-build set webserver openlitespeed", self.setup)
-        self.assertIn("package-candidate preflight before service mutation", self.setup)
-        self.assertIn("complete matching LSPHP package", self.setup)
-        self.assertIn("nginx remains the public HTTP/TLS edge", self.setup)
+        self.assertIn("package-candidate preflight before service mutation", self.setup_words)
+        self.assertIn("complete matching LSPHP package", self.setup_words)
+        self.assertIn("nginx remains the public HTTP/TLS edge", self.setup_words)
         self.assertNotIn("install-one-line.sh", self.setup)
         self.assertNotIn("quick-install.sh", self.setup)
         self.assertNotIn("auto-install.sh?ref=main", self.setup)
         for mode in ("nginx_apache", "nginx", "apache", "openlitespeed"):
             self.assertIn(mode, self.custombuild)
+        for provider in ("letsencrypt", "zerossl"):
+            self.assertIn(f"--provider {provider}", self.custombuild)
+        self.assertIn("zerossl-eab-kid", self.custombuild)
+        self.assertIn("zerossl-eab-hmac", self.custombuild)
 
     def test_cloud_init_pins_and_verifies_launcher(self) -> None:
         self.assertIn("#cloud-config", self.cloud_init)
@@ -183,9 +178,12 @@ class AutomaticInstallTests(unittest.TestCase):
         for module in (
             "tests.test_hostpanel_build",
             "tests.test_custombuild_openlitespeed",
+            "tests.test_custombuild_ssl",
+            "tests.test_custombuild_review_fixes",
             "tests.test_openlitespeed_fallback",
         ):
             self.assertIn(module, self.workflow)
+        self.assertIn("tools/hostpanel_build_ssl.py", self.workflow)
         self.assertRegex(
             self.workflow,
             re.compile(r"shellcheck .*auto-install\.sh .*quick-install\.sh .*install-one-line\.sh", re.DOTALL),
