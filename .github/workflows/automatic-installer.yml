@@ -8,6 +8,7 @@ on:
       - install-one-line.sh
       - SETUP.md
       - CUSTOMBUILD.md
+      - CUSTOMBUILD-EXTRAS.md
       - examples/cloud-init-hostpanel.yaml
       - tools/harden_install.py
       - tools/hostpanel-build.py
@@ -19,6 +20,7 @@ on:
       - tools/hostpanel_build_extras.py
       - tools/hostpanel_build_extras_state.py
       - tools/hostpanel_build_entry.py
+      - tools/hostpanel_build_powerdns_adapter.py
       - tools/hostpanel_build_web.py
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
@@ -34,6 +36,7 @@ on:
       - tests/test_custombuild_powerdns.py
       - tests/test_custombuild_extras.py
       - tests/test_custombuild_extras_state.py
+      - tests/test_custombuild_powerdns_adapter.py
       - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   push:
@@ -44,6 +47,7 @@ on:
       - install-one-line.sh
       - SETUP.md
       - CUSTOMBUILD.md
+      - CUSTOMBUILD-EXTRAS.md
       - examples/cloud-init-hostpanel.yaml
       - tools/harden_install.py
       - tools/hostpanel-build.py
@@ -55,6 +59,7 @@ on:
       - tools/hostpanel_build_extras.py
       - tools/hostpanel_build_extras_state.py
       - tools/hostpanel_build_entry.py
+      - tools/hostpanel_build_powerdns_adapter.py
       - tools/hostpanel_build_web.py
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
@@ -70,6 +75,7 @@ on:
       - tests/test_custombuild_powerdns.py
       - tests/test_custombuild_extras.py
       - tests/test_custombuild_extras_state.py
+      - tests/test_custombuild_powerdns_adapter.py
       - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   workflow_dispatch:
@@ -102,6 +108,7 @@ jobs:
             tools/hostpanel_build_extras.py \
             tools/hostpanel_build_extras_state.py \
             tools/hostpanel_build_entry.py \
+            tools/hostpanel_build_powerdns_adapter.py \
             tools/hostpanel_build_web.py \
             tools/patch_custombuild_runtime.py \
             tools/patch_varnish_runtime.py \
@@ -118,6 +125,7 @@ jobs:
             tests.test_custombuild_powerdns \
             tests.test_custombuild_extras \
             tests.test_custombuild_extras_state \
+            tests.test_custombuild_powerdns_adapter \
             tests.test_openlitespeed_fallback
       - name: ShellCheck installer chain
         run: |
