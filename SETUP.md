@@ -13,13 +13,13 @@ It installs HostPanel version `3.4.1` from reviewed, immutable Git objects. The
 installer is pinned to commit:
 
 ```text
-0722d75dd0dd2b64f730012700b5bd45a7ce0c41
+bac349ca093e4dd5c760efa03c8ec9410d33deef
 ```
 
 Its verified Git blob is:
 
 ```text
-984c23040306429858662a6b51a62e983e7f2796
+0613e8b88af414b961c03d5adeee141e206ded2b
 ```
 
 ## Requirements
@@ -37,9 +37,9 @@ Create a provider snapshot and retain console access before installation.
 ## Obtain the installer
 
 Obtain the exact `auto-install.sh` bytes from immutable commit
-`0722d75dd0dd2b64f730012700b5bd45a7ce0c41` through an authenticated checkout or
+`bac349ca093e4dd5c760efa03c8ec9410d33deef` through an authenticated checkout or
 reviewed file transfer. Verify that its Git blob is
-`984c23040306429858662a6b51a62e983e7f2796`.
+`0613e8b88af414b961c03d5adeee141e206ded2b`.
 
 Do not execute a moving `main` branch as root.
 
@@ -209,8 +209,50 @@ validates the LSPHP binaries, and converts domains transactionally. A failed
 multi-domain conversion is rolled back in reverse order. Mutable upstream build
 scripts are never executed as root.
 
+## Free SSL after installation
+
+The verified CustomBuild command supports free ACME certificates from either
+Let's Encrypt or ZeroSSL. Plan mode does not change nginx or request a
+certificate:
+
+```bash
+sudo hostpanel-build ssl issue example.com --email admin@example.com --www
+```
+
+Issue with Let's Encrypt:
+
+```bash
+sudo hostpanel-build ssl issue example.com \
+  --email admin@example.com \
+  --provider letsencrypt \
+  --www \
+  --apply
+```
+
+ZeroSSL requires reusable EAB credentials. Save the EAB KID and HMAC in the
+root-only files documented in `CUSTOMBUILD.md`, then run:
+
+```bash
+sudo hostpanel-build ssl issue example.com \
+  --email admin@example.com \
+  --provider zerossl \
+  --www \
+  --apply
+```
+
+Inspect or renew certificates:
+
+```bash
+sudo hostpanel-build ssl status example.com
+sudo hostpanel-build ssl renew example.com --apply
+```
+
+nginx remains the public TLS edge in all four webserver modes. Existing
+certificate directives are preserved when a secured domain is switched to
+Apache content handling.
+
 See [`CUSTOMBUILD.md`](CUSTOMBUILD.md) for component rebuilds, version reporting,
-and signed panel updates.
+free SSL provider setup, and signed panel updates.
 
 ## Automatic detection and fail-closed behavior
 
@@ -236,7 +278,7 @@ public automatically.
 5. ignores user curl configuration for authenticated downloads;
 6. runs the complete preflight before installation;
 7. installs nginx as the public frontend and Apache as the private backend for the web role;
-8. installs the verified `hostpanel-build` maintenance command after HostPanel succeeds;
+8. installs the verified `hostpanel-build` maintenance and free ACME SSL command after HostPanel succeeds;
 9. installs all selected roles with Postfix by default;
 10. verifies version `3.4.1`;
 11. requires the production validator and `hostpanel-doctor` unless explicitly skipped;
@@ -282,6 +324,7 @@ cat /opt/hostpanel/VERSION
 sudo cat /etc/hostpanel/webserver-mode
 sudo hostpanel-build options
 sudo hostpanel-build validate web
+sudo hostpanel-build ssl status
 sudo cat /var/lib/hostpanel/auto-install-status.json
 sudo /opt/hostpanel/venv/bin/python /opt/hostpanel/app/hostpanel-doctor --quiet
 sudo bash /root/validate-production-vm.sh --check
