@@ -28,6 +28,7 @@ TARGET=/opt/hostpanel/tools/hostpanel-build
 COMMAND=/usr/local/sbin/hostpanel-build
 CONFIG=/etc/hostpanel/build.conf
 MODE_FILE=/etc/hostpanel/webserver-mode
+PHP_STATE=/etc/hostpanel/php-versions
 
 for path in "$SOURCE" "${MODULES[@]/#/$SOURCE_ROOT/tools/}" "${EXECUTABLES[@]/#/$SOURCE_ROOT/tools/}"; do
   [[ -f "$path" && ! -L "$path" ]] || {
@@ -70,14 +71,37 @@ EOF
 chown root:root "$COMMAND"
 chmod 0755 "$COMMAND"
 
+PHP_VERSIONS="$(python3 - "$PHP_STATE" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+default = ['8.5', '8.4', '8.3', '8.2']
+if path.is_file() and not path.is_symlink():
+    values = [line.strip() for line in path.read_text(encoding='ascii').splitlines() if line.strip()]
+else:
+    values = default
+pattern = re.compile(r'^(?:7\.4|8\.[0-5])$')
+if not values or len(values) > 8 or len(values) != len(set(values)):
+    raise SystemExit('invalid HostPanel PHP version state')
+if any(pattern.fullmatch(value) is None for value in values):
+    raise SystemExit('unsupported HostPanel PHP version state')
+print(','.join(values))
+PY
+)" || {
+  printf '%s\n' 'Error: could not derive CustomBuild PHP versions.' >&2
+  exit 1
+}
+
 if [[ ! -e "$CONFIG" ]]; then
-  cat >"$CONFIG" <<'EOF'
+  cat >"$CONFIG" <<EOF
 # HostPanel CustomBuild-style service options.
 # Managed with: hostpanel-build set KEY VALUE
 webserver=nginx_apache
 database=both
 mta=postfix
-php_versions=8.5,8.4,8.3,8.2
+php_versions=$PHP_VERSIONS
 EOF
   chown root:root "$CONFIG"
   chmod 0600 "$CONFIG"
@@ -107,4 +131,4 @@ if [[ -d /opt/hostpanel/app ]]; then
 fi
 
 printf '%s\n' 'HostPanel build tool installed as /usr/local/sbin/hostpanel-build.'
-printf '%s\n' 'Base mode: nginx_apache. Start with: sudo hostpanel-build versions'
+printf 'Base mode: nginx_apache. PHP branches: %s. Start with: sudo hostpanel-build versions\n' "$PHP_VERSIONS"
