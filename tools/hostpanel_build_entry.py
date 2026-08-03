@@ -27,6 +27,7 @@ def config_path(argv: Sequence[str]) -> pathlib.Path:
 def install_runtime_adapters(selected_config: pathlib.Path) -> None:
     powerdns_adapter.install()
     mongodb_adapter.install()
+    state.install()
     cli.apply_mongodb = state.apply_mongodb
     cli.apply_varnish = state.apply_varnish
 
@@ -34,6 +35,7 @@ def install_runtime_adapters(selected_config: pathlib.Path) -> None:
         state.validate_mongodb(read_config(selected_config), log_path)
 
     cli.validate_mongodb = validate_mongodb
+    cli.validate_varnish = state.validate_varnish
 
     def guarded_apply_build(
         component, options, platform, log_path, backup_dir,
