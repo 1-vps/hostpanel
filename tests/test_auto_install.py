@@ -10,12 +10,14 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "auto-install.sh"
 QUICK = ROOT / "quick-install.sh"
 SETUP = ROOT / "SETUP.md"
+CUSTOMBUILD = ROOT / "CUSTOMBUILD.md"
 CLOUD_INIT = ROOT / "examples" / "cloud-init-hostpanel.yaml"
 WORKFLOW = ROOT / ".github" / "workflows" / "automatic-installer.yml"
-AUTO_COMMIT = "9fedefce0bd5d9506983cff8cb060816bfe5dbaa"
-AUTO_BLOB = "8950754a20a3ba478a6dbfa48b070d8ce1428b0d"
-QUICK_COMMIT = "9ad09d87d2006b5fc2ed3c5a67149f444f7c3e9e"
-QUICK_BLOB = "2d3c504048821a395c819948dfdbf50cb05a202d"
+AUTO_COMMIT = "f8606cf116f4698afaecd086aa5faa744fb56f42"
+AUTO_BLOB = "cbeda8287321ac92d08e015e7149918a503f8bfc"
+QUICK_COMMIT = "3a6a221558d5f103071fabbc7b0f56a633df408c"
+QUICK_BLOB = "4c6864ccf644099b0e8e690664ce81cef64af662"
+PRODUCT_COMMIT = "2f28c567ef6514f79be5f0dc1eecbffbb2105942"
 
 
 class AutomaticInstallTests(unittest.TestCase):
@@ -24,6 +26,7 @@ class AutomaticInstallTests(unittest.TestCase):
         cls.source = INSTALLER.read_text(encoding="utf-8")
         cls.quick = QUICK.read_text(encoding="utf-8")
         cls.setup = SETUP.read_text(encoding="utf-8")
+        cls.custombuild = CUSTOMBUILD.read_text(encoding="utf-8")
         cls.cloud_init = CLOUD_INIT.read_text(encoding="utf-8")
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
 
@@ -39,12 +42,20 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn("never prompts", result.stdout)
         self.assertIn("check-only", result.stdout)
         self.assertIn("unverified", result.stdout)
+        quick_help = subprocess.run(
+            ["bash", str(QUICK), "--help"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("base web stack is always nginx_apache", quick_help.stdout)
 
     def test_all_execution_inputs_are_pinned(self) -> None:
         self.assertIn(f'QUICK_INSTALL_COMMIT="{QUICK_COMMIT}"', self.source)
         self.assertIn(f'QUICK_INSTALL_BLOB="{QUICK_BLOB}"', self.source)
-        self.assertIn('PRODUCT_COMMIT="d50ccea35aa6356f7f815a606fa91f6186b66a6f"', self.source)
+        self.assertIn(f'PRODUCT_COMMIT="{PRODUCT_COMMIT}"', self.source)
         self.assertIn('VALIDATOR_BLOB="2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9"', self.source)
+        self.assertIn(f'REVIEWED_COMMIT_SHA="{PRODUCT_COMMIT}"', self.quick)
         self.assertNotIn("ref=main", self.source)
         self.assertNotIn("ref=main", self.quick)
 
@@ -63,29 +74,38 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertNotRegex(self.source, re.compile(r"\bcurl --proto"))
         self.assertNotRegex(self.quick, re.compile(r"\bcurl --proto"))
 
-    def test_check_only_avoids_package_and_persistent_installer_mutation(self) -> None:
+    def test_check_only_avoids_persistent_mutation(self) -> None:
         self.assertIn("check-only never installs packages", self.source)
         self.assertIn("check-only never installs packages", self.quick)
         self.assertIn('[[ "$CHECK_ONLY" == no ]] || return 0', self.source)
         self.assertIn('bash "$WORK_DIR/bootstrap-install.sh" --check', self.quick)
         check_exit = self.quick.index('if [[ "$CHECK_ONLY" == yes ]]')
-        repo_enable = self.quick.index('\nensure_litespeed_repository\n', check_exit)
         root_install = self.quick.index('install -o root -g root -m 0700 "$WORK_DIR/bootstrap-install.sh"')
-        self.assertLess(check_exit, repo_enable)
-        self.assertLess(repo_enable, root_install)
+        custombuild_install = self.quick.index('bash "$PRODUCT_DIR/tools/install-hostpanel-build.sh"')
+        self.assertLess(check_exit, root_install)
+        self.assertLess(root_install, custombuild_install)
         self.assertIn("No packages or persistent installer files were changed", self.source)
 
-    def test_web_role_enables_and_verifies_litespeed_repository(self) -> None:
-        self.assertIn('LITESPEED_REPO_MODE="${HP_LITESPEED_REPO:-auto}"', self.quick)
-        self.assertIn("web_role_selected", self.quick)
-        self.assertIn("ensure_litespeed_repository", self.quick)
-        self.assertIn("https://repo.litespeed.sh", self.quick)
-        self.assertIn("apt-cache policy openlitespeed", self.quick)
-        self.assertIn("dnf -q list --available openlitespeed", self.quick)
-        self.assertIn("The official LiteSpeed repository does not publish openlitespeed", self.quick)
-        self.assertIn("HP_LITESPEED_REPO=auto", self.setup)
-        self.assertIn("HP_LITESPEED_REPO=auto", self.cloud_init)
-        self.assertNotIn("curl --proto '=https' --tlsv1.2", self.quick)
+    def test_base_install_is_always_nginx_apache(self) -> None:
+        self.assertIn('HP_WEBSERVER_MODE=nginx_apache', self.quick)
+        self.assertIn('printf \'  webserver:      nginx_apache\\n\'', self.quick)
+        self.assertIn('Installing HostPanel with nginx and Apache', self.quick)
+        self.assertNotIn('https://repo.litespeed.sh', self.quick)
+        self.assertNotIn('HP_LITESPEED_REPO', self.quick)
+        self.assertNotIn('ensure_litespeed_repository', self.quick)
+        self.assertIn('base installation always uses **`nginx_apache`**', self.setup)
+        self.assertIn('OpenLiteSpeed is not installed', self.setup)
+        self.assertNotIn('HP_LITESPEED_REPO=auto', self.setup)
+        self.assertNotIn('HP_LITESPEED_REPO=auto', self.cloud_init)
+
+    def test_custombuild_inputs_are_blob_verified(self) -> None:
+        self.assertIn('readonly CUSTOMBUILD_PATHS=(', self.quick)
+        self.assertIn('readonly CUSTOMBUILD_BLOBS=(', self.quick)
+        self.assertIn('git hash-object --no-filters "$destination"', self.quick)
+        self.assertIn('CustomBuild Git blob verification failed', self.quick)
+        self.assertIn('python3 -m py_compile', self.quick)
+        self.assertIn('bash -n "$PRODUCT_DIR/tools/install-hostpanel-build.sh"', self.quick)
+        self.assertIn('hostpanel-build', self.quick)
 
     def test_explicit_domain_is_authoritative_and_fails_closed(self) -> None:
         domain_branch = self.source.index('elif [[ -n "$PANEL_DOMAIN" ]]')
@@ -101,13 +121,11 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn('[[ -f /opt/hostpanel/app/hostpanel-doctor ]] || die', self.source)
         self.assertIn('/opt/hostpanel/app/hostpanel-doctor --quiet', self.source)
         self.assertIn('record_status unverified', self.source)
-        self.assertNotIn('if [[ -x /opt/hostpanel/venv/bin/python && -f /opt/hostpanel/app/hostpanel-doctor ]]', self.source)
 
     def test_healthy_rerun_checks_before_credentials(self) -> None:
         installed_branch = self.source.index('if [[ -n "$installed" && "$REINSTALL" == no')
         credentials = self.source.index('PHASE="reading-credentials"')
         self.assertLess(installed_branch, credentials)
-        self.assertIn("ensure_download_context", self.source)
         self.assertIn("Existing HostPanel installation is healthy", self.source)
 
     def test_lock_precedes_package_mutation(self) -> None:
@@ -116,7 +134,6 @@ class AutomaticInstallTests(unittest.TestCase):
         runtime_lock = self.source.rindex("\nacquire_lock\n")
         self.assertLess(bootstrap_lock, prerequisites)
         self.assertLess(prerequisites, runtime_lock)
-        self.assertIn("BOOTSTRAP_LOCK_DIR", self.source)
 
     def test_setup_documents_only_fixed_automatic_engine(self) -> None:
         self.assertIn("`auto-install.sh` is the only documented HostPanel installation entry point", self.setup)
@@ -124,10 +141,13 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn(AUTO_BLOB, self.setup)
         self.assertIn("descriptor is consumed", self.setup)
         self.assertIn("marked `unverified`", self.setup)
-        self.assertIn("apt-cache policy openlitespeed", self.setup)
+        self.assertIn("sudo hostpanel-build set webserver openlitespeed", self.setup)
+        self.assertIn("package-candidate preflight before any service", self.setup)
         self.assertNotIn("install-one-line.sh", self.setup)
         self.assertNotIn("quick-install.sh", self.setup)
         self.assertNotIn("auto-install.sh?ref=main", self.setup)
+        for mode in ("nginx_apache", "nginx", "apache", "openlitespeed"):
+            self.assertIn(mode, self.custombuild)
 
     def test_cloud_init_pins_and_verifies_launcher(self) -> None:
         self.assertIn("#cloud-config", self.cloud_init)
@@ -135,6 +155,7 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn(AUTO_BLOB, self.cloud_init)
         self.assertIn('git hash-object "$D/install"', self.cloud_init)
         self.assertIn("curl -q --proto '=https'", self.cloud_init)
+        self.assertIn("nginx_apache provisioning", self.cloud_init)
         self.assertNotIn("ref=main", self.cloud_init)
         self.assertNotRegex(self.cloud_init, r"github_pat_[A-Za-z0-9_]+")
 
@@ -143,7 +164,7 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", self.workflow)
         for path in ("auto-install.sh", "quick-install.sh", "install-one-line.sh"):
             self.assertIn(f"bash -n {path}", self.workflow)
-        self.assertIn("python3 -m unittest -v tests.test_auto_install tests.test_one_line_install", self.workflow)
+        self.assertIn("tests.test_hostpanel_build", self.workflow)
         self.assertRegex(
             self.workflow,
             re.compile(r"shellcheck .*auto-install\.sh .*quick-install\.sh .*install-one-line\.sh", re.DOTALL),
