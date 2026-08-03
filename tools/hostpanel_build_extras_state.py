@@ -22,11 +22,21 @@ varnish_origin_port = base.varnish_origin_port
 
 
 def _runtime_mode(path: pathlib.Path, default: str) -> str:
-    if not path.is_file():
+    if not os.path.lexists(path):
         return default
+    metadata = path.lstat()
+    expected_uid = 0 if os.geteuid() == 0 else os.getuid()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != expected_uid
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise BuildError(f'unsafe runtime mode file: {path}')
     try:
         return path.read_text(encoding='ascii').strip()
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         raise BuildError(f'cannot read runtime mode file: {path}') from exc
 
 
@@ -123,6 +133,31 @@ def _trusted_config(path: pathlib.Path) -> os.stat_result:
     return metadata
 
 
+def _trusted_varnish_secret(path: pathlib.Path) -> pathlib.Path:
+    metadata = path.lstat()
+    mode = stat.S_IMODE(metadata.st_mode)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_nlink != 1
+        or mode & 0o022
+        or mode & 0o004
+    ):
+        raise BuildError(f'unsafe Varnish secret file: {path}')
+    return path
+
+
+def _varnish_secret() -> pathlib.Path | None:
+    for path in (
+        pathlib.Path('/etc/varnish/secret'),
+        pathlib.Path('/etc/varnish/varnish_secret'),
+    ):
+        if os.path.lexists(path):
+            return _trusted_varnish_secret(path)
+    return None
+
+
 def _service_active(unit: str) -> bool:
     return run_command(
         ['systemctl', 'is-active', '--quiet', unit], check=False, capture=True
@@ -183,11 +218,10 @@ def validate_mongodb(options: dict[str, str], log_path: pathlib.Path) -> None:
     run_command(['systemctl', 'is-active', '--quiet', 'mongod.service'], log_path=log_path)
     if not base.loopback_listener(27017):
         raise BuildError('MongoDB port 27017 is not loopback-only')
-    # An unauthenticated ping fails after the first administrator exists. Check
-    # that mongosh itself starts without depending on database credentials.
-    run_command(
-        ['mongosh', '--quiet', '--nodb', '--eval', 'quit(0)'], log_path=log_path
-    )
+    run_command([
+        'mongosh', '--quiet', '--norc', '--host', '127.0.0.1',
+        '--port', '27017', '--eval', 'quit(0)',
+    ], log_path=log_path)
 
 
 def apply_mongodb(
@@ -224,6 +258,8 @@ def apply_mongodb(
         raise BuildError('MongoDB 8.0 package is unavailable after repository refresh')
 
     previous_mode = _runtime_mode(MONGODB_MODE_FILE, 'off')
+    if previous_mode not in {'off', MONGODB_VERSION}:
+        raise BuildError('invalid applied MongoDB mode')
     previous_config = _capture(base.MONGODB_CONFIG)
     was_active = _mask_service('mongod.service', log_path)
     try:
@@ -277,6 +313,8 @@ def apply_varnish(
     runtime = _runtime_mode(VARNISH_MODE_FILE, 'off')
     if applied not in {'nginx_apache', 'nginx', 'apache', 'openlitespeed'}:
         raise BuildError('invalid applied webserver mode')
+    if runtime not in {'off', 'on'}:
+        raise BuildError('invalid applied Varnish mode')
     if configured == 'on' and selected != applied:
         raise BuildError('apply the selected webserver mode before enabling Varnish')
     effective = dict(options)
@@ -339,11 +377,7 @@ def apply_varnish(
         base.write_atomic_text(
             base.VARNISH_VCL, base.render_varnish_vcl(origin_port), 0o644
         )
-        secret_candidates = (
-            pathlib.Path('/etc/varnish/secret'),
-            pathlib.Path('/etc/varnish/varnish_secret'),
-        )
-        secret = next((path for path in secret_candidates if path.is_file()), None)
+        secret = _varnish_secret()
         base.write_atomic_text(
             base.VARNISH_DROPIN, base.render_varnish_dropin(binary, secret), 0o644
         )
@@ -364,6 +398,10 @@ def apply_varnish(
             ['systemctl', 'disable', '--now', 'varnish.service'],
             check=False, log_path=log_path,
         )
+        with contextlib.suppress(Exception):
+            base.rewrite_varnish_proxies(
+                previous_mode == 'on', origin_port, log_path
+            )
         with contextlib.suppress(Exception):
             _restore(base.VARNISH_VCL, previous_vcl)
             _restore(base.VARNISH_DROPIN, previous_dropin)
@@ -386,10 +424,9 @@ def ensure_safe_web_switch(
 ) -> None:
     if component not in {'web', 'all'}:
         return
-    try:
-        current_web = mode_file.read_text(encoding='ascii').strip()
-    except OSError:
-        current_web = 'nginx_apache'
+    current_web = _runtime_mode(mode_file, 'nginx_apache')
+    if current_web not in {'nginx_apache', 'nginx', 'apache', 'openlitespeed'}:
+        raise BuildError('invalid applied webserver mode')
     runtime_varnish = _runtime_mode(VARNISH_MODE_FILE, 'off')
     if runtime_varnish not in {'off', 'on'}:
         raise BuildError('invalid Varnish runtime mode')
