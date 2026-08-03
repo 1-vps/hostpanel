@@ -22,6 +22,7 @@ VARNISH_SECRET_CANDIDATES = (
     pathlib.Path('/etc/varnish/secret'),
     pathlib.Path('/etc/varnish/varnish_secret'),
 )
+_BASE_RENDER_VARNISH_VCL = base.render_varnish_vcl
 
 extra_components = base.extra_components
 varnish_origin_port = base.varnish_origin_port
@@ -126,6 +127,26 @@ def harden_mongod_config(text: str) -> str:
     return '\n'.join(lines).rstrip() + '\n'
 
 
+def render_varnish_vcl(origin_port: int) -> str:
+    text = _BASE_RENDER_VARNISH_VCL(origin_port)
+    acl = '''acl purge {
+    "127.0.0.1";
+    "::1";
+}
+
+'''
+    purge = '''    if (req.method == "PURGE") {
+        if (client.ip !~ purge) { return (synth(405)); }
+        return (purge);
+    }
+'''
+    replacement = '''    if (req.method == "PURGE") { return (synth(405)); }
+'''
+    if text.count(acl) != 1 or text.count(purge) != 1:
+        raise BuildError('unexpected Varnish PURGE policy shape')
+    return text.replace(acl, '', 1).replace(purge, replacement, 1)
+
+
 def _trusted_config(path: pathlib.Path) -> os.stat_result:
     metadata = path.lstat()
     if (
@@ -192,12 +213,12 @@ def _trusted_varnish_secret(
 
 
 def _existing_varnish_secret() -> pathlib.Path | None:
-    identity = _varnish_identity()
     existing = [path for path in VARNISH_SECRET_CANDIDATES if os.path.lexists(path)]
     if len(existing) > 1:
         raise BuildError('multiple Varnish secret files are present')
     if not existing:
         return None
+    identity = _varnish_identity()
     return _trusted_varnish_secret(existing[0], identity.pw_gid)
 
 
@@ -455,7 +476,7 @@ def apply_varnish(
             raise BuildError('varnishd is missing after package installation')
         base.VARNISH_VCL.parent.mkdir(parents=True, mode=0o755, exist_ok=True)
         base.write_atomic_text(
-            base.VARNISH_VCL, base.render_varnish_vcl(origin_port), 0o644
+            base.VARNISH_VCL, render_varnish_vcl(origin_port), 0o644
         )
         secret = _ensure_varnish_secret()
         base.write_atomic_text(
@@ -522,3 +543,4 @@ def ensure_safe_web_switch(
 
 def install() -> None:
     base.harden_mongod_config = harden_mongod_config
+    base.render_varnish_vcl = render_varnish_vcl
