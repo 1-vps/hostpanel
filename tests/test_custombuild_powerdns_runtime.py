@@ -18,11 +18,11 @@ import hostpanel_build_powerdns_adapter as ADAPTER
 
 class PowerDnsRuntimeTests(unittest.TestCase):
     def test_parser_accepts_whitespace_and_append_forms(self):
-        text = '''
+        text = """
 include-dir = /etc/powerdns/pdns.d
 launch = bind
 launch += gsqlite3
-'''
+"""
         self.assertEqual(
             ADAPTER.setting_pairs(text),
             [
@@ -51,19 +51,21 @@ launch += gsqlite3
                 ADAPTER.operations, 'launch_values', ADAPTER.launch_values
             ), mock.patch.object(
                 ADAPTER.operations, 'active_setting_keys', ADAPTER.active_setting_keys
-            ):
+            ), mock.patch.object(ADAPTER, 'prepare_include_directory'):
                 with self.assertRaisesRegex(CONFIG.BuildError, 'unmanaged backend'):
                     ADAPTER.operations.select_powerdns_backend_config(
                         native, include, include / '99-hostpanel.conf'
                     )
 
-    def test_failed_dns_build_restores_previous_path_watcher(self):
+    def test_failed_powerdns_build_restores_previous_path_watcher(self):
         commands: list[list[str]] = []
 
         def failing(*args, **kwargs):
             raise CONFIG.BuildError('doctor failed')
 
         with mock.patch.object(
+            ADAPTER, 'applied_dns_mode', side_effect=['powerdns', 'powerdns']
+        ), mock.patch.object(
             ADAPTER.operations, 'service_active', return_value=True
         ), mock.patch.object(
             ADAPTER, 'run_command',
@@ -72,10 +74,10 @@ launch += gsqlite3
         ):
             with self.assertRaisesRegex(CONFIG.BuildError, 'doctor failed'):
                 ADAPTER.guarded_apply_build(
-                    failing, 'all', {}, mock.Mock(), pathlib.Path('/tmp/log'),
-                    pathlib.Path('/tmp/backup'), pathlib.Path('/tmp/python'),
-                    pathlib.Path('/tmp/doctor'), {'dns'}, pathlib.Path('/tmp/web'),
-                    pathlib.Path('/tmp/mode'),
+                    failing, 'all', {'dns': 'powerdns'}, mock.Mock(),
+                    pathlib.Path('/tmp/log'), pathlib.Path('/tmp/backup'),
+                    pathlib.Path('/tmp/python'), pathlib.Path('/tmp/doctor'),
+                    {'dns'}, pathlib.Path('/tmp/web'), pathlib.Path('/tmp/mode'),
                 )
         self.assertIn(
             ['systemctl', 'enable', '--now', 'hostpanel-pdns-zones.path'],
@@ -121,8 +123,8 @@ launch += gsqlite3
 
     def test_installer_preserves_applied_dns_mode(self):
         source = (TOOLS / 'install-hostpanel-build.sh').read_text(encoding='utf-8')
-        self.assertIn('if [[ ! -e "$DNS_MODE_FILE" ]]; then', source)
-        self.assertNotIn('printf \'%s\\n\' "$DNS_MODE" >"$DNS_MODE_FILE"', source)
+        self.assertIn('ensure_mode_file "$DNS_MODE_FILE" bind', source)
+        self.assertNotIn("printf '%s\\n' \"$DNS_MODE\" >\"$DNS_MODE_FILE\"", source)
         self.assertIn('/opt/hostpanel/tools/patch-powerdns-runtime', source)
 
 
