@@ -44,6 +44,7 @@ class CustomBuildOpenLiteSpeedTests(unittest.TestCase):
         patcher = (TOOLS / 'patch_custombuild_runtime.py').read_text(encoding='utf-8')
         self.assertIn('# HostPanel Apache-only edge', patcher)
         self.assertIn('proxy_pass http://127.0.0.1:{port}', patcher)
+        self.assertIn('APACHE_EDGE_REDIRECT_VHOST', patcher)
         self.assertIn('nginx rejected the Apache edge configuration', patcher)
 
     def test_openlitespeed_includes_versioned_lsphp_runtime_packages(self):
@@ -69,8 +70,7 @@ class CustomBuildOpenLiteSpeedTests(unittest.TestCase):
         options = dict(config.DEFAULT_OPTIONS)
         options['webserver'] = 'openlitespeed'
         platform = config.Platform('debian', 'ubuntu', '26.04')
-        with mock.patch.object(operations, 'installed_version', return_value=None), \
-             mock.patch.object(operations, 'candidate_version', return_value=None):
+        with mock.patch.object(operations, 'candidate_version', return_value=None):
             with self.assertRaisesRegex(config.BuildError, 'no services were changed'):
                 operations.preflight_packages(
                     config.web_components(options), options, platform
