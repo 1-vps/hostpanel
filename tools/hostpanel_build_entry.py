@@ -54,4 +54,8 @@ def install_runtime_adapters(selected_config: pathlib.Path) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     values = list(sys.argv[1:] if argv is None else argv)
     install_runtime_adapters(config_path(values))
-    return cli.main(values)
+    try:
+        return cli.main(values)
+    except OSError as exc:
+        print(f'hostpanel-build failed: {exc}', file=sys.stderr)
+        return 1
