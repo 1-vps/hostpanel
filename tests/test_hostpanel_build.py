@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import hostpanel_build_cli as CLI
 import hostpanel_build_config as CONFIG
 import hostpanel_build_packages as PACKAGES
+import hostpanel_build_operations as OPERATIONS
 import patch_custombuild_runtime as PATCH
 
 
@@ -160,6 +161,17 @@ class HostPanelBuildTests(unittest.TestCase):
             data = json.loads(output.getvalue())
             self.assertEqual(data['panel'], '3.4.1')
             self.assertEqual(data['packages'][0]['candidate'], '1.1')
+
+    def test_openlitespeed_preflight_fails_before_mutation(self):
+        options = dict(CONFIG.DEFAULT_OPTIONS)
+        options['webserver'] = 'openlitespeed'
+        platform = CONFIG.Platform('debian', 'ubuntu', '26.04')
+        with mock.patch.object(OPERATIONS, 'installed_version', return_value=None), \
+             mock.patch.object(OPERATIONS, 'candidate_version', return_value=None):
+            with self.assertRaisesRegex(CONFIG.BuildError, 'no services were changed'):
+                OPERATIONS.preflight_packages(
+                    CONFIG.web_components(options), options, platform
+                )
 
     def test_all_target_respects_roles_and_default_mode(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
