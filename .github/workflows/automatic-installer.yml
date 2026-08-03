@@ -38,6 +38,7 @@ on:
       - tests/test_custombuild_powerdns.py
       - tests/test_custombuild_extras.py
       - tests/test_custombuild_extras_state.py
+      - tests/test_custombuild_platform_guards.py
       - tests/test_custombuild_powerdns_adapter.py
       - tests/test_custombuild_powerdns_runtime.py
       - tests/test_custombuild_deep_regressions.py
@@ -81,6 +82,7 @@ on:
       - tests/test_custombuild_powerdns.py
       - tests/test_custombuild_extras.py
       - tests/test_custombuild_extras_state.py
+      - tests/test_custombuild_platform_guards.py
       - tests/test_custombuild_powerdns_adapter.py
       - tests/test_custombuild_powerdns_runtime.py
       - tests/test_custombuild_deep_regressions.py
@@ -136,6 +138,7 @@ jobs:
             tests.test_custombuild_powerdns \
             tests.test_custombuild_extras \
             tests.test_custombuild_extras_state \
+            tests.test_custombuild_platform_guards \
             tests.test_custombuild_powerdns_adapter \
             tests.test_custombuild_powerdns_runtime \
             tests.test_custombuild_deep_regressions \
