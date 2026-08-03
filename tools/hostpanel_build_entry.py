@@ -8,6 +8,7 @@ from typing import Sequence
 import hostpanel_build_cli as cli
 import hostpanel_build_extras_state as state
 import hostpanel_build_powerdns_adapter as powerdns_adapter
+import hostpanel_build_mongodb_adapter as mongodb_adapter
 from hostpanel_build_config import DEFAULT_CONFIG, read_config
 
 
@@ -24,6 +25,7 @@ def config_path(argv: Sequence[str]) -> pathlib.Path:
 def main(argv: Sequence[str] | None = None) -> int:
     values = list(sys.argv[1:] if argv is None else argv)
     powerdns_adapter.install()
+    mongodb_adapter.install()
     selected_config = config_path(values)
 
     cli.apply_mongodb = state.apply_mongodb
