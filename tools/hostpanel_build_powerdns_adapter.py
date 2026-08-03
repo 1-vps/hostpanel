@@ -130,7 +130,7 @@ def install() -> None:
     operations.active_setting_keys = active_setting_keys
 
     original = operations.configure_powerdns
-    if getattr(original, '_hostpanel_readable_backend', False):
+    if getattr(original, '_hostpanel_readable_backend', False) is True:
         return
 
     def configure(platform: Platform, log_path: pathlib.Path) -> None:
