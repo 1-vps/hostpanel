@@ -55,6 +55,18 @@ server {{
 }}
 """
 
+APACHE_EDGE_REDIRECT_VHOST = """# HostPanel Apache-only edge — HTTPS redirect preserved by CustomBuild.
+server {{
+    listen 80;
+    listen [::]:80;
+    server_name {domain} www.{domain};
+    return 301 https://$host$request_uri;
+
+    access_log /var/log/nginx/{domain}.access.log;
+    error_log  /var/log/nginx/{domain}.error.log;
+}}
+"""
+
 APACHE_EDGE_TLS_VHOST = """# HostPanel Apache-only TLS edge — certificate preserved by CustomBuild.
 server {{
     listen 443 ssl;
@@ -110,16 +122,32 @@ def apache_edge_tls_directives(domain: str, existing: str) -> list[str]:
     return directives
 
 
+def apache_edge_has_redirect(existing: str) -> bool:
+    compact = " ".join(existing.split())
+    return (
+        "https://$host$request_uri" in compact
+        or "https://$server_name$request_uri" in compact
+    )
+
+
 def apache_edge_vhost(domain: str, port: int, existing: str) -> str:
-    rendered = APACHE_EDGE_VHOST.format(domain=domain, port=port)
     directives = apache_edge_tls_directives(domain, existing)
     if directives:
+        # Certificates issued through hostpanel-build always request redirect.
+        # Preserve an explicit existing redirect, and restore it by default when
+        # a prior v1 CustomBuild switch lost the HTTP block but left the lineage.
+        existing_tls = "listen 443" in existing or "ssl_certificate " in existing
+        redirect = apache_edge_has_redirect(existing) or not existing_tls
+        rendered = (
+            APACHE_EDGE_REDIRECT_VHOST if redirect else APACHE_EDGE_VHOST
+        ).format(domain=domain, port=port)
         rendered += "\n" + APACHE_EDGE_TLS_VHOST.format(
             domain=domain,
             port=port,
             tls_directives="\n    ".join(directives),
         )
-    return rendered
+        return rendered
+    return APACHE_EDGE_VHOST.format(domain=domain, port=port)
 '''
 
 
@@ -150,7 +178,9 @@ def replace_variant_once(
 
 def install_apache_edge_support(text: str, anchor: str) -> str:
     if text.count('APACHE_EDGE_TLS_VHOST = """') == 1:
-        return text
+        if text.count('APACHE_EDGE_REDIRECT_VHOST = """') == 1:
+            return text
+        raise SystemExit('installed Apache TLS edge is missing redirect support')
     v1_count = text.count(APACHE_EDGE_SUPPORT_V1)
     anchor_count = text.count(anchor)
     if v1_count == 1:
@@ -210,7 +240,7 @@ def patch_webserver(path: pathlib.Path) -> None:
 
     apache_pristine = '''        if mode == "apache":\n            apply_apache(domain, docroot, socket)\n            run([binary("sudo"), str(ROOT_HELPER), "nginx-site", "disable", domain])\n            reload_service("nginx")\n            remove_openlitespeed(domain)\n'''
     apache_v1 = '''        if mode == "apache":\n            # nginx remains the public TLS/HTTP edge, but unlike hybrid mode it\n            # proxies every request to Apache. Apache therefore serves all\n            # customer content without competing for ports 80 and 443.\n            apply_apache(domain, docroot, socket)\n            write_root_file(nginx_vhost, APACHE_EDGE_VHOST.format(\n                domain=domain, port=APACHE_PORT))\n            run([binary("sudo"), str(ROOT_HELPER), "nginx-site", "enable", domain])\n            check = subprocess.run([binary("sudo"), HOSTPANEL_ROOT, "nginx-test"],\n                                   capture_output=True, text=True, timeout=300)\n            if check.returncode != 0:\n                if saved_nginx:\n                    write_root_file(nginx_vhost, saved_nginx)\n                require(False, f"nginx rejected the Apache edge configuration: "\n                               f"{check.stderr[-200:]}")\n            reload_service("nginx")\n            remove_openlitespeed(domain)\n'''
-    apache_new = '''        if mode == "apache":\n            # nginx remains the public TLS/HTTP edge, but unlike hybrid mode it\n            # proxies every request to Apache. Existing Certbot directives are\n            # preserved in an equivalent 443 proxy block.\n            apply_apache(domain, docroot, socket)\n            write_root_file(nginx_vhost, apache_edge_vhost(\n                domain, APACHE_PORT, saved_nginx))\n            run([binary("sudo"), str(ROOT_HELPER), "nginx-site", "enable", domain])\n            check = subprocess.run([binary("sudo"), HOSTPANEL_ROOT, "nginx-test"],\n                                   capture_output=True, text=True, timeout=300)\n            if check.returncode != 0:\n                if saved_nginx:\n                    write_root_file(nginx_vhost, saved_nginx)\n                require(False, f"nginx rejected the Apache edge configuration: "\n                               f"{check.stderr[-200:]}")\n            reload_service("nginx")\n            remove_openlitespeed(domain)\n'''
+    apache_new = '''        if mode == "apache":\n            # nginx remains the public TLS/HTTP edge, but unlike hybrid mode it\n            # proxies every request to Apache. Existing Certbot directives and\n            # the HTTP-to-HTTPS redirect are preserved.\n            apply_apache(domain, docroot, socket)\n            write_root_file(nginx_vhost, apache_edge_vhost(\n                domain, APACHE_PORT, saved_nginx))\n            run([binary("sudo"), str(ROOT_HELPER), "nginx-site", "enable", domain])\n            check = subprocess.run([binary("sudo"), HOSTPANEL_ROOT, "nginx-test"],\n                                   capture_output=True, text=True, timeout=300)\n            if check.returncode != 0:\n                if saved_nginx:\n                    write_root_file(nginx_vhost, saved_nginx)\n                require(False, f"nginx rejected the Apache edge configuration: "\n                               f"{check.stderr[-200:]}")\n            reload_service("nginx")\n            remove_openlitespeed(domain)\n'''
     text = replace_variant_once(
         text, (apache_pristine, apache_v1), apache_new, 'safe Apache TLS edge mode'
     )
