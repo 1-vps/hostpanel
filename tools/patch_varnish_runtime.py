@@ -16,9 +16,14 @@ VARNISH_PORT = 6081
 
 def varnish_enabled() -> bool:
     try:
-        return VARNISH_MODE_FILE.read_text(encoding="ascii").strip() == "on"
+        mode = VARNISH_MODE_FILE.read_text(encoding="ascii").strip()
     except OSError:
+        mode = "off"
+    if mode == "on":
+        return True
+    if mode == "off":
         return False
+    raise RuntimeError("invalid HostPanel Varnish mode")
 
 
 def backend_proxy_port(origin_port: int) -> int:
