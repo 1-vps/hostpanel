@@ -1,6 +1,6 @@
 # HostPanel CustomBuild
 
-`hostpanel-build` is HostPanel's DirectAdmin CustomBuild-style maintenance CLI. It provides one root-owned options file, version visibility, component rebuilds, webserver switching, and separate system/panel updates.
+`hostpanel-build` is HostPanel's DirectAdmin CustomBuild-style maintenance CLI. It provides one root-owned options file, version visibility, component rebuilds, webserver switching, free ACME SSL, and separate system/panel updates.
 
 The **base HostPanel installation always starts in `nginx_apache` mode**: nginx is the public HTTP/TLS frontend and Apache is the private backend on `127.0.0.1:8080`. OpenLiteSpeed is not installed by the base installer.
 
@@ -19,6 +19,7 @@ This installs:
 /opt/hostpanel/tools/hostpanel-build
 /etc/hostpanel/build.conf
 /etc/hostpanel/webserver-mode
+/etc/hostpanel/ssl/
 ```
 
 ## Webserver choices
@@ -63,6 +64,67 @@ An applied web build installs or realigns the required packages, validates confi
 For `openlitespeed`, every selected PHP branch must also be available as a matching LSPHP runtime and extension set. The switch refreshes package metadata and checks every required `openlitespeed`/`lsphp*` candidate before masking or restarting a service. If the configured repositories do not publish the complete set, the command stops before service mutation.
 
 During an OpenLiteSpeed switch, `lsws.service` is runtime-masked while packages are installed. HostPanel then forces WebAdmin to `127.0.0.1:7080`, installs the HostPanel listener on `127.0.0.1:8088`, enables proxy-IP handling, validates all LSPHP binaries, and converts managed domains transactionally. Failed domain conversion is rolled back in reverse order.
+
+## Free SSL
+
+HostPanel supports free 90-day ACME certificates through either **Let's Encrypt** or **ZeroSSL**. nginx remains the public certificate endpoint in every webserver mode.
+
+Always review the plan before applying:
+
+```bash
+sudo hostpanel-build ssl issue example.com \
+  --email admin@example.com \
+  --www
+```
+
+Issue and install a Let's Encrypt certificate:
+
+```bash
+sudo hostpanel-build ssl issue example.com \
+  --email admin@example.com \
+  --provider letsencrypt \
+  --www \
+  --apply
+```
+
+ZeroSSL's ACME service requires External Account Binding credentials. Generate one reusable EAB credential pair in the Developer section of the ZeroSSL dashboard, then save the values with a root-only editor so they do not enter shell history:
+
+```bash
+sudo install -d -o root -g root -m 0700 /etc/hostpanel/ssl
+sudoedit /etc/hostpanel/ssl/zerossl-eab-kid
+sudoedit /etc/hostpanel/ssl/zerossl-eab-hmac
+sudo chown root:root \
+  /etc/hostpanel/ssl/zerossl-eab-kid \
+  /etc/hostpanel/ssl/zerossl-eab-hmac
+sudo chmod 0600 \
+  /etc/hostpanel/ssl/zerossl-eab-kid \
+  /etc/hostpanel/ssl/zerossl-eab-hmac
+```
+
+Issue and install a ZeroSSL certificate:
+
+```bash
+sudo hostpanel-build ssl issue example.com \
+  --email admin@example.com \
+  --provider zerossl \
+  --www \
+  --apply
+```
+
+Custom credential paths can be supplied with `--eab-kid-file` and `--eab-hmac-file`. Each file must be a root-owned, single-link regular file with mode `0400` or `0600`.
+
+Check certificate state or renew due certificates:
+
+```bash
+sudo hostpanel-build ssl status
+sudo hostpanel-build ssl status example.com
+sudo hostpanel-build ssl renew
+sudo hostpanel-build ssl renew example.com --apply
+```
+
+Issuance uses Certbot's nginx authenticator/installer, enables HTTP-to-HTTPS redirect, verifies the resulting certificate lineage, and installs a deploy hook that runs `nginx -t` before reloading nginx. ZeroSSL EAB values are passed to Certbot through a temporary root-only configuration file under `/run/hostpanel-build`; the file is deleted immediately after the issuance process.
+
+When a domain is switched to `apache`, HostPanel preserves the active certificate directives and renders an equivalent port-443 proxy edge. A CustomBuild webserver switch must therefore not remove HTTPS from an already secured domain.
 
 ## Other options
 
@@ -115,6 +177,10 @@ sudo hostpanel-build build dns --apply
 sudo hostpanel-build build all --apply
 ```
 
+Every package selected for reinstall must have a current repository candidate, even if an older version is already installed. This preflight completes before snapshots, package transactions, or service restarts.
+
+DNS rebuilds install both the DNS server and validation utilities: `bind9` plus `bind9-utils` on Debian-family systems, or `bind` plus `bind-utils` on RHEL-family systems. The service unit is `bind9` on Debian and `named` on RHEL.
+
 Configuration snapshots are stored under `/var/backups/hostpanel/custombuild/` and execution details under `/var/log/hostpanel-build.log`.
 
 ## Updates
@@ -142,8 +208,11 @@ sudo hostpanel-build update_panel --apply
 - Mutating commands require root, a lock and explicit `--apply`.
 - The base installer never attempts to install OpenLiteSpeed.
 - nginx remains the public edge in every mode, so TLS and public listener ownership never move between daemons during a switch.
+- Existing Certbot TLS directives are retained when Apache-only content handling is selected.
+- ZeroSSL EAB secrets are read only from private files and are never placed directly in the executed Certbot argument vector.
 - Webserver conversion uses HostPanel's tested per-domain configuration engine instead of editing customer vhosts with broad substitutions.
 - Relevant configuration is snapshotted before package realignment.
+- Every reinstalled package requires a current candidate before any service mutation.
 - OpenLiteSpeed package installation is isolated behind a runtime systemd mask; only loopback listeners are accepted.
 - Every selected PHP branch requires an executable matching LSPHP runtime before OpenLiteSpeed is activated.
 - Multi-domain webserver changes roll back already converted domains in reverse order on failure.

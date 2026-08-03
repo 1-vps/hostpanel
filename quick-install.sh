@@ -8,7 +8,7 @@ export PATH
 umask 077
 unset PYTHONPATH PYTHONHOME BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH
 
-readonly REVIEWED_COMMIT_SHA="6e4d598dfce0d64e993a14a129ce53985d53ea21"
+readonly REVIEWED_COMMIT_SHA="755dcd5e47b7c82404b267e8df4dec27626fe341"
 readonly BOOTSTRAP_BLOB="639fae60ddd5bec36f5e3167dd21733a412a69fd"
 readonly VALIDATOR_BLOB="2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9"
 readonly REPOSITORY_API="https://api.github.com/repos/1-vps/hostpanel"
@@ -18,19 +18,21 @@ readonly CUSTOMBUILD_PATHS=(
   tools/hostpanel_build_packages.py
   tools/hostpanel_build_operations.py
   tools/hostpanel_build_cli.py
+  tools/hostpanel_build_ssl.py
   tools/hostpanel_build_web.py
   tools/patch_custombuild_runtime.py
   tools/install-hostpanel-build.sh
 )
 readonly CUSTOMBUILD_BLOBS=(
   de2f5aac8ea7880f341ff93851eb744a5fcb0bda
-  f2a794f07482ad80a49e0e0816ca98c4832e16a0
+  d14924e9f0fbeca229097cd9a38e638f452f54cf
   d2b49d6da0735b144c4937b6fa26ec546afc14f6
-  ba682145ee38c93e7b37c9f860628f2a67ffc481
-  6c7dddf06679f3d76e2c6a2024f215be1d684db5
+  ebd99bea7b0c9bea81f736ce56e2e0d04a42dce0
+  6a4633a5e2ba99093e8e2ba9e8af94a124970c3e
+  9cc63f3e8b0a49464b89b594bec2c3467ff9428d
   674144e2628b3048c51bf3487d781a5aeb07e73d
-  069b6dc608f71daeac7fbd9e08790acc21457d37
-  1a27de38dd4d8d4262473bdf7bd8e70898c07559
+  c3afb152058419d0bf397c18f0bf7c9c5b0121dd
+  7a0ad9c287d1000c466d358409ccc7cf856f4313
 )
 
 PANEL_HOST="${HP_PANEL_HOST:-}"
@@ -279,6 +281,7 @@ prompt_inputs(){
 }
 
 show_plan_and_confirm(){
+  local reply=""
   printf '\nHostPanel installation plan\n'
   printf '  release commit: %s\n' "$REVIEWED_COMMIT_SHA"
   printf '  panel hostname: %s\n' "$PANEL_HOST"
@@ -327,6 +330,7 @@ verify_custombuild_files(){
     "$PRODUCT_DIR/tools/hostpanel_build_packages.py" \
     "$PRODUCT_DIR/tools/hostpanel_build_operations.py" \
     "$PRODUCT_DIR/tools/hostpanel_build_cli.py" \
+    "$PRODUCT_DIR/tools/hostpanel_build_ssl.py" \
     "$PRODUCT_DIR/tools/hostpanel_build_web.py" \
     "$PRODUCT_DIR/tools/patch_custombuild_runtime.py"
   bash -n "$PRODUCT_DIR/tools/install-hostpanel-build.sh"

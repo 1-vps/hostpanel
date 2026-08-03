@@ -19,6 +19,7 @@ MODULES=(
   hostpanel_build_packages.py
   hostpanel_build_operations.py
   hostpanel_build_cli.py
+  hostpanel_build_ssl.py
 )
 EXECUTABLES=(
   hostpanel_build_web.py
@@ -42,7 +43,8 @@ python3 -m py_compile \
   "${EXECUTABLES[@]/#/$SOURCE_ROOT/tools/}"
 
 install -d -o root -g root -m 0755 /opt/hostpanel/tools /usr/local/sbin
-install -d -o root -g root -m 0700 /etc/hostpanel /var/backups/hostpanel/custombuild
+install -d -o root -g root -m 0700 \
+  /etc/hostpanel /etc/hostpanel/ssl /var/backups/hostpanel/custombuild
 
 if [[ "$(readlink -f -- "$SOURCE")" != "$TARGET" ]]; then
   install -o root -g root -m 0755 "$SOURCE" "$TARGET"
