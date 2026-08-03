@@ -13,13 +13,13 @@ It installs HostPanel version `3.4.1` from reviewed, immutable Git objects. The
 installer is pinned to commit:
 
 ```text
-bac349ca093e4dd5c760efa03c8ec9410d33deef
+1a86d380e7ebab287c767d183013b599cb116f7f
 ```
 
 Its verified Git blob is:
 
 ```text
-0613e8b88af414b961c03d5adeee141e206ded2b
+db23963e101b9194994da2ff8077b40a6b1cb99c
 ```
 
 ## Requirements
@@ -37,9 +37,9 @@ Create a provider snapshot and retain console access before installation.
 ## Obtain the installer
 
 Obtain the exact `auto-install.sh` bytes from immutable commit
-`bac349ca093e4dd5c760efa03c8ec9410d33deef` through an authenticated checkout or
+`1a86d380e7ebab287c767d183013b599cb116f7f` through an authenticated checkout or
 reviewed file transfer. Verify that its Git blob is
-`0613e8b88af414b961c03d5adeee141e206ded2b`.
+`db23963e101b9194994da2ff8077b40a6b1cb99c`.
 
 Do not execute a moving `main` branch as root.
 
@@ -248,8 +248,8 @@ sudo hostpanel-build ssl renew example.com --apply
 ```
 
 nginx remains the public TLS edge in all four webserver modes. Existing
-certificate directives are preserved when a secured domain is switched to
-Apache content handling.
+certificate directives and HTTP-to-HTTPS redirect behavior are preserved when a
+secured domain is switched to Apache content handling.
 
 See [`CUSTOMBUILD.md`](CUSTOMBUILD.md) for component rebuilds, version reporting,
 free SSL provider setup, and signed panel updates.
