@@ -67,6 +67,7 @@ class CustomBuildPowerDnsTests(unittest.TestCase):
             zone_dir = root / 'zones'
             native = root / 'powerdns' / 'pdns.conf'
             include_dir = native.parent / 'pdns.d'
+            target = include_dir / OPERATIONS.PDNS_DROPIN_NAME
             managed_conf.write_text(
                 'zone "example.com" { type master; file "example.com.zone"; };\n',
                 encoding='utf-8',
@@ -85,7 +86,10 @@ class CustomBuildPowerDnsTests(unittest.TestCase):
                  ), \
                  mock.patch.object(OPERATIONS, 'native_powerdns_config', return_value=native), \
                  mock.patch.object(OPERATIONS, 'powerdns_include_dir', return_value=include_dir), \
-                 mock.patch.object(OPERATIONS, 'reject_conflicting_powerdns_backends'), \
+                 mock.patch.object(
+                     OPERATIONS, 'select_powerdns_backend_config',
+                     return_value=target,
+                 ), \
                  mock.patch.object(
                      OPERATIONS, 'write_atomic_root',
                      side_effect=lambda path, text, mode=0o644: writes.append((path, text, mode)),
@@ -97,7 +101,10 @@ class CustomBuildPowerDnsTests(unittest.TestCase):
                      or subprocess.CompletedProcess(command, 0, '', ''),
                  ):
                 OPERATIONS.configure_powerdns(platform, root / 'log')
-            dropin = next(text for path, text, _ in writes if path.name == '99-hostpanel.conf')
+            path, dropin, mode = next(item for item in writes if item[0] == target)
+            self.assertEqual(path, target)
+            self.assertEqual(mode, 0o640)
+            self.assertIn(OPERATIONS.PDNS_MANAGED_MARKER, dropin)
             self.assertIn('launch=bind', dropin)
             self.assertIn(f'bind-config={managed_conf}', dropin)
             self.assertIn('bind-check-interval=60', dropin)
@@ -106,18 +113,47 @@ class CustomBuildPowerDnsTests(unittest.TestCase):
             self.assertIn('webserver=no', dropin)
             self.assertEqual(commands[-1], ['pdns_server', '--config=check'])
 
+    def test_packaged_bind_conf_is_adopted_as_single_backend(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            native = root / 'pdns.conf'
+            include = root / 'pdns.d'
+            default = include / OPERATIONS.PDNS_DROPIN_NAME
+            package = include / 'bind.conf'
+            include.mkdir()
+            native.write_text(f'include-dir={include}\n', encoding='utf-8')
+            package.write_text(
+                'launch+=bind\nbind-config=/etc/powerdns/bindbackend.conf\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(
+                OPERATIONS.select_powerdns_backend_config(native, include, default),
+                package,
+            )
+
     def test_unmanaged_powerdns_backends_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             native = root / 'pdns.conf'
             include = root / 'pdns.d'
-            managed = include / OPERATIONS.PDNS_DROPIN_NAME
+            default = include / OPERATIONS.PDNS_DROPIN_NAME
             include.mkdir()
             native.write_text('launch=gsqlite3\n', encoding='utf-8')
             with self.assertRaisesRegex(CONFIG.BuildError, 'unmanaged backend'):
-                OPERATIONS.reject_conflicting_powerdns_backends(
-                    native, include, managed
-                )
+                OPERATIONS.select_powerdns_backend_config(native, include, default)
+
+    def test_custom_bind_conf_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            native = root / 'pdns.conf'
+            include = root / 'pdns.d'
+            default = include / OPERATIONS.PDNS_DROPIN_NAME
+            custom = include / 'custom-bind.conf'
+            include.mkdir()
+            native.write_text(f'include-dir={include}\n', encoding='utf-8')
+            custom.write_text('launch=bind\nbind-config=/custom/named.conf\n')
+            with self.assertRaisesRegex(CONFIG.BuildError, 'safe package default'):
+                OPERATIONS.select_powerdns_backend_config(native, include, default)
 
     def test_systemd_path_reloads_new_and_changed_zones(self):
         writes: dict[str, str] = {}
@@ -295,11 +331,11 @@ class CustomBuildPowerDnsTests(unittest.TestCase):
         subprocess.run(['bash', '-n', str(VALIDATOR)], check=True)
         self.assertIn('dns_present(){', source)
         self.assertIn('check_full_unit hostpanel-pdns-zones.path', source)
-        self.assertIn("pdns_server --config=check", source)
-        self.assertIn("pdns_control ping", source)
-        self.assertIn("if ! dns_present; then", source)
-        self.assertIn("PowerDNS does not own port 53 in Bind mode", source)
-        self.assertIn("Bind does not own port 53 in PowerDNS mode", source)
+        self.assertIn('pdns_server --config=check', source)
+        self.assertIn('pdns_control ping', source)
+        self.assertIn('if ! dns_present; then', source)
+        self.assertIn('PowerDNS does not own port 53 in Bind mode', source)
+        self.assertIn('Bind does not own port 53 in PowerDNS mode', source)
 
 
 if __name__ == '__main__':
