@@ -13,13 +13,13 @@ It installs HostPanel version `3.4.1` from reviewed, immutable Git objects. The
 installer is pinned to commit:
 
 ```text
-f8606cf116f4698afaecd086aa5faa744fb56f42
+7045851e31014a697ae9571f65e2f237d47040fc
 ```
 
 Its verified Git blob is:
 
 ```text
-cbeda8287321ac92d08e015e7149918a503f8bfc
+b1b79b4ab0d5e5697e9b017c7f2308807b50ab91
 ```
 
 ## Requirements
@@ -37,9 +37,9 @@ Create a provider snapshot and retain console access before installation.
 ## Obtain the installer
 
 Obtain the exact `auto-install.sh` bytes from immutable commit
-`f8606cf116f4698afaecd086aa5faa744fb56f42` through an authenticated checkout or
+`7045851e31014a697ae9571f65e2f237d47040fc` through an authenticated checkout or
 reviewed file transfer. Verify that its Git blob is
-`cbeda8287321ac92d08e015e7149918a503f8bfc`.
+`b1b79b4ab0d5e5697e9b017c7f2308807b50ab91`.
 
 Do not execute a moving `main` branch as root.
 
@@ -189,15 +189,19 @@ sudo hostpanel-build build web --apply
 ```
 
 Changing the option alone does not modify packages, services, or domains.
-`build web --apply` performs package-candidate preflight before any service
-change, snapshots relevant configuration, validates services, converts all
-managed domains through HostPanel's existing webserver engine, and runs
-`hostpanel-doctor`.
+`build web --apply` refreshes package metadata, performs package-candidate
+preflight before service mutation, snapshots relevant configuration, validates
+services, converts all managed domains through HostPanel's existing webserver
+engine, and runs `hostpanel-doctor`.
 
-For `openlitespeed`, a real `openlitespeed` package candidate must already be
-published by a configured supported repository. If it is unavailable, the
-operation stops before packages or services are changed. The installer does not
-run mutable upstream build scripts as root.
+For `openlitespeed`, both `openlitespeed` and the complete matching LSPHP package
+set for every selected PHP branch must be available. If any package is missing,
+the operation stops before services are changed. During installation,
+`lsws.service` is runtime-masked. HostPanel then forces WebAdmin to
+`127.0.0.1:7080`, creates the private backend listener on `127.0.0.1:8088`,
+validates the LSPHP binaries, and converts domains transactionally. A failed
+multi-domain conversion is rolled back in reverse order. Mutable upstream build
+scripts are never executed as root.
 
 See [`CUSTOMBUILD.md`](CUSTOMBUILD.md) for component rebuilds, version reporting,
 and signed panel updates.
