@@ -4,7 +4,9 @@ from __future__ import annotations
 import contextlib
 import os
 import pathlib
+import pwd
 import re
+import secrets
 import shutil
 import stat
 
@@ -16,6 +18,10 @@ MONGODB_MODE_FILE = pathlib.Path('/etc/hostpanel/mongodb-mode')
 VARNISH_MODE_FILE = base.VARNISH_MODE_FILE
 MONGODB_VERSION = base.MONGODB_VERSION
 WEB_MODE_FILE = pathlib.Path('/etc/hostpanel/webserver-mode')
+VARNISH_SECRET_CANDIDATES = (
+    pathlib.Path('/etc/varnish/secret'),
+    pathlib.Path('/etc/varnish/varnish_secret'),
+)
 
 extra_components = base.extra_components
 varnish_origin_port = base.varnish_origin_port
@@ -133,29 +139,79 @@ def _trusted_config(path: pathlib.Path) -> os.stat_result:
     return metadata
 
 
-def _trusted_varnish_secret(path: pathlib.Path) -> pathlib.Path:
+def _trusted_root_directory_chain(path: pathlib.Path) -> None:
+    current = path
+    while True:
+        metadata = current.lstat()
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != 0
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            raise BuildError(f'unsafe root-managed directory: {current}')
+        if current.parent == current:
+            return
+        current = current.parent
+
+
+def _varnish_identity() -> pwd.struct_passwd:
+    name = base.varnish_service_user()
+    if not name:
+        raise BuildError('Varnish service account is missing')
+    try:
+        return pwd.getpwnam(name)
+    except KeyError as exc:
+        raise BuildError(f'Varnish service account is missing: {name}') from exc
+
+
+def _trusted_varnish_secret(
+    path: pathlib.Path, expected_gid: int | None = None
+) -> pathlib.Path:
     metadata = path.lstat()
     mode = stat.S_IMODE(metadata.st_mode)
+    if expected_gid is None:
+        expected_gid = _varnish_identity().pw_gid
+    valid_group = metadata.st_gid in {0, expected_gid}
+    valid_mode = mode == 0o600 or (mode == 0o640 and metadata.st_gid == expected_gid)
     if (
         not stat.S_ISREG(metadata.st_mode)
         or stat.S_ISLNK(metadata.st_mode)
         or metadata.st_uid != 0
         or metadata.st_nlink != 1
-        or mode & 0o022
-        or mode & 0o004
+        or not valid_group
+        or not valid_mode
+        or metadata.st_size < 16
+        or metadata.st_size > 4096
     ):
         raise BuildError(f'unsafe Varnish secret file: {path}')
+    payload = path.read_bytes()
+    if b'\x00' in payload or len(payload.strip()) < 16:
+        raise BuildError(f'invalid Varnish secret content: {path}')
     return path
 
 
-def _varnish_secret() -> pathlib.Path | None:
-    for path in (
-        pathlib.Path('/etc/varnish/secret'),
-        pathlib.Path('/etc/varnish/varnish_secret'),
-    ):
-        if os.path.lexists(path):
-            return _trusted_varnish_secret(path)
-    return None
+def _existing_varnish_secret() -> pathlib.Path | None:
+    identity = _varnish_identity()
+    existing = [path for path in VARNISH_SECRET_CANDIDATES if os.path.lexists(path)]
+    if len(existing) > 1:
+        raise BuildError('multiple Varnish secret files are present')
+    if not existing:
+        return None
+    return _trusted_varnish_secret(existing[0], identity.pw_gid)
+
+
+def _ensure_varnish_secret() -> pathlib.Path:
+    identity = _varnish_identity()
+    existing = _existing_varnish_secret()
+    if existing is not None:
+        return existing
+    target = VARNISH_SECRET_CANDIDATES[0]
+    target.parent.mkdir(parents=True, mode=0o755, exist_ok=True)
+    _trusted_root_directory_chain(target.parent)
+    payload = (secrets.token_urlsafe(48) + '\n').encode('ascii')
+    base.write_atomic_bytes(target, payload, 0o640, 0, identity.pw_gid)
+    return _trusted_varnish_secret(target, identity.pw_gid)
 
 
 def _service_active(unit: str) -> bool:
@@ -299,8 +355,24 @@ def apply_mongodb(
 
 def validate_varnish(options: dict[str, str], log_path: pathlib.Path) -> None:
     base.validate_varnish(options, log_path)
-    if options.get('varnish') == 'on' and not base.loopback_listener(base.VARNISH_ADMIN_PORT):
+    if options.get('varnish') != 'on':
+        return
+    if not base.loopback_listener(base.VARNISH_ADMIN_PORT):
         raise BuildError('Varnish management port 6082 is not loopback-only')
+    secret = _existing_varnish_secret()
+    if secret is None:
+        raise BuildError('Varnish management secret is missing')
+    _trusted_config(base.VARNISH_DROPIN)
+    dropin = base.VARNISH_DROPIN.read_text(encoding='utf-8')
+    if f'-S {secret}' not in dropin:
+        raise BuildError('Varnish systemd drop-in does not use the validated secret')
+    varnishadm = shutil.which('varnishadm')
+    if varnishadm is None:
+        raise BuildError('varnishadm is missing after Varnish installation')
+    run_command([
+        varnishadm, '-T', f'127.0.0.1:{base.VARNISH_ADMIN_PORT}',
+        '-S', str(secret), 'ping',
+    ], log_path=log_path)
 
 
 def apply_varnish(
@@ -327,9 +399,17 @@ def apply_varnish(
     )
 
     base.require_root()
+    if configured == 'on':
+        _existing_varnish_secret()
+    previous_secrets = {
+        path: _capture(path) for path in VARNISH_SECRET_CANDIDATES
+    }
     snapshot = base.snapshot_paths(
         'varnish',
-        (base.VARNISH_VCL, base.VARNISH_DROPIN, VARNISH_MODE_FILE, base.NGINX_AVAILABLE),
+        (
+            base.VARNISH_VCL, base.VARNISH_DROPIN, VARNISH_MODE_FILE,
+            base.NGINX_AVAILABLE, *VARNISH_SECRET_CANDIDATES,
+        ),
         backup_dir,
     )
     if snapshot:
@@ -377,7 +457,7 @@ def apply_varnish(
         base.write_atomic_text(
             base.VARNISH_VCL, base.render_varnish_vcl(origin_port), 0o644
         )
-        secret = _varnish_secret()
+        secret = _ensure_varnish_secret()
         base.write_atomic_text(
             base.VARNISH_DROPIN, base.render_varnish_dropin(binary, secret), 0o644
         )
@@ -405,6 +485,8 @@ def apply_varnish(
         with contextlib.suppress(Exception):
             _restore(base.VARNISH_VCL, previous_vcl)
             _restore(base.VARNISH_DROPIN, previous_dropin)
+            for path, captured in previous_secrets.items():
+                _restore(path, captured)
             run_command(['systemctl', 'daemon-reload'], check=False, log_path=log_path)
         with contextlib.suppress(Exception):
             base.write_atomic_text(VARNISH_MODE_FILE, previous_mode + '\n')
