@@ -32,6 +32,7 @@ class HostPanelBuildTests(unittest.TestCase):
             ROOT / 'tools' / 'hostpanel_build_packages.py',
             ROOT / 'tools' / 'hostpanel_build_operations.py',
             ROOT / 'tools' / 'hostpanel_build_cli.py',
+            ROOT / 'tools' / 'hostpanel_build_ssl.py',
             ROOT / 'tools' / 'hostpanel_build_web.py',
             PATCHER,
         ]
@@ -44,6 +45,7 @@ class HostPanelBuildTests(unittest.TestCase):
         self.assertIn('CustomBuild-style', result.stdout)
         self.assertIn('update_versions', result.stdout)
         self.assertIn('update_panel', result.stdout)
+        self.assertIn('ssl', result.stdout)
 
     def test_installer_and_documentation_contract(self):
         installer = INSTALLER.read_text(encoding='utf-8')
@@ -51,6 +53,8 @@ class HostPanelBuildTests(unittest.TestCase):
         self.assertIn('/usr/local/sbin/hostpanel-build', installer)
         self.assertIn('/opt/hostpanel/tools/hostpanel-build-web', installer)
         self.assertIn('/opt/hostpanel/tools/patch-custombuild-runtime', installer)
+        self.assertIn('hostpanel_build_ssl.py', installer)
+        self.assertIn('/etc/hostpanel/ssl', installer)
         self.assertIn('webserver=nginx_apache', installer)
         self.assertIn('PHP_STATE=/etc/hostpanel/php-versions', installer)
         self.assertIn('chmod 0600 "$CONFIG"', installer)
@@ -60,6 +64,9 @@ class HostPanelBuildTests(unittest.TestCase):
         self.assertIn('base HostPanel installation always starts in `nginx_apache`', document)
         self.assertIn('runtime-masked', document)
         self.assertIn('reverse order', document)
+        self.assertIn('--provider letsencrypt', document)
+        self.assertIn('--provider zerossl', document)
+        self.assertIn('zerossl-eab-kid', document)
 
     def test_config_parsing_is_strict(self):
         values = CONFIG.parse_config_text(
@@ -107,6 +114,14 @@ class HostPanelBuildTests(unittest.TestCase):
         self.assertEqual(CONFIG.component_packages('apache', options, rhel), ['httpd'])
         self.assertIn('php8.5-fpm', CONFIG.component_packages('php', options, debian))
         self.assertIn('php85-php-fpm', CONFIG.component_packages('php', options, rhel))
+        self.assertEqual(
+            CONFIG.component_packages('dns', options, debian),
+            ['bind9', 'bind9-utils'],
+        )
+        self.assertEqual(
+            CONFIG.component_packages('dns', options, rhel),
+            ['bind', 'bind-utils'],
+        )
         options['php_versions'] = '8.5'
         self.assertIn(
             'lsphp85-mysql',
@@ -179,8 +194,7 @@ class HostPanelBuildTests(unittest.TestCase):
         options = dict(CONFIG.DEFAULT_OPTIONS)
         options['webserver'] = 'openlitespeed'
         platform = CONFIG.Platform('debian', 'ubuntu', '26.04')
-        with mock.patch.object(OPERATIONS, 'installed_version', return_value=None), \
-             mock.patch.object(OPERATIONS, 'candidate_version', return_value=None):
+        with mock.patch.object(OPERATIONS, 'candidate_version', return_value=None):
             with self.assertRaisesRegex(CONFIG.BuildError, 'no services were changed'):
                 OPERATIONS.preflight_packages(
                     CONFIG.web_components(options), options, platform
@@ -212,7 +226,6 @@ def mode_of(domain):
     if has_apache and not has_nginx:
         return "apache"
     return "nginx"
-
 def set_mode(mode):
         if mode == "apache":
             apply_apache(domain, docroot, socket)
@@ -247,6 +260,8 @@ NOTES = {
             self.assertEqual(first_main, main.read_text())
             self.assertIn('DEFAULT_MODE_FILE', first_web)
             self.assertIn('APACHE_EDGE_VHOST', first_web)
+            self.assertIn('APACHE_EDGE_TLS_VHOST', first_web)
+            self.assertIn('apache_edge_vhost(', first_web)
             self.assertIn('# HostPanel Apache-only edge', first_web)
             self.assertIn('nginx rejected the Apache edge configuration', first_web)
             self.assertIn('target_mode = webserver.default_mode()', first_main)
