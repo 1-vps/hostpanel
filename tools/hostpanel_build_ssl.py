@@ -7,7 +7,7 @@ import re
 import shutil
 import stat
 
-from hostpanel_build_config import BuildError
+from hostpanel_build_config import BuildError, owner_ids
 from hostpanel_build_packages import run_command
 
 DOMAIN_RE = re.compile(
@@ -45,6 +45,7 @@ def validate_email(value: str) -> str:
 
 
 def _trusted_regular_file(path: pathlib.Path, *, executable: bool = False) -> None:
+    uid, gid = owner_ids()
     try:
         metadata = path.lstat()
     except OSError as exc:
@@ -52,7 +53,8 @@ def _trusted_regular_file(path: pathlib.Path, *, executable: bool = False) -> No
     if (
         not stat.S_ISREG(metadata.st_mode)
         or stat.S_ISLNK(metadata.st_mode)
-        or metadata.st_uid != 0
+        or metadata.st_uid != uid
+        or metadata.st_gid != gid
         or metadata.st_nlink != 1
         or stat.S_IMODE(metadata.st_mode) & 0o022
         or (executable and not os.access(path, os.X_OK))
@@ -89,25 +91,29 @@ def ensure_certbot() -> str:
 
 
 def _safe_hook_parent(path: pathlib.Path) -> None:
+    uid, gid = owner_ids()
     path.parent.mkdir(parents=True, mode=0o755, exist_ok=True)
     metadata = path.parent.lstat()
     if (
         not stat.S_ISDIR(metadata.st_mode)
         or stat.S_ISLNK(metadata.st_mode)
-        or metadata.st_uid != 0
+        or metadata.st_uid != uid
+        or metadata.st_gid != gid
         or stat.S_IMODE(metadata.st_mode) & 0o022
     ):
         raise BuildError(f'unsafe Certbot deploy-hook directory: {path.parent}')
 
 
 def install_deploy_hook(path: pathlib.Path = DEFAULT_HOOK) -> None:
+    uid, gid = owner_ids()
     _safe_hook_parent(path)
     if path.exists() or path.is_symlink():
         metadata = path.lstat()
         if (
             not stat.S_ISREG(metadata.st_mode)
             or stat.S_ISLNK(metadata.st_mode)
-            or metadata.st_uid != 0
+            or metadata.st_uid != uid
+            or metadata.st_gid != gid
             or metadata.st_nlink != 1
             or stat.S_IMODE(metadata.st_mode) & 0o022
         ):
@@ -131,7 +137,7 @@ def install_deploy_hook(path: pathlib.Path = DEFAULT_HOOK) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
-    os.chown(temporary, 0, 0)
+    os.chown(temporary, uid, gid)
     os.chmod(temporary, 0o755)
     os.replace(temporary, path)
 
