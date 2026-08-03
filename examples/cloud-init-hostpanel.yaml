@@ -42,10 +42,10 @@ runcmd:
     chmod 0600 "$D/curl"
     curl -q --proto '=https' --tlsv1.2 -fsSL --retry 5 \
       --config "$D/curl" \
-      'https://api.github.com/repos/1-vps/hostpanel/contents/auto-install.sh?ref=bac349ca093e4dd5c760efa03c8ec9410d33deef' \
+      'https://api.github.com/repos/1-vps/hostpanel/contents/auto-install.sh?ref=1a86d380e7ebab287c767d183013b599cb116f7f' \
       -o "$D/install"
     rm -f -- "$D/curl"
-    [[ "$(git hash-object "$D/install")" == 0613e8b88af414b961c03d5adeee141e206ded2b ]]
+    [[ "$(git hash-object "$D/install")" == db23963e101b9194994da2ff8077b40a6b1cb99c ]]
     chmod 0700 "$D/install"
     bash "$D/install"
 
