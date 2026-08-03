@@ -8,8 +8,8 @@ export PATH
 umask 077
 unset PYTHONPATH PYTHONHOME BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH
 
-readonly AUTO_INSTALL_COMMIT="9fedefce0bd5d9506983cff8cb060816bfe5dbaa"
-readonly AUTO_INSTALL_BLOB="8950754a20a3ba478a6dbfa48b070d8ce1428b0d"
+readonly AUTO_INSTALL_COMMIT="f8606cf116f4698afaecd086aa5faa744fb56f42"
+readonly AUTO_INSTALL_BLOB="cbeda8287321ac92d08e015e7149918a503f8bfc"
 readonly REPOSITORY_API="https://api.github.com/repos/1-vps/hostpanel"
 
 DOMAIN="${HP_PANEL_DOMAIN:-}"
@@ -29,7 +29,8 @@ Usage:
 
 The command never prompts. DOMAIN is optional when hostname -f already returns a
 valid FQDN. DOMAIN is converted to panel.DOMAIN by the verified automatic
-installer.
+installer. The base webserver mode is nginx_apache; use hostpanel-build after
+installation to select nginx, Apache, OpenLiteSpeed, or nginx_apache.
 
 Optional environment:
   HP_PANEL_HOST, HP_PANEL_DOMAIN, HP_PANEL_ADMIN_CIDR
