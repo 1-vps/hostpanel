@@ -46,9 +46,9 @@ webserver=nginx_apache|nginx|apache|openlitespeed
 
 The modes mean:
 
-- `nginx_apache`: nginx serves public traffic and static files; Apache handles dynamic requests and `.htaccess`.
-- `nginx`: nginx and PHP-FPM only.
-- `apache`: Apache and PHP-FPM only.
+- `nginx_apache`: nginx terminates public HTTP/TLS and serves static files; Apache handles dynamic requests and `.htaccess` on `127.0.0.1:8080`.
+- `nginx`: nginx terminates public HTTP/TLS and serves all content through PHP-FPM where required.
+- `apache`: nginx remains a thin public HTTP/TLS edge, but every customer request is proxied to Apache on `127.0.0.1:8080`; Apache therefore handles all customer content and `.htaccess` without competing for ports 80 or 443.
 - `openlitespeed`: nginx remains the public edge while OpenLiteSpeed serves each domain through the private `127.0.0.1:8088` backend.
 
 Changing the option alone does not touch services. Review the plan, then apply it:
@@ -58,7 +58,7 @@ sudo hostpanel-build plan web
 sudo hostpanel-build build web --apply
 ```
 
-An applied web build installs or realigns the required packages, validates configurations, changes every managed domain through HostPanel's existing webserver engine, records the mode for future domains, and runs `hostpanel-doctor`.
+An applied web build installs or realigns the required packages, validates configurations, changes every managed domain through HostPanel's existing webserver engine, records the mode for future domains, disables unused backend services, and runs `hostpanel-doctor`.
 
 For `openlitespeed`, every selected PHP branch must also be available as a matching LSPHP runtime and extension set. The switch refreshes package metadata and checks every required `openlitespeed`/`lsphp*` candidate before masking or restarting a service. If the configured repositories do not publish the complete set, the command stops before service mutation.
 
@@ -141,11 +141,13 @@ sudo hostpanel-build update_panel --apply
 - Unknown, duplicate or unsupported options fail closed.
 - Mutating commands require root, a lock and explicit `--apply`.
 - The base installer never attempts to install OpenLiteSpeed.
+- nginx remains the public edge in every mode, so TLS and public listener ownership never move between daemons during a switch.
 - Webserver conversion uses HostPanel's tested per-domain configuration engine instead of editing customer vhosts with broad substitutions.
 - Relevant configuration is snapshotted before package realignment.
 - OpenLiteSpeed package installation is isolated behind a runtime systemd mask; only loopback listeners are accepted.
 - Every selected PHP branch requires an executable matching LSPHP runtime before OpenLiteSpeed is activated.
 - Multi-domain webserver changes roll back already converted domains in reverse order on failure.
+- Unused Apache or OpenLiteSpeed backend services are disabled after successful reconciliation.
 - Service configuration is validated before restart.
 - Applied maintenance ends with `hostpanel-doctor --quiet`.
 
