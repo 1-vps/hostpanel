@@ -77,7 +77,9 @@ class DeepCustomBuildRegressionTests(unittest.TestCase):
         )
         self.assertGreaterEqual(workflow.count('tools/hostpanel_build_mongodb_adapter.py'), 3)
         self.assertIn('tests/test_custombuild_deep_regressions.py', workflow)
+        self.assertIn('tests/test_custombuild_platform_guards.py', workflow)
         self.assertIn('tests.test_custombuild_deep_regressions', workflow)
+        self.assertIn('tests.test_custombuild_platform_guards', workflow)
         self.assertIn('python3 -m compileall -q tools tests', workflow)
 
     def test_mongod_hardening_rejects_ambiguous_or_exposed_yaml(self):
@@ -212,15 +214,22 @@ class DeepCustomBuildRegressionTests(unittest.TestCase):
             mode.write_text('off\n', encoding='ascii')
             web_mode = root / 'webserver-mode'
             web_mode.write_text('nginx_apache\n', encoding='ascii')
+            secret = root / 'secret'
             with contextlib.ExitStack() as stack:
                 stack.enter_context(mock.patch.object(STATE, 'VARNISH_MODE_FILE', mode))
                 stack.enter_context(mock.patch.object(STATE, 'WEB_MODE_FILE', web_mode))
+                stack.enter_context(mock.patch.object(
+                    STATE, 'VARNISH_SECRET_CANDIDATES',
+                    (root / 'secret', root / 'varnish_secret'),
+                ))
                 stack.enter_context(mock.patch.object(STATE.base, 'VARNISH_VCL', root / 'default.vcl'))
                 stack.enter_context(mock.patch.object(STATE.base, 'VARNISH_DROPIN', root / 'hostpanel.conf'))
                 stack.enter_context(mock.patch.object(STATE.base, 'NGINX_AVAILABLE', root))
                 stack.enter_context(mock.patch.object(STATE.base, 'require_root'))
                 stack.enter_context(mock.patch.object(STATE.base, 'snapshot_paths', return_value=None))
                 stack.enter_context(mock.patch.object(STATE, '_capture', return_value=None))
+                stack.enter_context(mock.patch.object(STATE, '_existing_varnish_secret', return_value=None))
+                stack.enter_context(mock.patch.object(STATE, '_ensure_varnish_secret', return_value=secret))
                 stack.enter_context(mock.patch.object(STATE, '_service_active', return_value=False))
                 stack.enter_context(mock.patch.object(
                     STATE, '_mask_service',
@@ -237,7 +246,6 @@ class DeepCustomBuildRegressionTests(unittest.TestCase):
                     side_effect=lambda *args: events.append('reinstall'),
                 ))
                 stack.enter_context(mock.patch.object(STATE.shutil, 'which', return_value='/usr/sbin/varnishd'))
-                stack.enter_context(mock.patch.object(STATE, '_varnish_secret', return_value=None))
                 stack.enter_context(mock.patch.object(
                     STATE.base, 'write_atomic_text',
                     side_effect=lambda path, text, *args: events.append(
@@ -274,15 +282,41 @@ class DeepCustomBuildRegressionTests(unittest.TestCase):
         self.assertEqual(listeners, [6081, 6082])
         self.assertEqual(proxy_states, [True, False])
 
-    def test_varnish_secret_rejects_symlink(self):
+    def test_varnish_secret_generation_is_private_and_group_readable(self):
+        identity = mock.Mock(pw_gid=456)
+        target = pathlib.Path('/etc/varnish/secret')
+        with mock.patch.object(STATE, 'VARNISH_SECRET_CANDIDATES', (
+            target, pathlib.Path('/etc/varnish/varnish_secret')
+        )), mock.patch.object(STATE, '_varnish_identity', return_value=identity), \
+             mock.patch.object(STATE, '_existing_varnish_secret', return_value=None), \
+             mock.patch.object(pathlib.Path, 'mkdir'), \
+             mock.patch.object(STATE, '_trusted_root_directory_chain'), \
+             mock.patch.object(STATE.secrets, 'token_urlsafe', return_value='x' * 64), \
+             mock.patch.object(STATE.base, 'write_atomic_bytes') as write, \
+             mock.patch.object(
+                 STATE, '_trusted_varnish_secret', return_value=target
+             ) as trusted:
+            self.assertEqual(STATE._ensure_varnish_secret(), target)
+        write.assert_called_once_with(target, (('x' * 64) + '\n').encode('ascii'), 0o640, 0, 456)
+        trusted.assert_called_once_with(target, 456)
+
+    def test_varnish_secret_rejects_symlink_and_duplicates(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             secret = root / 'secret'
-            secret.write_text('secret', encoding='ascii')
+            secret.write_text('x' * 48 + '\n', encoding='ascii')
             link = root / 'secret-link'
             link.symlink_to(secret)
             with self.assertRaisesRegex(CONFIG.BuildError, 'unsafe Varnish secret'):
-                STATE._trusted_varnish_secret(link)
+                STATE._trusted_varnish_secret(link, 123)
+            first = root / 'first'
+            second = root / 'second'
+            first.write_text('x' * 48 + '\n')
+            second.write_text('y' * 48 + '\n')
+            with mock.patch.object(STATE, 'VARNISH_SECRET_CANDIDATES', (first, second)), \
+                 mock.patch.object(STATE, '_varnish_identity', return_value=mock.Mock(pw_gid=123)):
+                with self.assertRaisesRegex(CONFIG.BuildError, 'multiple Varnish secret'):
+                    STATE._existing_varnish_secret()
 
     def test_execute_build_runs_final_doctor_only_when_needed(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
@@ -353,8 +387,10 @@ class DeepCustomBuildRegressionTests(unittest.TestCase):
         self.assertIn(['systemctl', 'enable', '--now', 'bind9.service'], commands)
 
     def test_entry_wraps_complete_transaction_idempotently(self):
-        original = ENTRY.cli.execute_build
-        self.addCleanup(setattr, ENTRY.cli, 'execute_build', original)
+        original_build = ENTRY.cli.execute_build
+        original_plan = ENTRY.cli.print_plan
+        self.addCleanup(setattr, ENTRY.cli, 'execute_build', original_build)
+        self.addCleanup(setattr, ENTRY.cli, 'print_plan', original_plan)
         with mock.patch.object(ENTRY.powerdns_adapter, 'install'), \
              mock.patch.object(ENTRY.mongodb_adapter, 'install'), \
              mock.patch.object(ENTRY.state, 'install'), \
@@ -372,6 +408,23 @@ class DeepCustomBuildRegressionTests(unittest.TestCase):
             )
         self.assertEqual(result, 'ok')
         self.assertIs(guarded.call_args.args[0], ENTRY._BASE_EXECUTE_BUILD)
+
+    def test_plan_rejects_unsupported_mongodb_target(self):
+        original_plan = ENTRY.cli.print_plan
+        self.addCleanup(setattr, ENTRY.cli, 'print_plan', original_plan)
+        with mock.patch.object(ENTRY.powerdns_adapter, 'install'), \
+             mock.patch.object(ENTRY.mongodb_adapter, 'install'), \
+             mock.patch.object(ENTRY.state, 'install'), \
+             mock.patch.object(
+                 ENTRY.mongodb_adapter, 'mongodb_supported',
+                 side_effect=CONFIG.BuildError('unsupported target'),
+             ):
+            ENTRY.install_runtime_adapters(pathlib.Path('/tmp/config'))
+            with self.assertRaisesRegex(CONFIG.BuildError, 'unsupported target'):
+                ENTRY.cli.print_plan(
+                    'mongodb', {**CONFIG.DEFAULT_OPTIONS, 'mongodb': '8.0'},
+                    CONFIG.Platform('debian', 'ubuntu', '26.04'), None,
+                )
 
     def test_mongodb_runtime_directory_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as directory:
