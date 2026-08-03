@@ -241,18 +241,48 @@ def _service_active(unit: str) -> bool:
     ).returncode == 0
 
 
-def _mask_service(unit: str, log_path: pathlib.Path) -> bool:
-    was_active = _service_active(unit)
-    if was_active:
-        run_command(['systemctl', 'stop', unit], log_path=log_path)
-    run_command(['systemctl', 'mask', '--runtime', unit], log_path=log_path)
-    return was_active
+def _service_enabled(unit: str) -> bool:
+    return run_command(
+        ['systemctl', 'is-enabled', '--quiet', unit], check=False, capture=True
+    ).returncode == 0
 
 
 def _unmask_service(unit: str, log_path: pathlib.Path) -> None:
     run_command(
         ['systemctl', 'unmask', '--runtime', unit], check=False, log_path=log_path
     )
+
+
+def _restore_service_state(
+    unit: str, was_active: bool, was_enabled: bool, log_path: pathlib.Path
+) -> None:
+    _unmask_service(unit, log_path)
+    if was_enabled:
+        command = ['systemctl', 'enable']
+        if was_active:
+            command.append('--now')
+        command.append(unit)
+        run_command(command, check=False, log_path=log_path)
+        return
+    run_command(['systemctl', 'disable', unit], check=False, log_path=log_path)
+    if was_active:
+        run_command(['systemctl', 'start', unit], check=False, log_path=log_path)
+
+
+def _mask_service(unit: str, log_path: pathlib.Path) -> bool:
+    was_active = _service_active(unit)
+    if was_active:
+        run_command(['systemctl', 'stop', unit], log_path=log_path)
+    try:
+        run_command(['systemctl', 'mask', '--runtime', unit], log_path=log_path)
+    except Exception:
+        _unmask_service(unit, log_path)
+        if was_active:
+            run_command(
+                ['systemctl', 'start', unit], check=False, log_path=log_path
+            )
+        raise
+    return was_active
 
 
 def _capture(path: pathlib.Path) -> tuple[bytes, int, int, int] | None:
@@ -307,12 +337,25 @@ def apply_mongodb(
 ) -> None:
     configured = options.get('mongodb', 'off')
     if configured == 'off':
-        run_command(
-            ['systemctl', 'disable', '--now', 'mongod.service'],
-            check=False, log_path=log_path,
-        )
-        base.write_atomic_text(MONGODB_MODE_FILE, 'off\n')
-        validate_mongodb(options, log_path)
+        previous_mode = _runtime_mode(MONGODB_MODE_FILE, 'off')
+        if previous_mode not in {'off', MONGODB_VERSION}:
+            raise BuildError('invalid applied MongoDB mode')
+        was_active = _service_active('mongod.service')
+        was_enabled = _service_enabled('mongod.service')
+        try:
+            run_command(
+                ['systemctl', 'disable', '--now', 'mongod.service'],
+                check=was_active or was_enabled, log_path=log_path,
+            )
+            base.write_atomic_text(MONGODB_MODE_FILE, 'off\n')
+            validate_mongodb(options, log_path)
+        except Exception:
+            with contextlib.suppress(Exception):
+                base.write_atomic_text(MONGODB_MODE_FILE, previous_mode + '\n')
+            _restore_service_state(
+                'mongod.service', was_active, was_enabled, log_path
+            )
+            raise
         return
     if configured != MONGODB_VERSION:
         raise BuildError('mongodb must be off or 8.0')
@@ -338,6 +381,7 @@ def apply_mongodb(
     if previous_mode not in {'off', MONGODB_VERSION}:
         raise BuildError('invalid applied MongoDB mode')
     previous_config = _capture(base.MONGODB_CONFIG)
+    was_enabled = _service_enabled('mongod.service')
     was_active = _mask_service('mongod.service', log_path)
     try:
         base.reinstall_packages([base.MONGODB_PACKAGE], platform, log_path)
@@ -363,12 +407,9 @@ def apply_mongodb(
             _restore(base.MONGODB_CONFIG, previous_config)
         with contextlib.suppress(Exception):
             base.write_atomic_text(MONGODB_MODE_FILE, previous_mode + '\n')
-        _unmask_service('mongod.service', log_path)
-        if was_active and previous_mode == MONGODB_VERSION:
-            run_command(
-                ['systemctl', 'enable', '--now', 'mongod.service'],
-                check=False, log_path=log_path,
-            )
+        _restore_service_state(
+            'mongod.service', was_active, was_enabled, log_path
+        )
         raise
     finally:
         _unmask_service('mongod.service', log_path)
@@ -438,6 +479,7 @@ def apply_varnish(
 
     previous_mode = runtime
     previous_active = _service_active('varnish.service')
+    previous_enabled = _service_enabled('varnish.service')
     previous_vcl = _capture(base.VARNISH_VCL)
     previous_dropin = _capture(base.VARNISH_DROPIN)
 
@@ -447,7 +489,7 @@ def apply_varnish(
             base.rewrite_varnish_proxies(False, origin_port, log_path)
             run_command(
                 ['systemctl', 'disable', '--now', 'varnish.service'],
-                check=False, log_path=log_path,
+                check=previous_active or previous_enabled, log_path=log_path,
             )
             validate_varnish(effective, log_path)
             return
@@ -457,11 +499,9 @@ def apply_varnish(
             if previous_mode == 'on':
                 with contextlib.suppress(Exception):
                     base.rewrite_varnish_proxies(True, origin_port, log_path)
-            if previous_active:
-                run_command(
-                    ['systemctl', 'enable', '--now', 'varnish.service'],
-                    check=False, log_path=log_path,
-                )
+            _restore_service_state(
+                'varnish.service', previous_active, previous_enabled, log_path
+            )
             raise
 
     base.refresh_packages(platform, log_path)
@@ -511,12 +551,9 @@ def apply_varnish(
             run_command(['systemctl', 'daemon-reload'], check=False, log_path=log_path)
         with contextlib.suppress(Exception):
             base.write_atomic_text(VARNISH_MODE_FILE, previous_mode + '\n')
-        _unmask_service('varnish.service', log_path)
-        if previous_active and previous_mode == 'on':
-            run_command(
-                ['systemctl', 'enable', '--now', 'varnish.service'],
-                check=False, log_path=log_path,
-            )
+        _restore_service_state(
+            'varnish.service', previous_active, previous_enabled, log_path
+        )
         raise
     finally:
         _unmask_service('varnish.service', log_path)
