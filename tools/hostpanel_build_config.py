@@ -25,6 +25,8 @@ DEFAULT_OPTIONS = {
     'database': 'both',
     'mta': 'postfix',
     'dns': 'bind',
+    'mongodb': 'off',
+    'varnish': 'off',
     'php_versions': '8.5,8.4,8.3,8.2',
 }
 OPTION_ORDER = tuple(DEFAULT_OPTIONS)
@@ -33,11 +35,13 @@ CHOICES = {
     'database': {'mariadb', 'postgresql', 'both'},
     'mta': {'postfix', 'exim'},
     'dns': {'bind', 'powerdns'},
+    'mongodb': {'off', '8.0'},
+    'varnish': {'off', 'on'},
 }
 VALID_ROLES = {'control', 'web', 'database', 'mail', 'dns', 'backup', 'edge'}
 VALID_COMPONENTS = {
     'panel', 'nginx', 'apache', 'openlitespeed', 'php',
-    'database', 'mail', 'dns', 'redis',
+    'database', 'mongodb', 'mail', 'dns', 'redis', 'varnish',
 }
 PHP_RE = re.compile(r'^(?:7\.4|8\.[0-5])$')
 KEY_RE = re.compile(r'^[a-z][a-z0-9_]{0,63}$')
@@ -254,10 +258,8 @@ def web_components(options: dict[str, str]) -> list[str]:
     if mode == 'nginx':
         return ['nginx', 'php']
     if mode == 'apache':
-        # nginx remains the public TLS edge while Apache handles every request.
         return ['nginx', 'apache', 'php']
     if mode == 'openlitespeed':
-        # nginx remains the public TLS/HTTP edge; OpenLiteSpeed is loopback-only.
         return ['nginx', 'openlitespeed', 'php']
     raise BuildError(f'unsupported webserver option: {mode}')
 
@@ -286,6 +288,8 @@ def component_packages(component: str, options: dict[str, str], platform: Platfo
         if options['database'] in {'postgresql', 'both'}:
             packages.append('postgresql' if platform.family == 'debian' else 'postgresql-server')
         return packages
+    if component == 'mongodb':
+        return ['mongodb-org'] if options['mongodb'] == '8.0' else []
     if component == 'mail':
         mta = 'postfix' if options['mta'] == 'postfix' else ('exim4' if platform.family == 'debian' else 'exim')
         if platform.family == 'debian':
@@ -293,13 +297,13 @@ def component_packages(component: str, options: dict[str, str], platform: Platfo
         return [mta, 'dovecot', 'rspamd', 'clamd']
     if component == 'dns':
         if options['dns'] == 'powerdns':
-            # Debian splits the BIND backend into a separate package. RHEL/EPEL
-            # commonly ships it in the base pdns package.
             return ['pdns-server', 'pdns-backend-bind'] \
                 if platform.family == 'debian' else ['pdns']
         return ['bind9', 'bind9-utils'] if platform.family == 'debian' else ['bind', 'bind-utils']
     if component == 'redis':
         return ['redis-server'] if platform.family == 'debian' else ['redis']
+    if component == 'varnish':
+        return ['varnish'] if options['varnish'] == 'on' else []
     raise BuildError(f'unsupported component: {component}')
 
 
