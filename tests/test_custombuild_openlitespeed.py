@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import pathlib
+import subprocess
 import sys
 import tempfile
 import types
@@ -32,6 +33,18 @@ class CustomBuildOpenLiteSpeedTests(unittest.TestCase):
             config.web_components(config.DEFAULT_OPTIONS),
             ['nginx', 'apache', 'php'],
         )
+
+    def test_apache_mode_keeps_the_public_nginx_edge(self):
+        options = dict(config.DEFAULT_OPTIONS)
+        options['webserver'] = 'apache'
+        self.assertEqual(
+            config.web_components(options),
+            ['nginx', 'apache', 'php'],
+        )
+        patcher = (TOOLS / 'patch_custombuild_runtime.py').read_text(encoding='utf-8')
+        self.assertIn('# HostPanel Apache-only edge', patcher)
+        self.assertIn('proxy_pass http://127.0.0.1:{port}', patcher)
+        self.assertIn('nginx rejected the Apache edge configuration', patcher)
 
     def test_openlitespeed_includes_versioned_lsphp_runtime_packages(self):
         options = dict(config.DEFAULT_OPTIONS)
@@ -85,11 +98,39 @@ class CustomBuildOpenLiteSpeedTests(unittest.TestCase):
         mask = source.index("mask_openlitespeed(log_path)")
         reinstall = source.index('reinstall_packages(', mask)
         reconcile = source.index('reconcile_webserver(', reinstall)
-        unmask = source.index('unmask_openlitespeed(log_path)', reconcile)
+        services = source.index('reconcile_webserver_services(', reconcile)
+        unmask = source.index('unmask_openlitespeed(log_path)', services)
         self.assertLess(mask, reinstall)
         self.assertLess(reinstall, reconcile)
-        self.assertLess(reconcile, unmask)
+        self.assertLess(reconcile, services)
+        self.assertLess(services, unmask)
         self.assertIn("if item != 'openlitespeed':", source)
+
+    def test_unused_backends_are_disabled_after_success(self):
+        options = dict(config.DEFAULT_OPTIONS)
+        platform = config.Platform('debian', 'ubuntu', '24.04')
+        log = pathlib.Path('/tmp/hostpanel-build-test.log')
+        cases = {
+            'nginx_apache': {'disable': {'lsws.service'}},
+            'apache': {'disable': {'lsws.service'}},
+            'nginx': {'disable': {'apache2.service', 'lsws.service'}},
+            'openlitespeed': {'disable': {'apache2.service'}},
+        }
+        for mode, expected in cases.items():
+            options['webserver'] = mode
+            commands: list[list[str]] = []
+            with mock.patch.object(
+                operations, 'run_command',
+                side_effect=lambda command, **kwargs: commands.append(command)
+                or subprocess.CompletedProcess(command, 0, '', ''),
+            ):
+                operations.reconcile_webserver_services(options, platform, log)
+            flattened = [' '.join(command) for command in commands]
+            for service in expected['disable']:
+                self.assertTrue(
+                    any(f'disable --now {service}' in line for line in flattened),
+                    (mode, service, flattened),
+                )
 
     def test_domain_switch_has_reverse_rollback(self):
         source = (TOOLS / 'hostpanel_build_web.py').read_text(encoding='utf-8')
