@@ -24,6 +24,7 @@ DEFAULT_OPTIONS = {
     'webserver': 'nginx_apache',
     'database': 'both',
     'mta': 'postfix',
+    'dns': 'bind',
     'php_versions': '8.5,8.4,8.3,8.2',
 }
 OPTION_ORDER = tuple(DEFAULT_OPTIONS)
@@ -31,6 +32,7 @@ CHOICES = {
     'webserver': {'openlitespeed', 'nginx', 'apache', 'nginx_apache'},
     'database': {'mariadb', 'postgresql', 'both'},
     'mta': {'postfix', 'exim'},
+    'dns': {'bind', 'powerdns'},
 }
 VALID_ROLES = {'control', 'web', 'database', 'mail', 'dns', 'backup', 'edge'}
 VALID_COMPONENTS = {
@@ -290,6 +292,11 @@ def component_packages(component: str, options: dict[str, str], platform: Platfo
             return [mta, 'dovecot-core', 'rspamd', 'clamav-daemon']
         return [mta, 'dovecot', 'rspamd', 'clamd']
     if component == 'dns':
+        if options['dns'] == 'powerdns':
+            # Debian splits the BIND backend into a separate package. RHEL/EPEL
+            # commonly ships it in the base pdns package.
+            return ['pdns-server', 'pdns-backend-bind'] \
+                if platform.family == 'debian' else ['pdns']
         return ['bind9', 'bind9-utils'] if platform.family == 'debian' else ['bind', 'bind-utils']
     if component == 'redis':
         return ['redis-server'] if platform.family == 'debian' else ['redis']
