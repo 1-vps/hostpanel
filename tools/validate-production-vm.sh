@@ -245,6 +245,7 @@ check_configs(){
 }
 
 listener(){ local port="$1"; ss -lntH 2>/dev/null | awk -v wanted=":$port" '$4 ~ wanted "$" {found=1} END {exit !found}'; }
+udp_listener(){ local port="$1"; ss -lnuH 2>/dev/null | awk -v wanted=":$port" '$4 ~ wanted "$" {found=1} END {exit !found}'; }
 check_listeners(){
   local panel_port="${HP_PANEL_PORT:-}" panel_host="${HP_PANEL_HOST:-}" ssh_ports="" port=""
   [[ -n "$panel_port" ]] || panel_port="$(config_value HP_PANEL_PORT 2>/dev/null || true)"
@@ -255,6 +256,15 @@ check_listeners(){
   listener "$panel_port" && pass "panel port $panel_port is listening" || fail "panel port $panel_port is not listening"
   if dns_present; then
     listener 53 && pass 'authoritative DNS TCP port 53 is listening' || fail 'authoritative DNS TCP port 53 is not listening'
+    udp_listener 53 && pass 'authoritative DNS UDP port 53 is listening' || fail 'authoritative DNS UDP port 53 is not listening'
+    if command -v dig >/dev/null 2>&1; then
+      run_required 'authoritative DNS responds locally over UDP' \
+        dig @127.0.0.1 . SOA +time=2 +tries=1 +noall +comments
+      run_required 'authoritative DNS responds locally over TCP' \
+        dig @127.0.0.1 . SOA +tcp +time=2 +tries=1 +noall +comments
+    else
+      fail 'dig is unavailable for local authoritative DNS probes'
+    fi
   fi
   ssh_ports="$(sshd -T 2>/dev/null | awk '$1=="port" {print $2}' | sort -u || true)"; [[ -n "$ssh_ports" ]] || ssh_ports=22
   while IFS= read -r port; do [[ -n "$port" ]] || continue; listener "$port" && pass "SSH port $port is listening" || fail "SSH port $port is not listening"; done <<<"$ssh_ports"
