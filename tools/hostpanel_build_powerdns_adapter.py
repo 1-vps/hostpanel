@@ -154,6 +154,26 @@ def readable_backend_paths() -> tuple[pathlib.Path, pathlib.Path]:
     return include_dir, target
 
 
+def mask_service(name: str, log_path: pathlib.Path) -> bool:
+    """Runtime-mask a service and restore it if masking fails after stop."""
+    was_active = operations.service_active(name)
+    if was_active:
+        run_command(['systemctl', 'stop', name], log_path=log_path)
+    try:
+        run_command(['systemctl', 'mask', '--runtime', name], log_path=log_path)
+    except Exception:
+        run_command(
+            ['systemctl', 'unmask', '--runtime', name],
+            check=False, log_path=log_path,
+        )
+        if was_active:
+            run_command(
+                ['systemctl', 'start', name], check=False, log_path=log_path
+            )
+        raise
+    return was_active
+
+
 def dns_requested(component: str, roles: set[str]) -> bool:
     return component == 'dns' or (component == 'all' and 'dns' in roles)
 
@@ -264,6 +284,7 @@ def install() -> None:
     operations.powerdns_include_dir = powerdns_include_dir
     operations.launch_values = launch_values
     operations.active_setting_keys = active_setting_keys
+    operations.mask_service = mask_service
     operations.reconcile_dns_services = reconcile_dns_services
 
     original = operations.configure_powerdns
