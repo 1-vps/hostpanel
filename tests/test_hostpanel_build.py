@@ -36,6 +36,7 @@ class HostPanelBuildTests(unittest.TestCase):
             PATCHER,
         ]
         subprocess.run(['python3', '-m', 'py_compile', *map(str, paths)], check=True)
+        subprocess.run(['bash', '-n', str(INSTALLER)], check=True)
         result = subprocess.run(
             ['python3', str(SCRIPT), '--help'], check=True,
             capture_output=True, text=True,
@@ -51,11 +52,14 @@ class HostPanelBuildTests(unittest.TestCase):
         self.assertIn('/opt/hostpanel/tools/hostpanel-build-web', installer)
         self.assertIn('/opt/hostpanel/tools/patch-custombuild-runtime', installer)
         self.assertIn('webserver=nginx_apache', installer)
+        self.assertIn('PHP_STATE=/etc/hostpanel/php-versions', installer)
         self.assertIn('chmod 0600 "$CONFIG"', installer)
         self.assertIn('Base mode: nginx_apache', installer)
         self.assertIn('set webserver openlitespeed', document)
         self.assertIn('build web --apply', document)
         self.assertIn('base HostPanel installation always starts in `nginx_apache`', document)
+        self.assertIn('runtime-masked', document)
+        self.assertIn('reverse order', document)
 
     def test_config_parsing_is_strict(self):
         values = CONFIG.parse_config_text(
@@ -91,7 +95,7 @@ class HostPanelBuildTests(unittest.TestCase):
         options['webserver'] = 'nginx'
         self.assertEqual(CONFIG.web_components(options), ['nginx', 'php'])
         options['webserver'] = 'apache'
-        self.assertEqual(CONFIG.web_components(options), ['apache', 'php'])
+        self.assertEqual(CONFIG.web_components(options), ['nginx', 'apache', 'php'])
         options['webserver'] = 'openlitespeed'
         self.assertEqual(CONFIG.web_components(options), ['nginx', 'openlitespeed', 'php'])
 
@@ -103,6 +107,15 @@ class HostPanelBuildTests(unittest.TestCase):
         self.assertEqual(CONFIG.component_packages('apache', options, rhel), ['httpd'])
         self.assertIn('php8.5-fpm', CONFIG.component_packages('php', options, debian))
         self.assertIn('php85-php-fpm', CONFIG.component_packages('php', options, rhel))
+        options['php_versions'] = '8.5'
+        self.assertIn(
+            'lsphp85-mysql',
+            CONFIG.component_packages('openlitespeed', options, debian),
+        )
+        self.assertIn(
+            'lsphp85-mysqlnd',
+            CONFIG.component_packages('openlitespeed', options, rhel),
+        )
 
     def test_plan_is_non_mutating(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
@@ -181,9 +194,37 @@ class HostPanelBuildTests(unittest.TestCase):
         self.assertNotIn('mail', components)
 
     def test_runtime_patcher_is_structural_and_idempotent(self):
-        webserver_fixture = """from pathlib import Path
+        webserver_fixture = r'''from pathlib import Path
+import subprocess
 MODES = ("nginx", "apache", "hybrid", "openlitespeed")
+OLS_PROXY_VHOST = """server {{
+}}
 """
+
+def mode_of(domain):
+    has_nginx = nginx_vhost.exists()
+    has_apache = apache_vhost.exists()
+    proxies = has_nginx and "@apache" in (NGINX_AVAIL / domain).read_text() \
+        if has_nginx and (NGINX_AVAIL / domain).exists() else False
+
+    if has_nginx and has_apache and proxies:
+        return "hybrid"
+    if has_apache and not has_nginx:
+        return "apache"
+    return "nginx"
+
+def set_mode(mode):
+        if mode == "apache":
+            apply_apache(domain, docroot, socket)
+            run([binary("sudo"), str(ROOT_HELPER), "nginx-site", "disable", domain])
+            reload_service("nginx")
+            remove_openlitespeed(domain)
+
+NOTES = {
+            "apache": "Apache serves everything, so .htaccess works. Uses more "
+                      "memory per request than nginx.",
+}
+'''
         main_fixture = """def add_domain():
     reload_service("nginx")
     store.claim(user["user_id"], "domain", domain)
@@ -205,7 +246,41 @@ MODES = ("nginx", "apache", "hybrid", "openlitespeed")
             self.assertEqual(first_web, webserver.read_text())
             self.assertEqual(first_main, main.read_text())
             self.assertIn('DEFAULT_MODE_FILE', first_web)
+            self.assertIn('APACHE_EDGE_VHOST', first_web)
+            self.assertIn('# HostPanel Apache-only edge', first_web)
+            self.assertIn('nginx rejected the Apache edge configuration', first_web)
             self.assertIn('target_mode = webserver.default_mode()', first_main)
+
+    def test_service_reconciliation_disables_unused_backends(self):
+        platform = CONFIG.Platform('debian', 'ubuntu', '24.04')
+        log = pathlib.Path('/tmp/test-hostpanel-build.log')
+        for mode, required, disabled in (
+            ('nginx_apache', {'nginx.service', 'apache2.service'}, {'lsws.service'}),
+            ('apache', {'nginx.service', 'apache2.service'}, {'lsws.service'}),
+            ('nginx', {'nginx.service'}, {'apache2.service', 'lsws.service'}),
+            ('openlitespeed', {'nginx.service', 'lsws.service'}, {'apache2.service'}),
+        ):
+            options = dict(CONFIG.DEFAULT_OPTIONS)
+            options['webserver'] = mode
+            calls: list[list[str]] = []
+            with mock.patch.object(
+                OPERATIONS, 'run_command',
+                side_effect=lambda command, **kwargs: calls.append(command)
+                or subprocess.CompletedProcess(command, 0, '', ''),
+            ):
+                OPERATIONS.reconcile_webserver_services(options, platform, log)
+            joined = {' '.join(command) for command in calls}
+            for service in required:
+                self.assertTrue(
+                    any('enable --now ' + service in line or 'is-active --quiet ' + service in line
+                        for line in joined),
+                    (mode, service, joined),
+                )
+            for service in disabled:
+                self.assertTrue(
+                    any('disable --now ' + service in line for line in joined),
+                    (mode, service, joined),
+                )
 
     def test_roles_file_is_strict(self):
         with tempfile.TemporaryDirectory() as directory:
