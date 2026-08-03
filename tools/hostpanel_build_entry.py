@@ -12,6 +12,7 @@ import hostpanel_build_mongodb_adapter as mongodb_adapter
 from hostpanel_build_config import DEFAULT_CONFIG, read_config
 
 _BASE_EXECUTE_BUILD = cli.execute_build
+_BASE_PRINT_PLAN = cli.print_plan
 
 
 def config_path(argv: Sequence[str]) -> pathlib.Path:
@@ -34,8 +35,20 @@ def install_runtime_adapters(selected_config: pathlib.Path) -> None:
     def validate_mongodb(log_path: pathlib.Path) -> None:
         state.validate_mongodb(read_config(selected_config), log_path)
 
+    def checked_print_plan(
+        component, options, platform, roles=None,
+    ):
+        mongodb_requested = options.get('mongodb') == '8.0' and (
+            component == 'mongodb'
+            or (component == 'all' and roles is not None and 'database' in roles)
+        )
+        if mongodb_requested:
+            mongodb_adapter.mongodb_supported(platform)
+        return _BASE_PRINT_PLAN(component, options, platform, roles)
+
     cli.validate_mongodb = validate_mongodb
     cli.validate_varnish = state.validate_varnish
+    cli.print_plan = checked_print_plan
 
     def guarded_execute_build(
         component, options, platform, log_path, backup_dir,
