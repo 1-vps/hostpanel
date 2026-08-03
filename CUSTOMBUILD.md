@@ -1,10 +1,10 @@
-# HostPanel Build
+# HostPanel CustomBuild
 
-`hostpanel-build` is HostPanel's CustomBuild-style maintenance CLI. It borrows the useful operational ideas from DirectAdmin CustomBuild—one options file, version visibility, component-oriented rebuilds, and separate panel/system updates—while retaining HostPanel's signed release updater and operating-system packages.
+`hostpanel-build` is HostPanel's DirectAdmin CustomBuild-style maintenance CLI. It provides one root-owned options file, version visibility, component rebuilds, webserver switching, and separate system/panel updates.
 
-It does **not** compile unreviewed third-party source archives. Mutating commands require root, acquire a lock, write a private log, snapshot relevant configuration, validate the rebuilt service, restart it, and finish with `hostpanel-doctor`.
+The **base HostPanel installation always starts in `nginx_apache` mode**: nginx is the public HTTP/TLS frontend and Apache is the private backend on `127.0.0.1:8080`. OpenLiteSpeed is not installed by the base installer.
 
-## Install the command
+## Install
 
 From a reviewed HostPanel source tree:
 
@@ -18,14 +18,67 @@ This installs:
 /usr/local/sbin/hostpanel-build
 /opt/hostpanel/tools/hostpanel-build
 /etc/hostpanel/build.conf
+/etc/hostpanel/webserver-mode
 ```
 
-The options file is root-owned and mode `0600`.
+## Webserver choices
 
-## Common commands
+Show the current options:
 
 ```bash
 sudo hostpanel-build options
+```
+
+Choose exactly one webserver mode:
+
+```bash
+sudo hostpanel-build set webserver nginx_apache
+sudo hostpanel-build set webserver nginx
+sudo hostpanel-build set webserver apache
+sudo hostpanel-build set webserver openlitespeed
+```
+
+Supported values:
+
+```text
+webserver=nginx_apache|nginx|apache|openlitespeed
+```
+
+The modes mean:
+
+- `nginx_apache`: nginx serves public traffic and static files; Apache handles dynamic requests and `.htaccess`.
+- `nginx`: nginx and PHP-FPM only.
+- `apache`: Apache and PHP-FPM only.
+- `openlitespeed`: nginx remains the public edge while OpenLiteSpeed serves each domain through the private `127.0.0.1:8088` backend.
+
+Changing the option alone does not touch services. Review the plan, then apply it:
+
+```bash
+sudo hostpanel-build plan web
+sudo hostpanel-build build web --apply
+```
+
+An applied web build installs or realigns the required packages, validates configurations, changes every managed domain through HostPanel's existing webserver engine, records the mode for future domains, and runs `hostpanel-doctor`.
+
+## Other options
+
+```text
+database=mariadb|postgresql|both
+mta=postfix|exim
+php_versions=7.4,8.0,8.1,8.2,8.3,8.4,8.5
+```
+
+Examples:
+
+```bash
+sudo hostpanel-build set php_versions 8.5,8.4,8.3,8.2
+sudo hostpanel-build set database both
+sudo hostpanel-build set mta postfix
+```
+
+## Versions and plans
+
+```bash
 sudo hostpanel-build versions
 sudo hostpanel-build versions --json
 sudo hostpanel-build plan all
@@ -35,29 +88,11 @@ sudo hostpanel-build validate all
 
 Planning and version commands do not change packages or services.
 
-Change one option:
-
-```bash
-sudo hostpanel-build set webservers nginx,apache,openlitespeed
-sudo hostpanel-build set php_versions 8.5,8.4,8.3,8.2
-sudo hostpanel-build set database both
-sudo hostpanel-build set mta postfix
-```
-
-Supported options:
-
-```text
-webservers=nginx,apache,openlitespeed
-database=mariadb|postgresql|both
-mta=postfix|exim
-php_versions=7.4,8.0,8.1,8.2,8.3,8.4,8.5
-```
-
 The `all` target reads `/etc/hostpanel/roles.conf`; it only includes components belonging to roles installed on that node.
 
 ## Rebuild components
 
-A build without `--apply` only prints the plan:
+A build without `--apply` prints a plan only:
 
 ```bash
 sudo hostpanel-build build nginx
@@ -65,11 +100,10 @@ sudo hostpanel-build build web
 sudo hostpanel-build build all
 ```
 
-Apply a reviewed plan explicitly:
+Apply explicitly:
 
 ```bash
 sudo hostpanel-build build nginx --apply
-sudo hostpanel-build build openlitespeed --apply
 sudo hostpanel-build build php --apply
 sudo hostpanel-build build database --apply
 sudo hostpanel-build build mail --apply
@@ -77,55 +111,33 @@ sudo hostpanel-build build dns --apply
 sudo hostpanel-build build all --apply
 ```
 
-Available targets are `nginx`, `apache`, `openlitespeed`, `php`, `database`, `mail`, `dns`, `redis`, `web`, and `all`.
+Configuration snapshots are stored under `/var/backups/hostpanel/custombuild/` and execution details under `/var/log/hostpanel-build.log`.
 
-Before each component reinstall, relevant configuration is archived under:
+## Updates
 
-```text
-/var/backups/hostpanel/custombuild/
-```
-
-Execution details are written to:
-
-```text
-/var/log/hostpanel-build.log
-```
-
-## Check or apply updates
-
-Check operating-system package updates:
+Check or apply operating-system package updates:
 
 ```bash
 sudo hostpanel-build update_versions
-```
-
-Apply them:
-
-```bash
 sudo hostpanel-build update_versions --apply
 ```
 
-Check the next signed HostPanel release:
+Check or apply the next signed HostPanel release:
 
 ```bash
 sudo hostpanel-build update_panel
-```
-
-Apply it through the existing signed updater:
-
-```bash
 sudo hostpanel-build update_panel --apply
 ```
 
-`update_panel` never bypasses HostPanel's signed manifest, archive checksum, signature, and keyring verification.
+`update_panel` uses the existing signed manifest, archive checksum, signature and trusted-key verification.
 
 ## Safety model
 
-- Every command requires root unless the hidden test-only override is used.
 - Configuration and role files are parsed as data and are never sourced as shell code.
-- Unknown or duplicate options fail closed.
-- `build` and update commands do not mutate the system without `--apply`.
-- `all` follows installed roles instead of adding unrelated services.
-- Locks and logs reject symbolic links, unsafe ownership, multiple hard links, and writable parent directories.
-- Service configuration is validated before a restart is considered successful.
-- A final `hostpanel-doctor --quiet` check is required after applied maintenance.
+- Unknown, duplicate or unsupported options fail closed.
+- Mutating commands require root, a lock and explicit `--apply`.
+- The base installer never attempts to install OpenLiteSpeed.
+- Webserver conversion uses HostPanel's tested per-domain configuration engine instead of editing customer vhosts with broad substitutions.
+- Relevant configuration is snapshotted before package realignment.
+- Service configuration is validated before restart.
+- Applied maintenance ends with `hostpanel-doctor --quiet`.
