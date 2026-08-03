@@ -25,6 +25,7 @@ on:
       - tests/test_custombuild_openlitespeed.py
       - tests/test_custombuild_ssl.py
       - tests/test_custombuild_review_fixes.py
+      - tests/test_custombuild_powerdns.py
       - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   push:
@@ -52,6 +53,7 @@ on:
       - tests/test_custombuild_openlitespeed.py
       - tests/test_custombuild_ssl.py
       - tests/test_custombuild_review_fixes.py
+      - tests/test_custombuild_powerdns.py
       - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   workflow_dispatch:
@@ -91,6 +93,7 @@ jobs:
             tests.test_custombuild_openlitespeed \
             tests.test_custombuild_ssl \
             tests.test_custombuild_review_fixes \
+            tests.test_custombuild_powerdns \
             tests.test_openlitespeed_fallback
       - name: ShellCheck installer chain
         run: |
