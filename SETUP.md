@@ -3,17 +3,23 @@
 `auto-install.sh` is the only documented HostPanel installation entry point. It
 is the full cloud-init, Terraform, image-builder, and unattended VPS engine.
 
+The base installation always uses **`nginx_apache`**: nginx is the public
+HTTP/TLS frontend and Apache is the private backend on `127.0.0.1:8080`.
+OpenLiteSpeed is not installed and no LiteSpeed repository is enabled during the
+base installation. After installation, the verified `hostpanel-build` tool can
+select `nginx_apache`, `nginx`, `apache`, or `openlitespeed`.
+
 It installs HostPanel version `3.4.1` from reviewed, immutable Git objects. The
 installer is pinned to commit:
 
 ```text
-9fedefce0bd5d9506983cff8cb060816bfe5dbaa
+f8606cf116f4698afaecd086aa5faa744fb56f42
 ```
 
 Its verified Git blob is:
 
 ```text
-8950754a20a3ba478a6dbfa48b070d8ce1428b0d
+cbeda8287321ac92d08e015e7149918a503f8bfc
 ```
 
 ## Requirements
@@ -31,9 +37,9 @@ Create a provider snapshot and retain console access before installation.
 ## Obtain the installer
 
 Obtain the exact `auto-install.sh` bytes from immutable commit
-`9fedefce0bd5d9506983cff8cb060816bfe5dbaa` through an authenticated checkout or
+`f8606cf116f4698afaecd086aa5faa744fb56f42` through an authenticated checkout or
 reviewed file transfer. Verify that its Git blob is
-`8950754a20a3ba478a6dbfa48b070d8ce1428b0d`.
+`cbeda8287321ac92d08e015e7149918a503f8bfc`.
 
 Do not execute a moving `main` branch as root.
 
@@ -126,7 +132,7 @@ A healthy repeated run does not require a token when the pinned local production
 validator is already present. Credentials are loaded only when an immutable file
 must be downloaded.
 
-## Configuration
+## Installation configuration
 
 ```text
 HP_PANEL_HOST=panel.example.com
@@ -134,7 +140,6 @@ HP_PANEL_DOMAIN=example.com
 HP_PANEL_ADMIN_CIDR=192.0.2.10/32
 HP_MTA=postfix
 HP_ROLES="control web database mail dns backup edge"
-HP_LITESPEED_REPO=auto
 HP_REINSTALL=yes
 HP_CHECK_ONLY=yes
 HP_POST_INSTALL_CHECK=no
@@ -145,17 +150,11 @@ HP_GITHUB_TOKEN_FD=3
 Omitting `HP_ROLES` installs all roles. Supported roles are `control`, `web`,
 `database`, `mail`, `dns`, `backup`, and `edge`.
 
-For the web role, `HP_LITESPEED_REPO=auto` enables the official LiteSpeed
-repository only when `openlitespeed` is not already available. The installer
-refreshes package metadata and verifies that APT or DNF exposes a real package
-candidate before the reviewed product installer begins. Set
-`HP_LITESPEED_REPO=off` only when an equivalent repository is already configured.
-
 `HP_CHECK_ONLY=yes` runs preflight without installing missing operating-system
-packages, enabling the LiteSpeed repository, copying persistent installer files
-into `/root`, or writing the HostPanel status file. Required commands must
-already be installed. Temporary files and runtime locks are removed when the
-command exits.
+packages, copying persistent installer files into `/root`, installing
+CustomBuild, or writing the HostPanel status file. Required commands must already
+be installed. Temporary files and runtime locks are removed when the command
+exits.
 
 `HP_REINSTALL=yes` is required for an explicit replacement of an existing
 installation.
@@ -163,6 +162,45 @@ installation.
 `HP_POST_INSTALL_CHECK=no` skips the production validator and
 `hostpanel-doctor`; the machine-readable result is marked `unverified`, not
 healthy.
+
+## CustomBuild webserver selection
+
+The base install writes:
+
+```text
+webserver=nginx_apache
+```
+
+Review the active options and a proposed web-stack rebuild:
+
+```bash
+sudo hostpanel-build options
+sudo hostpanel-build plan web
+```
+
+Choose one mode, then apply it explicitly:
+
+```bash
+sudo hostpanel-build set webserver nginx_apache
+sudo hostpanel-build set webserver nginx
+sudo hostpanel-build set webserver apache
+sudo hostpanel-build set webserver openlitespeed
+sudo hostpanel-build build web --apply
+```
+
+Changing the option alone does not modify packages, services, or domains.
+`build web --apply` performs package-candidate preflight before any service
+change, snapshots relevant configuration, validates services, converts all
+managed domains through HostPanel's existing webserver engine, and runs
+`hostpanel-doctor`.
+
+For `openlitespeed`, a real `openlitespeed` package candidate must already be
+published by a configured supported repository. If it is unavailable, the
+operation stops before packages or services are changed. The installer does not
+run mutable upstream build scripts as root.
+
+See [`CUSTOMBUILD.md`](CUSTOMBUILD.md) for component rebuilds, version reporting,
+and signed panel updates.
 
 ## Automatic detection and fail-closed behavior
 
@@ -184,14 +222,15 @@ public automatically.
 1. acquires a root-only bootstrap lock before package operations;
 2. installs missing bootstrap prerequisites outside check-only mode;
 3. validates the hostname, administrative CIDR, MTA, and selected roles;
-4. verifies the immutable automatic launcher, bootstrap, and production validator;
+4. verifies the immutable automatic launcher, bootstrap, validator, and CustomBuild inputs;
 5. ignores user curl configuration for authenticated downloads;
 6. runs the complete preflight before installation;
-7. enables the official LiteSpeed repository for the web role when needed and verifies the `openlitespeed` package candidate;
-8. installs all roles with Postfix by default;
-9. verifies version `3.4.1`;
-10. requires the production validator and `hostpanel-doctor` unless explicitly skipped;
-11. writes machine-readable status to `/var/lib/hostpanel/auto-install-status.json`.
+7. installs nginx as the public frontend and Apache as the private backend for the web role;
+8. installs the verified `hostpanel-build` maintenance command after HostPanel succeeds;
+9. installs all selected roles with Postfix by default;
+10. verifies version `3.4.1`;
+11. requires the production validator and `hostpanel-doctor` unless explicitly skipped;
+12. writes machine-readable status to `/var/lib/hostpanel/auto-install-status.json`.
 
 ## Retry after an interrupted package installation
 
@@ -203,9 +242,9 @@ sudo dpkg --configure -a
 sudo apt-get -f install
 ```
 
-Then rerun the normal `auto-install.sh` command above. The fixed launcher enables
-the official LiteSpeed repository and refuses to start the product installation
-until `apt-cache policy openlitespeed` exposes a usable candidate.
+Then rerun the normal `auto-install.sh` command. The new base path no longer
+attempts to install `openlitespeed`; it completes with `nginx_apache` and leaves
+OpenLiteSpeed as an explicit post-install CustomBuild choice.
 
 ## Idempotence and status
 
@@ -230,11 +269,17 @@ sudo cat /var/lib/hostpanel/auto-install-status.json
 
 ```bash
 cat /opt/hostpanel/VERSION
+sudo cat /etc/hostpanel/webserver-mode
+sudo hostpanel-build options
+sudo hostpanel-build validate web
 sudo cat /var/lib/hostpanel/auto-install-status.json
 sudo /opt/hostpanel/venv/bin/python /opt/hostpanel/app/hostpanel-doctor --quiet
 sudo bash /root/validate-production-vm.sh --check
-sudo systemctl status hostpanel nginx hostpanel-update.timer --no-pager --full
+sudo systemctl status hostpanel nginx apache2 hostpanel-update.timer --no-pager --full
 ```
+
+On RHEL-family systems, use `httpd` instead of `apache2` in the final status
+command.
 
 Installer log:
 
