@@ -93,3 +93,23 @@ def apply_varnish(
             check=False, log_path=log_path,
         )
         raise
+
+
+def ensure_safe_web_switch(
+    component: str, options: dict[str, str], mode_file: pathlib.Path
+) -> None:
+    if component not in {'web', 'all'}:
+        return
+    try:
+        current_web = mode_file.read_text(encoding='ascii').strip()
+    except OSError:
+        current_web = 'nginx_apache'
+    runtime_varnish = _runtime_mode(VARNISH_MODE_FILE, 'off')
+    if runtime_varnish not in {'off', 'on'}:
+        raise BuildError('invalid Varnish runtime mode')
+    if runtime_varnish == 'on' and current_web != options['webserver']:
+        raise BuildError(
+            'disable active Varnish before changing webserver mode: '
+            'hostpanel-build set varnish off && '
+            'hostpanel-build build varnish --apply'
+        )
