@@ -47,6 +47,22 @@ class CustomBuildExtrasStateTests(unittest.TestCase):
         with self.assertRaisesRegex(CONFIG.BuildError, 'multiple top-level net'):
             STATE.harden_mongod_config('net:\nnet:\n')
 
+    def test_vcl_rejects_all_http_purge_requests(self):
+        vcl = STATE.render_varnish_vcl(8080)
+        self.assertIn('if (req.method == "PURGE") { return (synth(405)); }', vcl)
+        self.assertNotIn('acl purge', vcl)
+        self.assertNotIn('return (purge)', vcl)
+
+    def test_missing_secret_does_not_require_preinstall_service_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            with mock.patch.object(
+                STATE, 'VARNISH_SECRET_CANDIDATES',
+                (root / 'secret', root / 'varnish_secret'),
+            ), mock.patch.object(STATE, '_varnish_identity') as identity:
+                self.assertIsNone(STATE._existing_varnish_secret())
+        identity.assert_not_called()
+
     def test_varnish_validation_requires_authenticated_management(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
         options['varnish'] = 'on'
