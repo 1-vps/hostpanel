@@ -12,6 +12,28 @@ from hostpanel_build_packages import run_command
 
 MONGODB_RPM_KEY = pathlib.Path('/etc/pki/rpm-gpg/MONGODB-SERVER-8.0.gpg')
 MONGODB_RUN_ROOT = pathlib.Path('/run/hostpanel-build')
+_BASE_MONGODB_SUPPORTED = base.mongodb_supported
+
+
+def mongodb_supported(
+    platform: Platform, machine: str | None = None
+) -> tuple[str, str]:
+    """Return repository coordinates only on HostPanel-supported overlap OSes."""
+    version = platform.version_id
+    allowed = (
+        (platform.os_id == 'ubuntu' and version in {'22.04', '24.04'})
+        or (platform.os_id == 'debian' and version == '12')
+        or (
+            platform.os_id in {'rocky', 'almalinux'}
+            and version.split('.', 1)[0] == '9'
+        )
+    )
+    if not allowed:
+        raise BuildError(
+            'MongoDB 8.0 CustomBuild is supported only on Ubuntu 22.04/24.04, '
+            'Debian 12, or Rocky/AlmaLinux 9 HostPanel nodes'
+        )
+    return _BASE_MONGODB_SUPPORTED(platform, machine)
 
 
 def primary_fingerprints(colons: str) -> list[str]:
@@ -64,7 +86,7 @@ def ensure_private_runtime_dir(path: pathlib.Path) -> None:
 
 def configure_mongodb_repository(platform: Platform, log_path: pathlib.Path) -> None:
     base.require_root()
-    family, release = base.mongodb_supported(platform)
+    family, release = mongodb_supported(platform)
     for command in ('curl', 'gpg'):
         if shutil.which(command) is None:
             raise BuildError(f'{command} is required to configure the MongoDB repository')
@@ -118,5 +140,6 @@ def configure_mongodb_repository(platform: Platform, log_path: pathlib.Path) -> 
 
 
 def install() -> None:
+    base.mongodb_supported = mongodb_supported
     base.verify_mongodb_key = verify_mongodb_key
     base.configure_mongodb_repository = configure_mongodb_repository
