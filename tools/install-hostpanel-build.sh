@@ -21,11 +21,14 @@ MODULES=(
   hostpanel_build_cli.py
   hostpanel_build_ssl.py
   hostpanel_build_extras.py
+  hostpanel_build_extras_state.py
+  hostpanel_build_entry.py
 )
 EXECUTABLES=(
   hostpanel_build_web.py
   patch_custombuild_runtime.py
   patch_varnish_runtime.py
+  patch_extras_doctor.py
 )
 TARGET=/opt/hostpanel/tools/hostpanel-build
 COMMAND=/usr/local/sbin/hostpanel-build
@@ -33,6 +36,7 @@ CONFIG=/etc/hostpanel/build.conf
 MODE_FILE=/etc/hostpanel/webserver-mode
 DNS_MODE_FILE=/etc/hostpanel/dns-mode
 VARNISH_MODE_FILE=/etc/hostpanel/varnish-mode
+MONGODB_MODE_FILE=/etc/hostpanel/mongodb-mode
 PHP_STATE=/etc/hostpanel/php-versions
 
 for path in "$SOURCE" "${MODULES[@]/#/$SOURCE_ROOT/tools/}" "${EXECUTABLES[@]/#/$SOURCE_ROOT/tools/}"; do
@@ -68,6 +72,9 @@ install -o root -g root -m 0755 \
 install -o root -g root -m 0755 \
   "$SOURCE_ROOT/tools/patch_varnish_runtime.py" \
   /opt/hostpanel/tools/patch-varnish-runtime
+install -o root -g root -m 0755 \
+  "$SOURCE_ROOT/tools/patch_extras_doctor.py" \
+  /opt/hostpanel/tools/patch-extras-doctor
 
 cat >"$COMMAND" <<'EOF'
 #!/usr/bin/env bash
@@ -154,6 +161,11 @@ MONGODB_MODE="${MONGODB_MODE:-off}"
   printf '%s\n' 'Error: build.conf contains an invalid mongodb option.' >&2
   exit 1
 }
+if [[ ! -e "$MONGODB_MODE_FILE" ]]; then
+  printf '%s\n' off >"$MONGODB_MODE_FILE"
+  chown root:root "$MONGODB_MODE_FILE"
+  chmod 0644 "$MONGODB_MODE_FILE"
+fi
 
 VARNISH_MODE="$(awk -F= '$1=="varnish" {print $2; exit}' "$CONFIG")"
 VARNISH_MODE="${VARNISH_MODE:-off}"
@@ -165,13 +177,16 @@ if [[ "$VARNISH_MODE" == on && "$WEB_MODE" == nginx ]]; then
   printf '%s\n' 'Error: varnish=on is incompatible with webserver=nginx.' >&2
   exit 1
 fi
-printf '%s\n' "$VARNISH_MODE" >"$VARNISH_MODE_FILE"
-chown root:root "$VARNISH_MODE_FILE"
-chmod 0644 "$VARNISH_MODE_FILE"
+if [[ ! -e "$VARNISH_MODE_FILE" ]]; then
+  printf '%s\n' off >"$VARNISH_MODE_FILE"
+  chown root:root "$VARNISH_MODE_FILE"
+  chmod 0644 "$VARNISH_MODE_FILE"
+fi
 
 if [[ -d /opt/hostpanel/app ]]; then
   /opt/hostpanel/tools/patch-custombuild-runtime
   /opt/hostpanel/tools/patch-varnish-runtime
+  /opt/hostpanel/tools/patch-extras-doctor
 fi
 
 printf '%s\n' 'HostPanel build tool installed as /usr/local/sbin/hostpanel-build.'
