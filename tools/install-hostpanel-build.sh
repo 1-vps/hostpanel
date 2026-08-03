@@ -28,6 +28,7 @@ MODULES=(
 EXECUTABLES=(
   hostpanel_build_web.py
   patch_custombuild_runtime.py
+  patch_powerdns_runtime.py
   patch_varnish_runtime.py
   patch_extras_doctor.py
 )
@@ -70,6 +71,9 @@ install -o root -g root -m 0755 \
 install -o root -g root -m 0755 \
   "$SOURCE_ROOT/tools/patch_custombuild_runtime.py" \
   /opt/hostpanel/tools/patch-custombuild-runtime
+install -o root -g root -m 0755 \
+  "$SOURCE_ROOT/tools/patch_powerdns_runtime.py" \
+  /opt/hostpanel/tools/patch-powerdns-runtime
 install -o root -g root -m 0755 \
   "$SOURCE_ROOT/tools/patch_varnish_runtime.py" \
   /opt/hostpanel/tools/patch-varnish-runtime
@@ -152,9 +156,11 @@ DNS_MODE="${DNS_MODE:-bind}"
   printf '%s\n' 'Error: build.conf contains an invalid dns option.' >&2
   exit 1
 }
-printf '%s\n' "$DNS_MODE" >"$DNS_MODE_FILE"
-chown root:root "$DNS_MODE_FILE"
-chmod 0644 "$DNS_MODE_FILE"
+if [[ ! -e "$DNS_MODE_FILE" ]]; then
+  printf '%s\n' bind >"$DNS_MODE_FILE"
+  chown root:root "$DNS_MODE_FILE"
+  chmod 0644 "$DNS_MODE_FILE"
+fi
 
 MONGODB_MODE="$(awk -F= '$1=="mongodb" {print $2; exit}' "$CONFIG")"
 MONGODB_MODE="${MONGODB_MODE:-off}"
@@ -186,11 +192,12 @@ fi
 
 if [[ -d /opt/hostpanel/app ]]; then
   /opt/hostpanel/tools/patch-custombuild-runtime
+  /opt/hostpanel/tools/patch-powerdns-runtime
   /opt/hostpanel/tools/patch-varnish-runtime
   /opt/hostpanel/tools/patch-extras-doctor
 fi
 
 printf '%s\n' 'HostPanel build tool installed as /usr/local/sbin/hostpanel-build.'
-printf 'Base mode: nginx_apache. DNS: %s. MongoDB: %s. Varnish: %s. PHP branches: %s.\n' \
+printf 'Base mode: nginx_apache. Selected DNS: %s. MongoDB: %s. Varnish: %s. PHP branches: %s.\n' \
   "$DNS_MODE" "$MONGODB_MODE" "$VARNISH_MODE" "$PHP_VERSIONS"
 printf '%s\n' 'Start with: sudo hostpanel-build versions'
