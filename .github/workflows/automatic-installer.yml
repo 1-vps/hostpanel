@@ -126,22 +126,14 @@ jobs:
             tools/patch_varnish_runtime.py \
             tools/patch_extras_doctor.py
           python3 -m compileall -q tools tests
-      - name: Run installer and CustomBuild regressions
+      - name: Run every CustomBuild regression
+        run: python3 -m unittest discover -v -s tests -p 'test_custombuild*.py'
+      - name: Run installer and fallback regressions
         run: |
           python3 -m unittest -v \
             tests.test_auto_install \
             tests.test_one_line_install \
             tests.test_hostpanel_build \
-            tests.test_custombuild_openlitespeed \
-            tests.test_custombuild_ssl \
-            tests.test_custombuild_review_fixes \
-            tests.test_custombuild_powerdns \
-            tests.test_custombuild_extras \
-            tests.test_custombuild_extras_state \
-            tests.test_custombuild_platform_guards \
-            tests.test_custombuild_powerdns_adapter \
-            tests.test_custombuild_powerdns_runtime \
-            tests.test_custombuild_deep_regressions \
             tests.test_openlitespeed_fallback
       - name: ShellCheck installer chain
         run: |
