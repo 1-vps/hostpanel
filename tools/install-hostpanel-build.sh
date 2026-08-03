@@ -19,6 +19,7 @@ MODULES=(
   hostpanel_build_packages.py
   hostpanel_build_operations.py
   hostpanel_build_cli.py
+  hostpanel_build_ssl.py
 )
 EXECUTABLES=(
   hostpanel_build_web.py
