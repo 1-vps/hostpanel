@@ -108,10 +108,14 @@ class CustomBuildExtrasStateTests(unittest.TestCase):
             root = pathlib.Path(directory)
             current = root / 'webserver-mode'
             current.write_text('nginx_apache\n', encoding='ascii')
-            with mock.patch.object(STATE, '_runtime_mode', return_value='on'):
+            with mock.patch.object(
+                STATE, '_runtime_mode', side_effect=['nginx_apache', 'on']
+            ):
                 with self.assertRaisesRegex(CONFIG.BuildError, 'disable active Varnish'):
                     STATE.ensure_safe_web_switch('web', options, current)
-            with mock.patch.object(STATE, '_runtime_mode', return_value='off'):
+            with mock.patch.object(
+                STATE, '_runtime_mode', side_effect=['nginx_apache', 'off']
+            ):
                 STATE.ensure_safe_web_switch('web', options, current)
 
     def test_extras_doctor_patcher_is_idempotent(self):
