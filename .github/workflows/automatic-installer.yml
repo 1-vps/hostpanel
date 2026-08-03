@@ -15,6 +15,7 @@ on:
       - tools/hostpanel_build_packages.py
       - tools/hostpanel_build_operations.py
       - tools/hostpanel_build_cli.py
+      - tools/hostpanel_build_ssl.py
       - tools/hostpanel_build_web.py
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
@@ -22,6 +23,8 @@ on:
       - tests/test_one_line_install.py
       - tests/test_hostpanel_build.py
       - tests/test_custombuild_openlitespeed.py
+      - tests/test_custombuild_ssl.py
+      - tests/test_custombuild_review_fixes.py
       - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   push:
@@ -39,6 +42,7 @@ on:
       - tools/hostpanel_build_packages.py
       - tools/hostpanel_build_operations.py
       - tools/hostpanel_build_cli.py
+      - tools/hostpanel_build_ssl.py
       - tools/hostpanel_build_web.py
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
@@ -46,6 +50,8 @@ on:
       - tests/test_one_line_install.py
       - tests/test_hostpanel_build.py
       - tests/test_custombuild_openlitespeed.py
+      - tests/test_custombuild_ssl.py
+      - tests/test_custombuild_review_fixes.py
       - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   workflow_dispatch:
@@ -73,6 +79,7 @@ jobs:
             tools/hostpanel_build_packages.py \
             tools/hostpanel_build_operations.py \
             tools/hostpanel_build_cli.py \
+            tools/hostpanel_build_ssl.py \
             tools/hostpanel_build_web.py \
             tools/patch_custombuild_runtime.py
       - name: Run installer and CustomBuild regressions
@@ -82,6 +89,8 @@ jobs:
             tests.test_one_line_install \
             tests.test_hostpanel_build \
             tests.test_custombuild_openlitespeed \
+            tests.test_custombuild_ssl \
+            tests.test_custombuild_review_fixes \
             tests.test_openlitespeed_fallback
       - name: ShellCheck installer chain
         run: |
