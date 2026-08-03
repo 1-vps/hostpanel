@@ -25,6 +25,37 @@ def setting_pairs(text: str) -> list[tuple[str, bool, str]]:
     return result
 
 
+def trusted_root_directory(path: pathlib.Path) -> None:
+    metadata = path.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != 0
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise BuildError(f'unsafe PowerDNS include directory: {path}')
+
+
+def trusted_root_directory_chain(path: pathlib.Path) -> None:
+    current = path
+    while True:
+        trusted_root_directory(current)
+        if current.parent == current:
+            return
+        current = current.parent
+
+
+def prepare_include_directory(path: pathlib.Path) -> None:
+    existing = path
+    while not os.path.lexists(existing):
+        if existing.parent == existing:
+            raise BuildError(f'cannot resolve PowerDNS include directory parent: {path}')
+        existing = existing.parent
+    trusted_root_directory_chain(existing)
+    path.mkdir(parents=True, mode=0o755, exist_ok=True)
+    trusted_root_directory_chain(path)
+
+
 def powerdns_include_dir(native: pathlib.Path) -> pathlib.Path:
     text = native.read_text(encoding='utf-8')
     configured = [
@@ -42,8 +73,7 @@ def powerdns_include_dir(native: pathlib.Path) -> pathlib.Path:
         operations.write_atomic_root(
             native, text + suffix + f'include-dir={include_dir}\n', 0o640
         )
-    include_dir.mkdir(parents=True, mode=0o755, exist_ok=True)
-    trusted_root_directory(include_dir)
+    prepare_include_directory(include_dir)
     return include_dir
 
 
@@ -64,18 +94,8 @@ def active_setting_keys(text: str) -> set[str]:
     return {key for key, _append, _value in setting_pairs(text)}
 
 
-def trusted_root_directory(path: pathlib.Path) -> None:
-    metadata = path.lstat()
-    if (
-        not stat.S_ISDIR(metadata.st_mode)
-        or stat.S_ISLNK(metadata.st_mode)
-        or metadata.st_uid != 0
-        or stat.S_IMODE(metadata.st_mode) & 0o022
-    ):
-        raise BuildError(f'unsafe PowerDNS include directory: {path}')
-
-
 def trusted_root_file(path: pathlib.Path) -> None:
+    trusted_root_directory_chain(path.parent)
     metadata = path.lstat()
     if (
         not stat.S_ISREG(metadata.st_mode)
@@ -93,7 +113,7 @@ def readable_backend_paths() -> tuple[pathlib.Path, pathlib.Path]:
     target = operations.select_powerdns_backend_config(
         native, include_dir, include_dir / operations.PDNS_DROPIN_NAME
     )
-    trusted_root_directory(include_dir)
+    trusted_root_directory_chain(include_dir)
     trusted_root_file(target)
     return include_dir, target
 
