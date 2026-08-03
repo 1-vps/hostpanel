@@ -13,11 +13,11 @@ SETUP = ROOT / "SETUP.md"
 CUSTOMBUILD = ROOT / "CUSTOMBUILD.md"
 CLOUD_INIT = ROOT / "examples" / "cloud-init-hostpanel.yaml"
 WORKFLOW = ROOT / ".github" / "workflows" / "automatic-installer.yml"
-AUTO_COMMIT = "7045851e31014a697ae9571f65e2f237d47040fc"
-AUTO_BLOB = "b1b79b4ab0d5e5697e9b017c7f2308807b50ab91"
-QUICK_COMMIT = "4a38274ab8b3b2e21bda0a50fdeb3642b72815b7"
-QUICK_BLOB = "465999ea472852cbf51db0e239cf67ac7eb656a0"
-PRODUCT_COMMIT = "be06f865e3404a76c85888e11c245e728782aa5c"
+AUTO_COMMIT = "0722d75dd0dd2b64f730012700b5bd45a7ce0c41"
+AUTO_BLOB = "984c23040306429858662a6b51a62e983e7f2796"
+QUICK_COMMIT = "7d07fd2d60098e99e068587956b715fb17aab608"
+QUICK_BLOB = "449ff73c127db2a1a7596891d77092fa2e678b67"
+PRODUCT_COMMIT = "6e4d598dfce0d64e993a14a129ce53985d53ea21"
 
 
 class AutomaticInstallTests(unittest.TestCase):
@@ -102,9 +102,13 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn('readonly CUSTOMBUILD_PATHS=(', self.quick)
         self.assertIn('readonly CUSTOMBUILD_BLOBS=(', self.quick)
         for blob in (
-            '82ba3440f90b0f241abf78e5b3aa9f44733a4e61',
-            'c3bd21fb3bf1bba4fe49eebbddb430e422c5243d',
+            'de2f5aac8ea7880f341ff93851eb744a5fcb0bda',
+            'f2a794f07482ad80a49e0e0816ca98c4832e16a0',
+            'd2b49d6da0735b144c4937b6fa26ec546afc14f6',
+            'ba682145ee38c93e7b37c9f860628f2a67ffc481',
+            '6c7dddf06679f3d76e2c6a2024f215be1d684db5',
             '674144e2628b3048c51bf3487d781a5aeb07e73d',
+            '069b6dc608f71daeac7fbd9e08790acc21457d37',
             '1a27de38dd4d8d4262473bdf7bd8e70898c07559',
         ):
             self.assertIn(blob, self.quick)
@@ -151,6 +155,7 @@ class AutomaticInstallTests(unittest.TestCase):
         self.assertIn("sudo hostpanel-build set webserver openlitespeed", self.setup)
         self.assertIn("package-candidate preflight before service mutation", self.setup)
         self.assertIn("complete matching LSPHP package", self.setup)
+        self.assertIn("nginx remains the public HTTP/TLS edge", self.setup)
         self.assertNotIn("install-one-line.sh", self.setup)
         self.assertNotIn("quick-install.sh", self.setup)
         self.assertNotIn("auto-install.sh?ref=main", self.setup)
