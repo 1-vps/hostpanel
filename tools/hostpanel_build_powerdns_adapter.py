@@ -122,25 +122,104 @@ def dns_requested(component: str, roles: set[str]) -> bool:
     return component == 'dns' or (component == 'all' and 'dns' in roles)
 
 
+def applied_dns_mode() -> str:
+    try:
+        mode = operations.DNS_MODE_FILE.read_text(encoding='ascii').strip()
+    except OSError:
+        mode = 'bind'
+    if mode not in {'bind', 'powerdns'}:
+        raise BuildError('invalid applied HostPanel DNS mode')
+    return mode
+
+
+def reconcile_dns_services(
+    options: dict[str, str], platform: Platform, log_path: pathlib.Path
+) -> None:
+    mode = options['dns']
+    if mode not in {'bind', 'powerdns'}:
+        raise BuildError('invalid selected HostPanel DNS mode')
+    _, _, _, bind_service = operations.dns_layout(platform)
+    pdns_service = 'pdns.service'
+    path_service = operations.PDNS_PATH_UNIT.name
+    target = pdns_service if mode == 'powerdns' else bind_service
+    other = bind_service if mode == 'powerdns' else pdns_service
+    other_was_active = operations.service_active(other)
+    path_was_active = operations.service_active(path_service)
+
+    run_command(['systemctl', 'stop', path_service], check=False, log_path=log_path)
+    run_command(['systemctl', 'stop', other], check=False, log_path=log_path)
+    operations.unmask_service(target, log_path)
+    try:
+        run_command(['systemctl', 'enable', '--now', target], log_path=log_path)
+        run_command(['systemctl', 'is-active', '--quiet', target], log_path=log_path)
+        if mode == 'powerdns':
+            run_command(['pdns_control', 'rediscover'], log_path=log_path)
+            run_command(['pdns_control', 'reload'], log_path=log_path)
+            run_command(
+                ['systemctl', 'enable', '--now', path_service], log_path=log_path
+            )
+            run_command(
+                ['systemctl', 'is-active', '--quiet', path_service], log_path=log_path
+            )
+        operations.persist_dns_mode(mode)
+    except Exception:
+        run_command(['systemctl', 'stop', target], check=False, log_path=log_path)
+        if other_was_active:
+            run_command(
+                ['systemctl', 'enable', '--now', other],
+                check=False, log_path=log_path,
+            )
+        if path_was_active and other == pdns_service:
+            run_command(
+                ['systemctl', 'enable', '--now', path_service],
+                check=False, log_path=log_path,
+            )
+        raise
+    run_command(['systemctl', 'disable', other], check=False, log_path=log_path)
+    if mode == 'bind':
+        run_command(
+            ['systemctl', 'disable', path_service], check=False, log_path=log_path
+        )
+
+
 def guarded_apply_build(
     original: Callable, component, options, platform, log_path, backup_dir,
     python_path, doctor_path, roles, web_helper, mode_file,
 ):
+    requested = dns_requested(component, roles)
+    previous_mode = applied_dns_mode() if requested else None
     watcher = operations.PDNS_PATH_UNIT.name
-    watcher_was_active = (
-        operations.service_active(watcher) if dns_requested(component, roles) else False
-    )
+    watcher_was_active = operations.service_active(watcher) if requested else False
     try:
         return original(
             component, options, platform, log_path, backup_dir,
             python_path, doctor_path, roles, web_helper, mode_file,
         )
-    except Exception:
-        if watcher_was_active:
+    except Exception as original_error:
+        rollback_error: Exception | None = None
+        if requested and previous_mode is not None:
+            try:
+                current_mode = applied_dns_mode()
+            except Exception:
+                current_mode = None
+            if current_mode != previous_mode:
+                rollback_options = dict(options)
+                rollback_options['dns'] = previous_mode
+                try:
+                    operations.reconcile_dns_services(
+                        rollback_options, platform, log_path
+                    )
+                except Exception as exc:
+                    rollback_error = exc
+        if watcher_was_active and previous_mode == 'powerdns':
             run_command(
                 ['systemctl', 'enable', '--now', watcher],
                 check=False, log_path=log_path,
             )
+        if rollback_error is not None:
+            raise BuildError(
+                f'build failed and DNS rollback also failed: {rollback_error}'
+            ) from original_error
         raise
 
 
@@ -148,6 +227,7 @@ def install() -> None:
     operations.powerdns_include_dir = powerdns_include_dir
     operations.launch_values = launch_values
     operations.active_setting_keys = active_setting_keys
+    operations.reconcile_dns_services = reconcile_dns_services
 
     original = operations.configure_powerdns
     if getattr(original, '_hostpanel_readable_backend', False) is True:
