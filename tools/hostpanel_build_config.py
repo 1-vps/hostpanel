@@ -18,19 +18,20 @@ DEFAULT_UPDATER = pathlib.Path('/opt/hostpanel/tools/hostpanel-update')
 DEFAULT_DOCTOR = pathlib.Path('/opt/hostpanel/app/hostpanel-doctor')
 DEFAULT_ROLES_FILE = pathlib.Path('/etc/hostpanel/roles.conf')
 DEFAULT_PYTHON = pathlib.Path('/opt/hostpanel/venv/bin/python')
+DEFAULT_WEB_HELPER = pathlib.Path('/opt/hostpanel/tools/hostpanel-build-web')
 
 DEFAULT_OPTIONS = {
-    'webservers': 'nginx,apache,openlitespeed',
+    'webserver': 'nginx_apache',
     'database': 'both',
     'mta': 'postfix',
     'php_versions': '8.5,8.4,8.3,8.2',
 }
 OPTION_ORDER = tuple(DEFAULT_OPTIONS)
 CHOICES = {
+    'webserver': {'openlitespeed', 'nginx', 'apache', 'nginx_apache'},
     'database': {'mariadb', 'postgresql', 'both'},
     'mta': {'postfix', 'exim'},
 }
-WEBSERVER_VALUES = {'nginx', 'apache', 'openlitespeed'}
 VALID_ROLES = {'control', 'web', 'database', 'mail', 'dns', 'backup', 'edge'}
 VALID_COMPONENTS = {
     'panel', 'nginx', 'apache', 'openlitespeed', 'php',
@@ -68,17 +69,14 @@ def validate_value(key: str, value: str) -> str:
     value = value.strip().lower()
     if key not in DEFAULT_OPTIONS:
         raise BuildError(f'unknown option: {key}')
-    if key in {'php_versions', 'webservers'}:
+    if key == 'php_versions':
         parts = [item.strip() for item in value.split(',') if item.strip()]
-        maximum = 8 if key == 'php_versions' else 3
-        if not parts or len(parts) > maximum:
-            raise BuildError(f'{key} must contain 1-{maximum} comma-separated values')
-        if key == 'php_versions' and any(PHP_RE.fullmatch(item) is None for item in parts):
+        if not parts or len(parts) > 8:
+            raise BuildError('php_versions must contain 1-8 comma-separated values')
+        if any(PHP_RE.fullmatch(item) is None for item in parts):
             raise BuildError('php_versions supports PHP 7.4 and 8.0 through 8.5')
-        if key == 'webservers' and any(item not in WEBSERVER_VALUES for item in parts):
-            raise BuildError('webservers supports nginx, apache and openlitespeed')
         if len(set(parts)) != len(parts):
-            raise BuildError(f'{key} contains duplicates')
+            raise BuildError('php_versions contains duplicates')
         return ','.join(parts)
     if value not in CHOICES[key]:
         raise BuildError(f"{key} must be one of: {', '.join(sorted(CHOICES[key]))}")
@@ -226,8 +224,22 @@ def php_versions(options: dict[str, str]) -> tuple[str, ...]:
     return tuple(options['php_versions'].split(','))
 
 
-def configured_webservers(options: dict[str, str]) -> list[str]:
-    return options['webservers'].split(',')
+def web_components(options: dict[str, str]) -> list[str]:
+    mode = options['webserver']
+    if mode == 'nginx_apache':
+        return ['nginx', 'apache', 'php']
+    if mode == 'nginx':
+        return ['nginx', 'php']
+    if mode == 'apache':
+        return ['apache', 'php']
+    if mode == 'openlitespeed':
+        # nginx remains the public TLS/HTTP edge; OpenLiteSpeed is loopback-only.
+        return ['nginx', 'openlitespeed', 'php']
+    raise BuildError(f'unsupported webserver option: {mode}')
+
+
+def panel_web_mode(options: dict[str, str]) -> str:
+    return 'hybrid' if options['webserver'] == 'nginx_apache' else options['webserver']
 
 
 def component_packages(component: str, options: dict[str, str], platform: Platform) -> list[str]:
@@ -265,8 +277,7 @@ def component_packages(component: str, options: dict[str, str], platform: Platfo
 def selected_components(options: dict[str, str], roles: set[str]) -> list[str]:
     components: list[str] = []
     if 'web' in roles:
-        components.extend(configured_webservers(options))
-        components.append('php')
+        components.extend(web_components(options))
     elif 'edge' in roles:
         components.append('nginx')
     if 'database' in roles:
@@ -286,7 +297,7 @@ def expand_component(
             raise BuildError('roles are required for the all target')
         return selected_components(options, roles)
     if component == 'web':
-        return [*configured_webservers(options), 'php']
+        return web_components(options)
     if component in VALID_COMPONENTS:
         return [component]
     raise BuildError(f'unsupported component: {component}')
