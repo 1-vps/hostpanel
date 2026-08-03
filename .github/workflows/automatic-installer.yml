@@ -24,6 +24,7 @@ on:
       - tools/hostpanel_build_web.py
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
+      - tools/patch_powerdns_runtime.py
       - tools/patch_varnish_runtime.py
       - tools/patch_extras_doctor.py
       - tools/validate-production-vm.sh
@@ -37,6 +38,7 @@ on:
       - tests/test_custombuild_extras.py
       - tests/test_custombuild_extras_state.py
       - tests/test_custombuild_powerdns_adapter.py
+      - tests/test_custombuild_powerdns_runtime.py
       - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   push:
@@ -63,6 +65,7 @@ on:
       - tools/hostpanel_build_web.py
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
+      - tools/patch_powerdns_runtime.py
       - tools/patch_varnish_runtime.py
       - tools/patch_extras_doctor.py
       - tools/validate-production-vm.sh
@@ -76,6 +79,7 @@ on:
       - tests/test_custombuild_extras.py
       - tests/test_custombuild_extras_state.py
       - tests/test_custombuild_powerdns_adapter.py
+      - tests/test_custombuild_powerdns_runtime.py
       - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   workflow_dispatch:
@@ -111,6 +115,7 @@ jobs:
             tools/hostpanel_build_powerdns_adapter.py \
             tools/hostpanel_build_web.py \
             tools/patch_custombuild_runtime.py \
+            tools/patch_powerdns_runtime.py \
             tools/patch_varnish_runtime.py \
             tools/patch_extras_doctor.py
       - name: Run installer and CustomBuild regressions
@@ -126,6 +131,7 @@ jobs:
             tests.test_custombuild_extras \
             tests.test_custombuild_extras_state \
             tests.test_custombuild_powerdns_adapter \
+            tests.test_custombuild_powerdns_runtime \
             tests.test_openlitespeed_fallback
       - name: ShellCheck installer chain
         run: |
