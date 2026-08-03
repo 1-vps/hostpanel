@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pathlib
 import shutil
+import stat
 import tempfile
 
 import hostpanel_build_extras as base
@@ -10,6 +11,7 @@ from hostpanel_build_config import BuildError, Platform
 from hostpanel_build_packages import run_command
 
 MONGODB_RPM_KEY = pathlib.Path('/etc/pki/rpm-gpg/MONGODB-SERVER-8.0.gpg')
+MONGODB_RUN_ROOT = pathlib.Path('/run/hostpanel-build')
 
 
 def primary_fingerprints(colons: str) -> list[str]:
@@ -44,16 +46,30 @@ def verify_mongodb_key(path: pathlib.Path) -> None:
         )
 
 
+def ensure_private_runtime_dir(path: pathlib.Path) -> None:
+    try:
+        path.mkdir(parents=True, mode=0o700, exist_ok=True)
+        metadata = path.lstat()
+    except OSError as exc:
+        raise BuildError(f'cannot create MongoDB runtime directory: {path}') from exc
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != 0
+        or stat.S_IMODE(metadata.st_mode) & 0o077
+    ):
+        raise BuildError(f'unsafe MongoDB runtime directory: {path}')
+    path.chmod(0o700)
+
+
 def configure_mongodb_repository(platform: Platform, log_path: pathlib.Path) -> None:
     base.require_root()
     family, release = base.mongodb_supported(platform)
     for command in ('curl', 'gpg'):
         if shutil.which(command) is None:
             raise BuildError(f'{command} is required to configure the MongoDB repository')
-    run_root = pathlib.Path('/run/hostpanel-build')
-    run_root.mkdir(parents=True, mode=0o700, exist_ok=True)
-    run_root.chmod(0o700)
-    with tempfile.TemporaryDirectory(prefix='mongodb.', dir=run_root) as directory:
+    ensure_private_runtime_dir(MONGODB_RUN_ROOT)
+    with tempfile.TemporaryDirectory(prefix='mongodb.', dir=MONGODB_RUN_ROOT) as directory:
         root = pathlib.Path(directory)
         key = root / 'server-8.0.asc'
         keyring = root / 'server-8.0.gpg'
@@ -73,6 +89,7 @@ def configure_mongodb_repository(platform: Platform, log_path: pathlib.Path) -> 
 
     if family == 'ubuntu':
         base.MONGODB_RPM_REPO.unlink(missing_ok=True)
+        MONGODB_RPM_KEY.unlink(missing_ok=True)
         line = (
             f'deb [ arch=amd64 signed-by={base.MONGODB_APT_KEY} ] '
             f'https://repo.mongodb.org/apt/ubuntu {release}/mongodb-org/8.0 multiverse\n'
@@ -80,6 +97,7 @@ def configure_mongodb_repository(platform: Platform, log_path: pathlib.Path) -> 
         base.write_atomic_text(base.MONGODB_APT_LIST, line)
     elif family == 'debian':
         base.MONGODB_RPM_REPO.unlink(missing_ok=True)
+        MONGODB_RPM_KEY.unlink(missing_ok=True)
         line = (
             f'deb [ arch=amd64 signed-by={base.MONGODB_APT_KEY} ] '
             f'https://repo.mongodb.org/apt/debian {release}/mongodb-org/8.0 main\n'
