@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import pathlib
 import stat
 import sys
@@ -105,11 +104,12 @@ class PowerDnsPermissionsAdapterTests(unittest.TestCase):
             [mock.call(include, 0, 0), mock.call(target, 0, 0)],
         )
 
-    def test_install_replaces_dns_reconciler_and_native_selector(self):
+    def test_install_replaces_all_security_sensitive_operations(self):
         with mock.patch.object(ADAPTER.operations, 'configure_powerdns'):
             ADAPTER.install()
         self.assertIs(ADAPTER.operations.reconcile_dns_services, ADAPTER.reconcile_dns_services)
         self.assertIs(ADAPTER.operations.native_powerdns_config, ADAPTER.native_powerdns_config)
+        self.assertIs(ADAPTER.operations.mask_service, ADAPTER.mask_service)
 
 
 if __name__ == '__main__':
