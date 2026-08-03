@@ -39,7 +39,7 @@ The CustomBuild path:
 
 Ubuntu 26.04, Debian 13, Rocky/AlmaLinux 10, ARM64 and other unsupported combinations stop before repository or service mutation. Ubuntu 20.04 and RHEL/CentOS 8 are not accepted because they are outside HostPanel's supported host-platform set.
 
-If installation, configuration, service startup or validation fails, HostPanel disables the incomplete service, restores the previous configuration and applied-mode file, and restarts the previous validated MongoDB state when appropriate.
+If installation, configuration, service startup, disablement or validation fails, HostPanel restores the previous applied-mode file and the service's prior active/inactive and enabled/disabled state. Package-script side effects are still only best-effort reversible.
 
 ### Create the first administrator
 
@@ -79,7 +79,7 @@ sudo hostpanel-build build mongodb --apply
 sudo hostpanel-build validate mongodb
 ```
 
-`mongodb=off` stops and disables `mongod`. It deliberately keeps installed packages, repository configuration and database files so an accidental toggle is not destructive. Remove data only through a separate backup-and-decommission procedure.
+`mongodb=off` stops and disables `mongod`. It deliberately keeps installed packages, repository configuration and database files so an accidental toggle is not destructive. If the disable transaction or applied-state write fails, the previous runtime and boot state is restored. Remove data only through a separate backup-and-decommission procedure.
 
 ## Varnish Cache
 
@@ -113,7 +113,7 @@ For OpenLiteSpeed mode, the origin is `127.0.0.1:8088` instead.
 
 The generated VCL:
 
-- permits purge requests only from loopback;
+- rejects every HTTP `PURGE` request with status 405; cache administration uses the authenticated local CLI instead;
 - passes requests with `Authorization` or `Cookie` headers;
 - passes non-GET/HEAD requests;
 - passes common login, admin and API paths;
@@ -121,9 +121,9 @@ The generated VCL:
 - adds `X-HostPanel-Cache: HIT|MISS` for diagnostics;
 - uses short grace and keep windows for resilience.
 
-Varnish listens only on `127.0.0.1:6081`; its management interface listens only on `127.0.0.1:6082`. nginx remains the public certificate endpoint. Any existing Varnish secret must be a root-owned, single-linked, non-world-readable regular file.
+Varnish listens only on `127.0.0.1:6081`; its management interface listens only on `127.0.0.1:6082`. nginx remains the public certificate endpoint. Management always uses `-S` pre-shared-key authentication. When no secret exists, HostPanel generates a cryptographically random secret as `0640 root:<varnish-group>`. Existing secrets must be root-owned, single-linked, 0600 root-only or 0640 for the Varnish service group, and contain a bounded non-empty value.
 
-Package installation runs while `varnish.service` is runtime-masked. HostPanel validates the VCL, both loopback listeners, systemd state and nginx proxy configuration before considering the change applied.
+Package installation runs while `varnish.service` is runtime-masked. HostPanel validates the VCL, both loopback listeners, systemd state, nginx proxy configuration, exact secret path in the systemd drop-in and an authenticated `varnishadm ping` before considering the change applied.
 
 ### Webserver changes while Varnish is active
 
@@ -140,7 +140,7 @@ sudo hostpanel-build set varnish on
 sudo hostpanel-build build varnish --apply
 ```
 
-A direct webserver-mode change is rejected while `/etc/hostpanel/varnish-mode` says `on`. This prevents new vhosts from being routed through a cache whose backend still targets the previous origin.
+A direct webserver-mode change is rejected while `/etc/hostpanel/varnish-mode` says `on`. This prevents new vhosts from being routed through a cache whose backend still targets the previous origin. Invalid applied-mode files fail closed rather than being interpreted as `off`.
 
 ### Disable Varnish
 
@@ -150,11 +150,13 @@ sudo hostpanel-build build varnish --apply
 sudo hostpanel-build validate varnish
 ```
 
-The transaction restores direct nginx-to-origin proxy routes, validates and reloads nginx, stops/disables Varnish, and records `off`. If enablement or final validation fails, HostPanel stops the candidate cache, restores the prior VCL/drop-in and applied mode, repairs nginx routes to the previous state, and restarts the previous validated cache state when appropriate.
+The transaction restores direct nginx-to-origin proxy routes, validates and reloads nginx, stops/disables Varnish, and records `off`. If enablement, disablement or final validation fails, HostPanel restores the prior VCL, systemd drop-in, management secret, applied mode, nginx routing and the service's previous active/inactive and enabled/disabled state.
 
 ## Transaction and recovery model
 
 A `build` command is serialized by the HostPanel build lock. Core services, optional MongoDB/Varnish changes and the final doctor checkpoint are one top-level transaction for DNS rollback purposes. If a DNS handoff succeeded but a later optional-component or doctor step fails, HostPanel switches port 53 back to the previously applied DNS daemon and restores the PowerDNS path watcher when it had been active.
+
+Service masking is also fail-closed: if a runtime mask fails after a previously active service was stopped, HostPanel un-masks and restarts that service before returning the error.
 
 Configuration snapshots are written under `/var/backups/hostpanel/custombuild/`; command logs are written to `/var/log/hostpanel-build.log`. Rollback is best-effort because operating-system package scripts are not fully transactional. Retain a provider snapshot and console access for production changes.
 
