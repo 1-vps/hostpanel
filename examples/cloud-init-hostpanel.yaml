@@ -42,11 +42,11 @@ runcmd:
     chmod 0600 "$D/curl"
     curl -q --proto '=https' --tlsv1.2 -fsSL --retry 5 \
       --config "$D/curl" \
-      'https://api.github.com/repos/1-vps/hostpanel/contents/auto-install.sh?ref=0722d75dd0dd2b64f730012700b5bd45a7ce0c41' \
+      'https://api.github.com/repos/1-vps/hostpanel/contents/auto-install.sh?ref=bac349ca093e4dd5c760efa03c8ec9410d33deef' \
       -o "$D/install"
     rm -f -- "$D/curl"
-    [[ "$(git hash-object "$D/install")" == 984c23040306429858662a6b51a62e983e7f2796 ]]
+    [[ "$(git hash-object "$D/install")" == 0613e8b88af414b961c03d5adeee141e206ded2b ]]
     chmod 0700 "$D/install"
     bash "$D/install"
 
-final_message: "HostPanel nginx_apache provisioning and CustomBuild installation finished; inspect /var/lib/hostpanel/auto-install-status.json"
+final_message: "HostPanel nginx_apache provisioning, CustomBuild, and free ACME SSL support finished; inspect /var/lib/hostpanel/auto-install-status.json"
