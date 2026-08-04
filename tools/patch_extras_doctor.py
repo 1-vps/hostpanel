@@ -103,7 +103,9 @@ class _ForwardingModule(types.ModuleType):
             setattr(implementation, name, value)
 
 
-sys.modules[__name__].__class__ = _ForwardingModule
+_module = sys.modules.get(__name__)
+if _module is not None:
+    _module.__class__ = _ForwardingModule
 main = _IMPL.main
 
 if __name__ == '__main__':
