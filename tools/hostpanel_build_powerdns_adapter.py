@@ -211,6 +211,7 @@ def select_powerdns_backend_config(
     native: pathlib.Path, include_dir: pathlib.Path, default: pathlib.Path
 ) -> pathlib.Path:
     trusted_root_file(native)
+    trusted_root_directory_chain(include_dir)
     native_backends = launch_values(native.read_text(encoding='utf-8'))
     if native_backends:
         raise BuildError(
