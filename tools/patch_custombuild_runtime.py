@@ -20,6 +20,8 @@ _IMPL = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = _IMPL
 _SPEC.loader.exec_module(_IMPL)
 
+APP_ROOT = pathlib.Path('/opt/hostpanel/app')
+
 
 def copy_xattrs(source: pathlib.Path, destination: pathlib.Path) -> None:
     """Copy the source xattr set exactly, including ACL/SELinux metadata."""
@@ -129,9 +131,53 @@ def patch_doctor(path: pathlib.Path) -> None:
     _IMPL.patch_doctor(path)
 
 
+def _content_matches(path: pathlib.Path, expected: str) -> bool:
+    try:
+        return path.read_text(encoding='utf-8') == expected
+    except (OSError, UnicodeError):
+        return False
+
+
+def _rollback_runtime_files(
+    snapshots: list[tuple[pathlib.Path, str]],
+    original_error: BaseException,
+) -> None:
+    errors: list[str] = []
+    for path, original in reversed(snapshots):
+        if _content_matches(path, original):
+            continue
+        try:
+            write_atomic(path, original)
+        except BaseException as exc:
+            state = 'content restored but durability failed' \
+                if _content_matches(path, original) else 'content not restored'
+            errors.append(f'{path.name}: {state}: {exc}')
+    if errors:
+        raise SystemExit(
+            'CustomBuild runtime patch failed and rollback also failed: '
+            + '; '.join(errors)
+        ) from original_error
+
+
 def main() -> int:
-    _sync_patch_dependencies()
-    return _IMPL.main()
+    if os.geteuid() != 0:
+        raise SystemExit('patch_custombuild_runtime.py must run as root')
+    targets = (
+        (APP_ROOT / 'modules/webserver.py', patch_webserver),
+        (APP_ROOT / 'main.py', patch_main),
+        (APP_ROOT / 'hostpanel-doctor', patch_doctor),
+    )
+    snapshots: list[tuple[pathlib.Path, str]] = []
+    for path, _ in targets:
+        trusted_file(path)
+        snapshots.append((path, path.read_text(encoding='utf-8')))
+    try:
+        for path, patcher in targets:
+            patcher(path)
+    except BaseException as original_error:
+        _rollback_runtime_files(snapshots, original_error)
+        raise
+    return 0
 
 
 class _ForwardingModule(types.ModuleType):
