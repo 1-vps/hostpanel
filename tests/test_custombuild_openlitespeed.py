@@ -189,8 +189,6 @@ def _activation_rolls_back_service_state_on_failure(self) -> None:
     def run(command, check=True):
         calls.append(command)
         joined = ' '.join(command)
-        if 'unmask --runtime' in joined:
-            return subprocess.CompletedProcess(command, 0, '', '')
         if 'is-active' in joined:
             return subprocess.CompletedProcess(command, 3, 'inactive\n', '')
         if 'is-enabled' in joined:
@@ -205,10 +203,15 @@ def _activation_rolls_back_service_state_on_failure(self) -> None:
         ):
             _IMPL.web.activate_openlitespeed()
     self.assertEqual(
-        calls[-2:],
+        calls,
         [
+            ['systemctl', 'is-enabled', 'lsws.service'],
+            ['systemctl', 'is-active', 'lsws.service'],
+            ['systemctl', 'enable', '--now', 'lsws.service'],
             ['systemctl', 'disable', 'lsws.service'],
             ['systemctl', 'stop', 'lsws.service'],
+            ['systemctl', 'is-enabled', 'lsws.service'],
+            ['systemctl', 'is-active', 'lsws.service'],
         ],
     )
 
