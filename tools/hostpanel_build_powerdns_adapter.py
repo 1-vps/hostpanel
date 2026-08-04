@@ -402,9 +402,14 @@ def reconcile_dns_services(
             rollback_errors.append(str(exc))
         if restored:
             try:
-                operations.persist_dns_mode(previous_mode)
-            except Exception as exc:
-                rollback_errors.append(f'mode state: {exc}')
+                mode_needs_restore = applied_dns_mode() != previous_mode
+            except Exception:
+                mode_needs_restore = True
+            if mode_needs_restore:
+                try:
+                    operations.persist_dns_mode(previous_mode)
+                except Exception as exc:
+                    rollback_errors.append(f'mode state: {exc}')
         if rollback_errors:
             raise BuildError(
                 'DNS handoff failed and rollback also failed: '
