@@ -138,11 +138,61 @@ class CustomBuildSslTests(unittest.TestCase):
             hook = pathlib.Path(directory) / 'deploy' / 'hostpanel-reload-nginx'
             SSL.install_deploy_hook(hook)
             first = hook.read_text(encoding='utf-8')
-            SSL.install_deploy_hook(hook)
+            with mock.patch.object(SSL, '_open_hook_temporary') as opened:
+                SSL.install_deploy_hook(hook)
+            opened.assert_not_called()
             self.assertEqual(first, hook.read_text(encoding='utf-8'))
             self.assertEqual(hook.stat().st_mode & 0o777, 0o755)
             self.assertIn('nginx -t', first)
             self.assertIn('systemctl reload nginx.service', first)
+
+    def test_deploy_hook_preserves_xattrs_and_fsyncs_parent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hook = pathlib.Path(directory) / 'deploy' / 'hostpanel-reload-nginx'
+            hook.parent.mkdir()
+            hook.write_text('#!/bin/sh\nexit 1\n', encoding='utf-8')
+            hook.chmod(0o755)
+            applied: list[tuple[pathlib.Path, dict[str, bytes]]] = []
+            with mock.patch.object(
+                SSL, '_capture_xattrs',
+                return_value={'security.selinux': b'certbot-hook'},
+            ), mock.patch.object(
+                SSL, '_apply_xattrs',
+                side_effect=lambda path, values: applied.append(
+                    (path, dict(values))
+                ),
+            ), mock.patch.object(SSL.os, 'fchown'), \
+                 mock.patch.object(SSL, '_fsync_parent') as fsync_parent:
+                SSL.install_deploy_hook(hook)
+            self.assertEqual(hook.read_text(encoding='utf-8'), SSL.HOOK_TEXT)
+            self.assertEqual(hook.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(len(applied), 1)
+            self.assertNotEqual(applied[0][0], hook)
+            self.assertEqual(
+                applied[0][1], {'security.selinux': b'certbot-hook'}
+            )
+            fsync_parent.assert_called_once_with(hook)
+
+    def test_deploy_hook_write_failure_preserves_old_file_and_cleans_temp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hook = pathlib.Path(directory) / 'deploy' / 'hostpanel-reload-nginx'
+            hook.parent.mkdir()
+            original = '#!/bin/sh\nexit 1\n'
+            hook.write_text(original, encoding='utf-8')
+            hook.chmod(0o755)
+            with mock.patch.object(
+                SSL, '_capture_xattrs', return_value={}
+            ), mock.patch.object(
+                SSL.secrets, 'token_hex', return_value='fresh'
+            ), mock.patch.object(SSL.os, 'write', return_value=0):
+                with self.assertRaisesRegex(
+                    SSL.BuildError, 'could not write Certbot deploy hook'
+                ):
+                    SSL.install_deploy_hook(hook)
+            self.assertEqual(hook.read_text(encoding='utf-8'), original)
+            self.assertFalse(
+                (hook.parent / '.hostpanel-reload-nginx.hostpanel-ssl.fresh').exists()
+            )
 
     def test_status_uses_cert_name_filter(self):
         completed = subprocess.CompletedProcess([], 0, stdout='Certificate Name: example.com\n', stderr='')
