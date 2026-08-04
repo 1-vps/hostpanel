@@ -18,6 +18,8 @@ import hostpanel_build_powerdns_adapter as POWERDNS
 
 class CustomBuildTransactionFailureTests(unittest.TestCase):
     def test_candidate_stop_guard_blocks_all_later_rollback_mutations(self):
+        previous = STATE._attempt
+        self.addCleanup(setattr, STATE, '_attempt', previous)
         ENTRY.install_optional_rollback_guard()
         for label, unit in (
             ('candidate MongoDB stop', 'mongod.service'),
@@ -45,6 +47,8 @@ class CustomBuildTransactionFailureTests(unittest.TestCase):
                 later.assert_not_called()
 
     def test_candidate_stop_guard_tolerates_only_absent_units(self):
+        previous = STATE._attempt
+        self.addCleanup(setattr, STATE, '_attempt', previous)
         ENTRY.install_optional_rollback_guard()
         stop = mock.Mock(return_value=None)
         errors: list[str] = []
