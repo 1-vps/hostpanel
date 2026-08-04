@@ -24,6 +24,8 @@ on:
       - tools/hostpanel_build_powerdns_adapter.py
       - tools/hostpanel_build_mongodb_adapter.py
       - tools/hostpanel_build_web.py
+      - tools/hostpanel_build_web_state.py
+      - tools/hostpanel_build_web_transaction_adapter.py
       - 'tools/*_impl.py'
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
@@ -72,6 +74,8 @@ on:
       - tools/hostpanel_build_powerdns_adapter.py
       - tools/hostpanel_build_mongodb_adapter.py
       - tools/hostpanel_build_web.py
+      - tools/hostpanel_build_web_state.py
+      - tools/hostpanel_build_web_transaction_adapter.py
       - 'tools/*_impl.py'
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
@@ -130,6 +134,8 @@ jobs:
             tools/hostpanel_build_powerdns_adapter.py \
             tools/hostpanel_build_mongodb_adapter.py \
             tools/hostpanel_build_web.py \
+            tools/hostpanel_build_web_state.py \
+            tools/hostpanel_build_web_transaction_adapter.py \
             tools/patch_custombuild_runtime.py \
             tools/patch_powerdns_runtime.py \
             tools/patch_varnish_runtime.py \
