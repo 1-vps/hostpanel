@@ -29,6 +29,7 @@ MODULES=(
   hostpanel_build_powerdns_adapter.py
   hostpanel_build_powerdns_adapter_impl.py
   hostpanel_build_mongodb_adapter.py
+  hostpanel_build_web_impl.py
   patch_custombuild_runtime_impl.py
   patch_powerdns_runtime_impl.py
   patch_varnish_runtime_impl.py
