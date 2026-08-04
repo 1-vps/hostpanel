@@ -34,10 +34,10 @@ for _name in dir(_IMPL):
 
 
 _ENABLED_STATES = {'enabled', 'enabled-runtime'}
-_KNOWN_ENABLEMENT_STATES = {
-    'enabled', 'enabled-runtime', 'disabled', 'static', 'indirect',
-    'generated', 'transient', 'alias', 'linked', 'linked-runtime',
-    'masked', 'masked-runtime', 'not-found',
+_NON_ENABLED_STATES = {
+    'disabled', 'static', 'indirect', 'generated', 'transient',
+    'alias', 'linked', 'linked-runtime', 'masked', 'masked-runtime',
+    'not-found',
 }
 _RESTORABLE_ENABLEMENT_STATES = {'enabled', 'enabled-runtime', 'disabled'}
 
@@ -152,9 +152,11 @@ def _service_enablement_state(name: str) -> str:
     completed = run(['systemctl', 'is-enabled', name], check=False)
     state = _command_text(completed.stdout).lower()
     error = _command_text(completed.stderr)
+    if completed.returncode == 0 and state in _ENABLED_STATES and not error:
+        return state
     if (
         completed.returncode in {0, 1, 3, 4}
-        and state in _KNOWN_ENABLEMENT_STATES
+        and state in _NON_ENABLED_STATES
         and not error
     ):
         return state
@@ -383,8 +385,10 @@ def _restore_directory(
     metadata = path.lstat()
     if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
         raise BuildError(f'cannot restore unsafe OpenLiteSpeed directory: {path}')
-    os.chown(path, int(snapshot[2]), int(snapshot[3]))
-    os.chmod(path, int(snapshot[1]))
+    if metadata.st_uid != int(snapshot[2]) or metadata.st_gid != int(snapshot[3]):
+        os.chown(path, int(snapshot[2]), int(snapshot[3]))
+    if stat.S_IMODE(metadata.st_mode) != int(snapshot[1]):
+        os.chmod(path, int(snapshot[1]))
     _apply_xattrs(path, dict(snapshot[4]))
     _fsync_directory(path)
     if created:
@@ -436,6 +440,16 @@ def _preparation_snapshots() -> list[tuple[str, pathlib.Path, tuple[object, ...]
     return snapshots
 
 
+def _fsync_preparation_directories(
+    snapshots: list[tuple[str, pathlib.Path, tuple[object, ...]]]
+) -> None:
+    for kind, path, _snapshot in snapshots:
+        if kind != 'directory':
+            continue
+        _fsync_directory(path)
+        _fsync_parent(path)
+
+
 def _restore_preparation(
     snapshots: list[tuple[str, pathlib.Path, tuple[object, ...]]]
 ) -> list[str]:
@@ -479,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
         preparation = _preparation_snapshots()
         try:
             prepare_openlitespeed(options)
+            _fsync_preparation_directories(preparation)
         except Exception as original_error:
             rollback_errors = _restore_preparation(preparation)
             if rollback_errors:
