@@ -90,7 +90,14 @@ for _method_name in (
 
 def _without_operations_adapter_install(original):
     def wrapped(self):
-        with mock.patch.object(_IMPL.ENTRY.operations_adapter, 'install'):
+        passthrough = lambda function, *args, **kwargs: function(*args, **kwargs)
+        with mock.patch.object(
+            _IMPL.ENTRY.operations_adapter, 'install'
+        ), mock.patch.object(
+            _IMPL.ENTRY.web_transaction_adapter,
+            'guarded_execute_build',
+            side_effect=passthrough,
+        ):
             return original(self)
     wrapped.__name__ = original.__name__
     return wrapped
