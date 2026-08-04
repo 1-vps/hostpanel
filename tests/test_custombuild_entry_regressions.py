@@ -118,6 +118,82 @@ class OptionalServiceEnablementValidationTests(unittest.TestCase):
                     validator(options, pathlib.Path('/tmp/log'))
 
 
+class DnsRuntimeValidationTests(unittest.TestCase):
+    @staticmethod
+    def platform():
+        return SimpleNamespace(family='debian')
+
+    def test_powerdns_mode_requires_exact_runtime_and_boot_states(self) -> None:
+        active = {
+            'pdns.service': True,
+            'bind9.service': False,
+            'hostpanel-pdns-zones.path': True,
+        }
+        enabled = dict(active)
+        operations = entry.powerdns_adapter.operations
+        with mock.patch.object(
+            entry.powerdns_adapter, 'applied_dns_mode', return_value='powerdns'
+        ), mock.patch.object(
+            operations, 'dns_layout',
+            return_value=(
+                pathlib.Path('/etc/bind/named.conf.local'),
+                pathlib.Path('/etc/bind/zones'),
+                'bind', 'bind9.service',
+            ),
+        ), mock.patch.object(
+            entry.powerdns_adapter, 'service_active',
+            side_effect=active.__getitem__,
+        ), mock.patch.object(
+            entry.powerdns_adapter, 'service_enabled',
+            side_effect=enabled.__getitem__,
+        ):
+            entry.validate_dns_runtime({'dns': 'powerdns'}, self.platform())
+
+    def test_powerdns_mode_rejects_watcher_boot_state_drift(self) -> None:
+        active = {
+            'pdns.service': True,
+            'bind9.service': False,
+            'hostpanel-pdns-zones.path': True,
+        }
+        enabled = dict(active)
+        enabled['hostpanel-pdns-zones.path'] = False
+        operations = entry.powerdns_adapter.operations
+        with mock.patch.object(
+            entry.powerdns_adapter, 'applied_dns_mode', return_value='powerdns'
+        ), mock.patch.object(
+            operations, 'dns_layout',
+            return_value=(
+                pathlib.Path('/etc/bind/named.conf.local'),
+                pathlib.Path('/etc/bind/zones'),
+                'bind', 'bind9.service',
+            ),
+        ), mock.patch.object(
+            entry.powerdns_adapter, 'service_active',
+            side_effect=active.__getitem__,
+        ), mock.patch.object(
+            entry.powerdns_adapter, 'service_enabled',
+            side_effect=enabled.__getitem__,
+        ):
+            with self.assertRaisesRegex(
+                BuildError,
+                'hostpanel-pdns-zones.path enabled state is False; expected True',
+            ):
+                entry.validate_dns_runtime(
+                    {'dns': 'powerdns'}, self.platform()
+                )
+
+    def test_dns_runtime_rejects_selected_and_applied_mode_mismatch(self) -> None:
+        with mock.patch.object(
+            entry.powerdns_adapter, 'applied_dns_mode', return_value='bind'
+        ):
+            with self.assertRaisesRegex(
+                BuildError, 'DNS runtime mode does not match build.conf'
+            ):
+                entry.validate_dns_runtime(
+                    {'dns': 'powerdns'}, self.platform()
+                )
+
+
 class CliRegressionTests(unittest.TestCase):
     def test_set_can_repair_existing_incompatible_configuration(self) -> None:
         current = {'webserver': 'nginx', 'varnish': 'on'}
