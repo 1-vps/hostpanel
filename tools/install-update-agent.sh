@@ -91,6 +91,33 @@ sys.modules[_SPEC.name] = _IMPL
 _SPEC.loader.exec_module(_IMPL)
 
 UpdateError = _IMPL.UpdateError
+_RAW_OS = os
+_RAW_OS_WRITE = os.write
+
+
+def _write_all(fd: int, payload) -> int:
+    view = memoryview(payload)
+    total = len(view)
+    while view:
+        written = _RAW_OS_WRITE(fd, view)
+        if written <= 0:
+            raise UpdateError('could not complete updater file write')
+        view = view[written:]
+    return total
+
+
+class _UpdaterOsProxy:
+    def __getattr__(self, name: str):
+        return getattr(_RAW_OS, name)
+
+    write = staticmethod(_write_all)
+
+
+_UPDATER_OS = _UpdaterOsProxy()
+# The preserved updater uses its module-global `os` reference for release
+# downloads, archive extraction, and status publication. Replace only that
+# reference; do not mutate the process-global os module used by other code.
+_IMPL.os = _UPDATER_OS
 
 
 def _capture_xattrs(path: pathlib.Path) -> dict[str, bytes]:
@@ -228,6 +255,7 @@ _IMPL.atomic_json = atomic_json
 
 
 def main(argv: list[str] | None = None) -> int:
+    _IMPL.os = _UPDATER_OS
     _IMPL.atomic_json = atomic_json
     return _IMPL.main(argv)
 
