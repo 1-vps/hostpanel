@@ -6,6 +6,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HARDENER_PATH = ROOT / 'tools/harden_install.py'
@@ -56,6 +57,29 @@ class HardenerSecondPassSupportTests(unittest.TestCase):
         self.assertEqual(
             workflow.count('      - tools/harden_install_driver.py\n'), 2
         )
+
+    def test_support_failure_precedes_every_target_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = pathlib.Path(directory) / 'source'
+            target.mkdir(mode=0o755)
+            with mock.patch.object(
+                HARDENER.IMPLEMENTATION,
+                '_read_reviewed_runtime_file',
+                return_value=b'reviewed',
+            ), mock.patch.object(
+                HARDENER,
+                '_read_support_file',
+                side_effect=SystemExit('support input failed verification'),
+            ), mock.patch.object(
+                HARDENER.IMPLEMENTATION,
+                'synchronize_custombuild_runtime',
+            ) as publish:
+                with self.assertRaisesRegex(
+                    SystemExit, 'support input failed verification'
+                ):
+                    HARDENER.synchronize_custombuild_runtime(ROOT, target)
+            publish.assert_not_called()
+            self.assertFalse((target / 'tools').exists())
 
     def test_first_pass_installs_support_for_no_git_second_pass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
