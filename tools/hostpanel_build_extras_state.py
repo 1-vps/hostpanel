@@ -89,9 +89,9 @@ def _restore(
         return
     if len(captured) == 4:
         payload, mode, uid, gid = captured
-        xattrs: dict[str, bytes] = {}
-    else:
-        payload, mode, uid, gid, xattrs = captured
+        _IMPL.base.write_atomic_bytes(path, payload, mode, uid, gid)
+        return
+    payload, mode, uid, gid, xattrs = captured
     _IMPL.base.write_atomic_bytes(path, payload, mode, uid, gid)
     _IMPL.base._apply_xattrs(path, xattrs)
 
