@@ -100,6 +100,9 @@ class PowerDnsUnitStateTests(unittest.TestCase):
                 )
 
         self.assertNotIn(['systemctl', 'start', 'bind9.service'], events)
+        self.assertNotIn(
+            ['systemctl', 'enable', '--now', 'bind9.service'], events
+        )
         persist.assert_not_called()
 
     def test_obsolete_unit_disable_failure_rolls_back_before_mode_persist(self):
@@ -133,8 +136,9 @@ class PowerDnsUnitStateTests(unittest.TestCase):
                     options, self.platform, pathlib.Path('/tmp/log')
                 )
 
-        self.assertIn(['systemctl', 'enable', 'bind9.service'], events)
-        self.assertIn(['systemctl', 'start', 'bind9.service'], events)
+        self.assertIn(
+            ['systemctl', 'enable', '--now', 'bind9.service'], events
+        )
         self.assertNotIn(mock.call('powerdns'), persist.call_args_list)
         persist.assert_called_once_with('bind')
 
@@ -175,11 +179,14 @@ class PowerDnsUnitStateTests(unittest.TestCase):
             events.index(('persist', 'powerdns')),
         )
         self.assertLess(
-            events.index(['systemctl', 'enable', 'hostpanel-pdns-zones.path']),
+            events.index([
+                'systemctl', 'enable', '--now', 'hostpanel-pdns-zones.path'
+            ]),
             events.index(('persist', 'powerdns')),
         )
-        self.assertIn(['systemctl', 'enable', 'pdns.service'], events)
-        self.assertIn(['systemctl', 'start', 'pdns.service'], events)
+        self.assertIn(
+            ['systemctl', 'enable', '--now', 'pdns.service'], events
+        )
 
     def test_late_build_failure_restores_exact_boot_and_runtime_states(self):
         previous = {
