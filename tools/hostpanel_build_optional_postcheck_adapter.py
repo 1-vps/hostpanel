@@ -23,6 +23,7 @@ def guarded_execute_build(
     original_varnish = cli.apply_varnish
     original_doctor = cli.run_doctor
     postchecks_completed = 0
+    legacy_optional_called = False
 
     def wrap_optional(optional_function):
         capable = _postcheck_capable(optional_function)
@@ -31,8 +32,9 @@ def guarded_execute_build(
             apply_options, apply_platform,
             apply_log_path, apply_backup_dir,
         ):
-            nonlocal postchecks_completed
+            nonlocal postchecks_completed, legacy_optional_called
             if not capable:
+                legacy_optional_called = True
                 return optional_function(
                     apply_options, apply_platform,
                     apply_log_path, apply_backup_dir,
@@ -59,7 +61,7 @@ def guarded_execute_build(
         final_python_path: pathlib.Path,
         final_doctor_path: pathlib.Path,
     ) -> None:
-        if postchecks_completed:
+        if postchecks_completed and not legacy_optional_called:
             return
         original_doctor(
             final_log_path, final_python_path, final_doctor_path
