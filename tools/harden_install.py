@@ -37,9 +37,17 @@ def git_blob_sha(path: pathlib.Path) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def trusted_driver() -> pathlib.Path:
-    entrypoint = pathlib.Path(__file__).absolute()
-    root = entrypoint.parent
+def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev, left.st_ino, left.st_mode, left.st_uid, left.st_gid,
+        left.st_nlink, left.st_size, left.st_mtime_ns,
+    ) == (
+        right.st_dev, right.st_ino, right.st_mode, right.st_uid, right.st_gid,
+        right.st_nlink, right.st_size, right.st_mtime_ns,
+    )
+
+
+def _trusted_driver_at(root: pathlib.Path) -> pathlib.Path:
     driver = root / DRIVER_NAME
     root_before = root.lstat()
     before = driver.lstat()
@@ -63,23 +71,25 @@ def trusted_driver() -> pathlib.Path:
         raise SystemExit("the hardener driver does not match its reviewed blob")
     after = driver.lstat()
     root_after = root.lstat()
-    if (
-        (before.st_dev, before.st_ino, before.st_mode, before.st_uid,
-         before.st_gid, before.st_nlink, before.st_size, before.st_mtime_ns)
-        !=
-        (after.st_dev, after.st_ino, after.st_mode, after.st_uid,
-         after.st_gid, after.st_nlink, after.st_size, after.st_mtime_ns)
-        or
-        (root_before.st_dev, root_before.st_ino, root_before.st_mode,
-         root_before.st_uid, root_before.st_gid, root_before.st_nlink,
-         root_before.st_size, root_before.st_mtime_ns)
-        !=
-        (root_after.st_dev, root_after.st_ino, root_after.st_mode,
-         root_after.st_uid, root_after.st_gid, root_after.st_nlink,
-         root_after.st_size, root_after.st_mtime_ns)
-    ):
+    if not _same_file(before, after) or not _same_file(root_before, root_after):
         raise SystemExit("the hardener driver changed during validation")
     return driver
+
+
+def trusted_driver() -> pathlib.Path:
+    entrypoint = pathlib.Path(__file__).absolute()
+    try:
+        return _trusted_driver_at(entrypoint.parent)
+    except (FileNotFoundError, OSError, SystemExit):
+        pass
+
+    explicit_root = os.environ.get("HP_HARDENER_SOURCE_ROOT", "")
+    if not explicit_root:
+        raise SystemExit("a unique trusted hardener driver root is required")
+    source_root = pathlib.Path(explicit_root)
+    if not source_root.is_absolute():
+        raise SystemExit("the hardener driver source root is not canonical")
+    return _trusted_driver_at(source_root / "tools")
 
 
 def load_driver(path: pathlib.Path):
