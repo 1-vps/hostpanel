@@ -143,18 +143,38 @@ def _already_locked(_path: pathlib.Path):
     yield
 
 
+def _requires_outer_lock(parsed) -> bool:
+    command = parsed.command
+    if command in {'set', 'validate', 'doctor'}:
+        return True
+    if command in {'build', 'update_versions', 'update_panel'}:
+        return bool(getattr(parsed, 'apply', False))
+    if command == 'ssl':
+        return (
+            parsed.ssl_command in {'issue', 'renew'}
+            and bool(getattr(parsed, 'apply', False))
+        )
+    return False
+
+
+def _run_prelocked(values: list[str], lock_file: str) -> int:
+    original_acquire_lock = cli.acquire_lock
+    with original_acquire_lock(pathlib.Path(lock_file)):
+        cli.acquire_lock = _already_locked
+        try:
+            return cli.main(values)
+        finally:
+            cli.acquire_lock = original_acquire_lock
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     values = list(sys.argv[1:] if argv is None else argv)
     install_runtime_adapters(config_path(values))
-    original_acquire_lock = cli.acquire_lock
     try:
         parsed = cli.parse_args(values)
-        with original_acquire_lock(pathlib.Path(parsed.lock_file)):
-            cli.acquire_lock = _already_locked
-            try:
-                return cli.main(values)
-            finally:
-                cli.acquire_lock = original_acquire_lock
+        if _requires_outer_lock(parsed):
+            return _run_prelocked(values, parsed.lock_file)
+        return cli.main(values)
     except (BuildError, OSError) as exc:
         print(f'hostpanel-build failed: {exc}', file=sys.stderr)
         return 1
