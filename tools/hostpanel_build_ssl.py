@@ -1,8 +1,7 @@
-"""Free ACME certificate operations for hostpanel-build."""
+"""Free SSL certificate lifecycle helpers for hostpanel-build."""
 from __future__ import annotations
 
 import contextlib
-import ipaddress
 import os
 import pathlib
 import re
@@ -13,29 +12,25 @@ import tempfile
 from collections.abc import Iterator
 
 from hostpanel_build_config import BuildError, owner_ids
-from hostpanel_build_packages import run_command
+from hostpanel_build_operations import run_command
 
 DOMAIN_RE = re.compile(
-    r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
-    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+    r'^(?=.{1,253}$)(?!-)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+'
+    r'[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$'
 )
-EMAIL_RE = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,190}$")
-EAB_RE = re.compile(r'^[A-Za-z0-9_-]{8,1024}$')
+EMAIL_RE = re.compile(r'^[A-Za-z0-9.!#$%&\'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$')
+EAB_RE = re.compile(r'^[A-Za-z0-9._~+/-]{8,2048}$')
 PROVIDERS = {'letsencrypt', 'zerossl'}
 ZEROSSL_SERVER = 'https://acme.zerossl.com/v2/DV90'
-DEFAULT_NGINX_AVAILABLE = pathlib.Path('/etc/nginx/sites-available')
-DEFAULT_NGINX_ENABLED = pathlib.Path('/etc/nginx/sites-enabled')
+DEFAULT_NGINX_AVAILABLE = pathlib.Path('/etc/nginx/hostpanel-sites')
+DEFAULT_NGINX_ENABLED = pathlib.Path('/etc/nginx/hostpanel-enabled')
 DEFAULT_LIVE_ROOT = pathlib.Path('/etc/letsencrypt/live')
-DEFAULT_HOOK = pathlib.Path(
-    '/etc/letsencrypt/renewal-hooks/deploy/hostpanel-reload-nginx'
-)
-DEFAULT_EAB_KID_FILE = pathlib.Path('/etc/hostpanel/ssl/zerossl-eab-kid')
-DEFAULT_EAB_HMAC_FILE = pathlib.Path('/etc/hostpanel/ssl/zerossl-eab-hmac')
+DEFAULT_HOOK = pathlib.Path('/etc/letsencrypt/renewal-hooks/deploy/hostpanel-reload-nginx')
+DEFAULT_EAB_KID_FILE = pathlib.Path('/etc/hostpanel/zerossl-eab-kid')
+DEFAULT_EAB_HMAC_FILE = pathlib.Path('/etc/hostpanel/zerossl-eab-hmac')
 DEFAULT_RUNTIME_DIR = pathlib.Path('/run/hostpanel-build')
 HOOK_TEXT = """#!/usr/bin/env bash
-set -Eeuo pipefail
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export PATH
+set -euo pipefail
 nginx -t
 systemctl reload nginx.service
 """
@@ -43,47 +38,54 @@ systemctl reload nginx.service
 
 def validate_domain(value: str) -> str:
     domain = value.strip().lower().rstrip('.')
-    try:
-        ipaddress.ip_address(domain)
-    except ValueError:
-        pass
-    else:
-        raise BuildError(f'certificate domain must not be an IP address: {value}')
-    if DOMAIN_RE.fullmatch(domain) is None or domain.endswith('.localdomain'):
-        raise BuildError(f'invalid certificate domain: {value}')
+    if DOMAIN_RE.fullmatch(domain) is None:
+        raise BuildError('invalid certificate domain')
     return domain
 
 
 def validate_email(value: str) -> str:
     email = value.strip()
     if len(email) > 254 or EMAIL_RE.fullmatch(email) is None:
-        raise BuildError(f'invalid certificate email address: {value}')
+        raise BuildError('invalid certificate email')
     return email
 
 
 def validate_provider(value: str) -> str:
     provider = value.strip().lower()
     if provider not in PROVIDERS:
-        raise BuildError(f"SSL provider must be one of: {', '.join(sorted(PROVIDERS))}")
+        raise BuildError(
+            f"unsupported certificate provider: {provider or 'empty'}"
+        )
     return provider
 
 
-def _trusted_regular_file(path: pathlib.Path, *, executable: bool = False) -> None:
+def _safe_root_directory(path: pathlib.Path, mode: int) -> None:
     uid, gid = owner_ids()
-    try:
-        metadata = path.lstat()
-    except OSError as exc:
-        raise BuildError(f'missing managed file: {path}') from exc
+    if not path.is_absolute():
+        raise BuildError(f'unsafe runtime directory path: {path}')
+    if not os.path.lexists(path):
+        path.mkdir(parents=True, mode=mode)
+        os.chown(path, uid, gid)
+        os.chmod(path, mode)
+    metadata = path.lstat()
     if (
-        not stat.S_ISREG(metadata.st_mode)
+        not stat.S_ISDIR(metadata.st_mode)
         or stat.S_ISLNK(metadata.st_mode)
         or metadata.st_uid != uid
         or metadata.st_gid != gid
-        or metadata.st_nlink != 1
-        or stat.S_IMODE(metadata.st_mode) & 0o022
-        or (executable and not os.access(path, os.X_OK))
+        or stat.S_IMODE(metadata.st_mode) != mode
     ):
-        raise BuildError(f'unsafe managed file: {path}')
+        raise BuildError(f'unsafe runtime directory: {path}')
+
+
+def ensure_certbot() -> str:
+    certbot = shutil.which('certbot')
+    if certbot is None:
+        raise BuildError(
+            'Certbot is not installed. Install the certbot and '
+            'python3-certbot-nginx packages before applying SSL changes.'
+        )
+    return certbot
 
 
 def require_managed_vhost(
@@ -92,45 +94,20 @@ def require_managed_vhost(
     enabled_root: pathlib.Path = DEFAULT_NGINX_ENABLED,
 ) -> pathlib.Path:
     domain = validate_domain(domain)
-    vhost = available_root / domain
-    _trusted_regular_file(vhost)
+    available = available_root / domain
     enabled = enabled_root / domain
-    if not enabled.exists():
-        raise BuildError(f'nginx vhost is not enabled for {domain}')
+    if not available.is_file():
+        raise BuildError(f'HostPanel nginx vhost is missing: {available}')
+    if not enabled.is_symlink():
+        raise BuildError(f'HostPanel nginx vhost is not enabled: {enabled}')
     try:
-        target = enabled.resolve(strict=True)
-        expected = vhost.resolve(strict=True)
+        enabled_target = enabled.resolve(strict=True)
+        available_target = available.resolve(strict=True)
     except OSError as exc:
-        raise BuildError(f'could not resolve enabled nginx vhost for {domain}') from exc
-    if target != expected:
-        raise BuildError(f'enabled nginx vhost does not reference the managed file for {domain}')
-    return vhost
-
-
-def ensure_certbot() -> str:
-    binary = shutil.which('certbot')
-    if binary is None:
-        raise BuildError('certbot is unavailable; rebuild the web component first')
-    return binary
-
-
-def _safe_root_directory(path: pathlib.Path, mode: int) -> None:
-    uid, gid = owner_ids()
-    path.mkdir(parents=True, mode=mode, exist_ok=True)
-    metadata = path.lstat()
-    if (
-        not stat.S_ISDIR(metadata.st_mode)
-        or stat.S_ISLNK(metadata.st_mode)
-        or metadata.st_uid != uid
-        or metadata.st_gid != gid
-        or stat.S_IMODE(metadata.st_mode) & 0o022
-    ):
-        raise BuildError(f'unsafe SSL directory: {path}')
-    os.chmod(path, mode)
-
-
-def _safe_hook_parent(path: pathlib.Path) -> None:
-    _safe_root_directory(path.parent, 0o755)
+        raise BuildError(f'could not resolve managed nginx vhost: {domain}') from exc
+    if enabled_target != available_target:
+        raise BuildError(f'nginx vhost symlink does not match the managed file: {domain}')
+    return available
 
 
 def _capture_xattrs(path: pathlib.Path) -> dict[str, bytes]:
@@ -143,7 +120,9 @@ def _capture_xattrs(path: pathlib.Path) -> dict[str, bytes]:
             for name in os.listxattr(path, follow_symlinks=False)
         }
     except OSError as exc:
-        raise BuildError(f'could not capture deploy-hook metadata: {exc}') from exc
+        raise BuildError(
+            f'could not capture Certbot hook metadata: {exc}'
+        ) from exc
 
 
 def _apply_xattrs(path: pathlib.Path, values: dict[str, bytes]) -> None:
@@ -155,7 +134,22 @@ def _apply_xattrs(path: pathlib.Path, values: dict[str, bytes]) -> None:
         for name, value in values.items():
             os.setxattr(path, name, value, follow_symlinks=False)
     except OSError as exc:
-        raise BuildError(f'could not restore deploy-hook metadata: {exc}') from exc
+        raise BuildError(
+            f'could not preserve Certbot hook metadata: {exc}'
+        ) from exc
+
+
+def _fsync_parent(path: pathlib.Path) -> None:
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, 'O_DIRECTORY'):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path.parent, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _open_hook_temporary(path: pathlib.Path) -> tuple[int, pathlib.Path]:
@@ -167,43 +161,46 @@ def _open_hook_temporary(path: pathlib.Path) -> tuple[int, pathlib.Path]:
             f'.{path.name}.hostpanel-ssl.{secrets.token_hex(12)}'
         )
         try:
-            return os.open(temporary, flags, 0o755), temporary
+            return os.open(temporary, flags, 0o700), temporary
         except FileExistsError:
             continue
-    raise BuildError(f'could not allocate Certbot hook temporary: {path}')
+    raise BuildError(f'could not allocate deploy-hook temporary: {path}')
 
 
-def _fsync_parent(path: pathlib.Path) -> None:
-    flags = os.O_RDONLY | os.O_CLOEXEC
-    if hasattr(os, 'O_DIRECTORY'):
-        flags |= os.O_DIRECTORY
-    if hasattr(os, 'O_NOFOLLOW'):
-        flags |= os.O_NOFOLLOW
-    directory_fd = os.open(path.parent, flags)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
-
-
-def _enforce_existing_hook_mode(path: pathlib.Path) -> None:
+def _enforce_existing_hook_mode(
+    path: pathlib.Path, before: os.stat_result
+) -> None:
     flags = os.O_RDONLY | os.O_CLOEXEC
     if hasattr(os, 'O_NOFOLLOW'):
         flags |= os.O_NOFOLLOW
-    fd = os.open(path, flags)
+    descriptor = os.open(path, flags)
     try:
-        metadata = os.fstat(fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
-            raise BuildError(f'unsafe existing Certbot deploy hook: {path}')
-        os.fchmod(fd, 0o755)
-        os.fsync(fd)
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise BuildError(f'Certbot deploy hook changed during validation: {path}')
+        if stat.S_IMODE(opened.st_mode) != 0o755:
+            os.fchmod(descriptor, 0o755)
+            os.fsync(descriptor)
+        after = os.fstat(descriptor)
+        if stat.S_IMODE(after.st_mode) != 0o755:
+            raise BuildError(f'could not enforce Certbot deploy hook mode: {path}')
     finally:
-        os.close(fd)
+        os.close(descriptor)
 
 
 def install_deploy_hook(path: pathlib.Path = DEFAULT_HOOK) -> None:
     uid, gid = owner_ids()
-    _safe_hook_parent(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+    parent = path.parent.lstat()
+    if (
+        not stat.S_ISDIR(parent.st_mode)
+        or stat.S_ISLNK(parent.st_mode)
+        or parent.st_uid != uid
+        or parent.st_gid != gid
+        or stat.S_IMODE(parent.st_mode) & 0o022
+    ):
+        raise BuildError(f'unsafe Certbot hook directory: {path.parent}')
+
     existing_xattrs: dict[str, bytes] | None = None
     if os.path.lexists(path):
         metadata = path.lstat()
@@ -215,10 +212,12 @@ def install_deploy_hook(path: pathlib.Path = DEFAULT_HOOK) -> None:
             or metadata.st_nlink != 1
             or stat.S_IMODE(metadata.st_mode) & 0o022
         ):
-            raise BuildError(f'unsafe existing Certbot deploy hook: {path}')
-        if path.read_text(encoding='utf-8') == HOOK_TEXT:
-            if stat.S_IMODE(metadata.st_mode) != 0o755:
-                _enforce_existing_hook_mode(path)
+            raise BuildError(f'unsafe Certbot deploy hook: {path}')
+        try:
+            content = path.read_text(encoding='utf-8')
+        except (OSError, UnicodeError) as exc:
+            raise BuildError(f'could not read Certbot deploy hook: {path}') from exc
+        if content == HOOK_TEXT and stat.S_IMODE(metadata.st_mode) == 0o755:
             return
         existing_xattrs = _capture_xattrs(path)
 
