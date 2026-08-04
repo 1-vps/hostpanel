@@ -81,15 +81,20 @@ def _service_enablement(name: str) -> str:
 
 
 def _capture_service(name: str) -> ServiceState:
-    enablement = _service_enablement(name)
-    if enablement not in _RESTORABLE_STATES:
+    before = _service_enablement(name)
+    if before not in _RESTORABLE_STATES:
         raise BuildError(
-            f'{name} has unsupported pre-build enablement state: {enablement}'
+            f'{name} has unsupported pre-build enablement state: {before}'
         )
     active = _service_active(name)
-    if enablement == 'not-found' and active:
+    after = _service_enablement(name)
+    if before != after:
+        raise BuildError(
+            f'{name} enablement changed while its pre-build state was captured'
+        )
+    if before == 'not-found' and active:
         raise BuildError(f'{name} is active but its unit is not found')
-    return ServiceState(active=active, enablement=enablement)
+    return ServiceState(active=active, enablement=before)
 
 
 def _run_systemctl(
@@ -280,6 +285,8 @@ def _restore_helper_state(
     state_path: pathlib.Path,
     log_path: pathlib.Path,
 ) -> list[str]:
+    if not os.path.lexists(state_path):
+        return []
     try:
         _helper_command(
             python_path, state_helper, '--restore', state_path, log_path
@@ -311,30 +318,22 @@ def guarded_execute_build(
     state_path = _transaction_state_path(backup_dir)
     apache = 'apache2.service' if platform.family == 'debian' else 'httpd.service'
     units = ('nginx.service', apache, 'lsws.service')
-
-    _helper_command(
-        python_path, state_helper, '--capture', state_path, log_path,
-        mode_file=mode_file,
-    )
-    try:
-        service_states = {
-            unit: _capture_service(unit)
-            for unit in units
-        }
-    except Exception:
-        _discard_state(state_path)
-        raise
+    service_states = {
+        unit: _capture_service(unit)
+        for unit in units
+    }
 
     base_reconcile = operations.reconcile_webserver
     reconcile_called = False
+    state_captured = False
 
     def transactional_reconcile(
         reconcile_options: dict[str, str], helper: pathlib.Path,
         reconcile_python: pathlib.Path, reconcile_mode_file: pathlib.Path,
         reconcile_log: pathlib.Path,
     ) -> None:
-        nonlocal reconcile_called
-        if reconcile_called:
+        nonlocal reconcile_called, state_captured
+        if reconcile_called or state_captured:
             raise BuildError('webserver reconciliation ran more than once')
         if (
             helper != web_helper
@@ -342,6 +341,11 @@ def guarded_execute_build(
             or reconcile_mode_file != mode_file
         ):
             raise BuildError('webserver reconciliation inputs changed during transaction')
+        _helper_command(
+            python_path, state_helper, '--capture', state_path,
+            reconcile_log, mode_file=mode_file,
+        )
+        state_captured = True
         _helper_command(
             python_path, state_helper, '--verify', state_path, reconcile_log
         )
