@@ -255,6 +255,47 @@ def _unlink_durable(path: pathlib.Path) -> None:
     _fsync_parent(path)
 
 
+def _snapshot_path(
+    path: pathlib.Path, *, allow_symlink: bool = False
+) -> tuple[object, ...]:
+    if not os.path.lexists(path):
+        return ('missing',)
+    metadata = path.lstat()
+    if stat.S_ISLNK(metadata.st_mode):
+        if not allow_symlink:
+            raise BuildError(f'unsafe symlink where a regular file is required: {path}')
+        return ('symlink', os.readlink(path))
+    if not stat.S_ISREG(metadata.st_mode):
+        raise BuildError(f'unsafe managed runtime path: {path}')
+    trusted_root_file(path)
+    return (
+        'file', path.read_text(encoding='utf-8'),
+        stat.S_IMODE(metadata.st_mode), metadata.st_uid, metadata.st_gid,
+        _capture_xattrs(path),
+    )
+
+
+def _restore_path(path: pathlib.Path, snapshot: tuple[object, ...]) -> None:
+    kind = snapshot[0]
+    if kind == 'missing':
+        _unlink_durable(path)
+        return
+    if kind == 'symlink':
+        _replace_symlink(path, pathlib.Path(str(snapshot[1])))
+        return
+    if kind == 'file':
+        _replace_atomic(
+            path,
+            str(snapshot[1]),
+            int(snapshot[2]),
+            int(snapshot[3]),
+            int(snapshot[4]),
+            dict(snapshot[5]),
+        )
+        return
+    raise BuildError(f'invalid runtime snapshot for {path}')
+
+
 def group_gid(name: str, *, required: bool = False) -> int:
     try:
         return grp.getgrnam(name).gr_gid
@@ -302,16 +343,10 @@ def prepare_openlitespeed(options: dict[str, str]) -> None:
         raise BuildError('OpenLiteSpeed binary is missing after package installation')
     trusted_root_file(OLS_MAIN)
     trusted_root_file(OLS_ADMIN)
-    ensure_lsphp_runtimes(options)
 
-    gid = group_gid('lsadm')
-    hostpanel_gid = group_gid('hostpanel', required=True)
-    ensure_root_directory(OLS_HOSTPANEL, 0o750, gid)
-    ensure_root_directory(OLS_VHOSTS, 0o750, gid)
-    ensure_root_directory(OLS_STATE_ROOT, 0o750, hostpanel_gid)
-    ensure_root_directory(OLS_MARKERS, 0o750, hostpanel_gid)
-    ensure_root_directory(OLS_LOGS, 0o750, 0)
-
+    lsphp_link = OLS_ROOT / 'fcgi-bin/lsphp'
+    lsphp_link_snapshot = _snapshot_path(lsphp_link, allow_symlink=True)
+    lsphp_state_snapshot = _snapshot_path(LSPHP_STATE)
     main_text = OLS_MAIN.read_text(encoding='utf-8')
     admin_text = OLS_ADMIN.read_text(encoding='utf-8')
     registry_existed = os.path.lexists(OLS_REGISTRY)
@@ -322,7 +357,16 @@ def prepare_openlitespeed(options: dict[str, str]) -> None:
 
     updated_main = rewrite_main_config(main_text)
     updated_admin = rewrite_admin_config(admin_text)
+    gid = group_gid('lsadm')
+    hostpanel_gid = group_gid('hostpanel', required=True)
     try:
+        ensure_lsphp_runtimes(options)
+        ensure_root_directory(OLS_HOSTPANEL, 0o750, gid)
+        ensure_root_directory(OLS_VHOSTS, 0o750, gid)
+        ensure_root_directory(OLS_STATE_ROOT, 0o750, hostpanel_gid)
+        ensure_root_directory(OLS_MARKERS, 0o750, hostpanel_gid)
+        ensure_root_directory(OLS_LOGS, 0o750, 0)
+
         if updated_main != main_text:
             write_atomic(OLS_MAIN, updated_main)
         if updated_admin != admin_text:
@@ -360,6 +404,14 @@ def prepare_openlitespeed(options: dict[str, str]) -> None:
                 _unlink_durable(OLS_REGISTRY)
         except Exception as exc:
             rollback_errors.append(f'{OLS_REGISTRY}: {exc}')
+        for path, snapshot in (
+            (lsphp_link, lsphp_link_snapshot),
+            (LSPHP_STATE, lsphp_state_snapshot),
+        ):
+            try:
+                _restore_path(path, snapshot)
+            except Exception as exc:
+                rollback_errors.append(f'{path}: {exc}')
         if rollback_errors:
             raise BuildError(
                 'OpenLiteSpeed preparation failed and rollback also failed: '
