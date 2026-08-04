@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import contextlib
+import ctypes
+import ctypes.util
 import os
 import pathlib
 import re
@@ -176,6 +178,66 @@ def _apply_xattrs(path: pathlib.Path, values: dict[str, bytes]) -> None:
         ) from exc
 
 
+def _apply_expected_selinux_context(
+    fd: int, path: pathlib.Path, mode: int
+) -> None:
+    library_name = ctypes.util.find_library('selinux')
+    selinuxfs = pathlib.Path('/sys/fs/selinux/enforce')
+    if not library_name:
+        if selinuxfs.exists():
+            raise BuildError(
+                'SELinux is enabled but libselinux could not be loaded'
+            )
+        return
+    try:
+        library = ctypes.CDLL(library_name, use_errno=True)
+    except OSError as exc:
+        if selinuxfs.exists():
+            raise BuildError('could not load libselinux') from exc
+        return
+
+    library.is_selinux_enabled.argtypes = []
+    library.is_selinux_enabled.restype = ctypes.c_int
+    enabled = library.is_selinux_enabled()
+    if enabled < 0:
+        raise BuildError('could not determine whether SELinux is enabled')
+    if enabled == 0:
+        return
+
+    library.matchpathcon.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_uint,
+        ctypes.POINTER(ctypes.c_char_p),
+    ]
+    library.matchpathcon.restype = ctypes.c_int
+    library.fsetfilecon.argtypes = [ctypes.c_int, ctypes.c_char_p]
+    library.fsetfilecon.restype = ctypes.c_int
+    library.freecon.argtypes = [ctypes.c_void_p]
+    library.freecon.restype = None
+
+    context = ctypes.c_char_p()
+    expected_mode = stat.S_IFREG | stat.S_IMODE(mode)
+    if library.matchpathcon(
+        os.fsencode(path), expected_mode, ctypes.byref(context)
+    ) != 0:
+        error = ctypes.get_errno()
+        raise BuildError(
+            f'could not determine SELinux context for {path}: '
+            f'{os.strerror(error)}'
+        )
+    try:
+        if not context.value:
+            raise BuildError(f'empty SELinux context for {path}')
+        if library.fsetfilecon(fd, context) != 0:
+            error = ctypes.get_errno()
+            raise BuildError(
+                f'could not apply SELinux context for {path}: '
+                f'{os.strerror(error)}'
+            )
+    finally:
+        library.freecon(ctypes.cast(context, ctypes.c_void_p))
+
+
 def _fsync_parent(path: pathlib.Path) -> None:
     flags = os.O_RDONLY | os.O_CLOEXEC
     if hasattr(os, 'O_DIRECTORY'):
@@ -233,6 +295,8 @@ def write_config(path: pathlib.Path, options: dict[str, str]) -> None:
         os.fchmod(fd, 0o600)
         if xattrs is not None:
             _apply_xattrs(temporary, xattrs)
+        else:
+            _apply_expected_selinux_context(fd, path, 0o600)
         os.fsync(fd)
         descriptor, fd = fd, -1
         os.close(descriptor)
