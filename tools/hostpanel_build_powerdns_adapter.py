@@ -82,9 +82,17 @@ def service_enabled(name: str) -> bool:
     error = _IMPL._query_error(completed)
     if completed.returncode == 0 and state == 'enabled' and not error:
         return True
+    if (
+        state in {'masked', 'masked-runtime'}
+        and completed.returncode in {0, 1, 3, 4}
+        and not error
+    ):
+        raise BuildError(
+            f'{name} is {state}; refusing to remove an administrative mask'
+        )
     disabled_states = {
         'disabled', 'static', 'indirect', 'generated', 'transient',
-        'masked', 'masked-runtime', 'alias', 'not-found',
+        'alias', 'not-found',
     }
     if (
         state in disabled_states
