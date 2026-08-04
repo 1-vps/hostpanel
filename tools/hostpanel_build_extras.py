@@ -22,6 +22,7 @@ _SPEC.loader.exec_module(_IMPL)
 
 BuildError = _IMPL.BuildError
 VARNISH_MODE_FILE = _IMPL.VARNISH_MODE_FILE
+_PRESERVE_CURRENT_XATTRS = object()
 
 
 def _trusted_varnish_mode(default: str = 'off') -> str:
@@ -91,7 +92,8 @@ def _open_temporary(path: pathlib.Path, mode: int) -> tuple[int, pathlib.Path]:
 
 def write_atomic_bytes(
     path: pathlib.Path, payload: bytes, mode: int = 0o644,
-    uid: int = 0, gid: int = 0,
+    uid: int = 0, gid: int = 0, *,
+    xattrs: dict[str, bytes] | object = _PRESERVE_CURRENT_XATTRS,
 ) -> None:
     _IMPL.require_root()
     path.parent.mkdir(parents=True, mode=0o755, exist_ok=True)
@@ -104,8 +106,8 @@ def write_atomic_bytes(
     ):
         raise BuildError(f'unsafe configuration directory: {path.parent}')
 
-    xattrs: dict[str, bytes] | None = None
-    if os.path.lexists(path):
+    exists = os.path.lexists(path)
+    if exists:
         metadata = path.lstat()
         if (
             not stat.S_ISREG(metadata.st_mode)
@@ -115,7 +117,14 @@ def write_atomic_bytes(
             or stat.S_IMODE(metadata.st_mode) & 0o022
         ):
             raise BuildError(f'unsafe configuration file: {path}')
-        xattrs = _capture_xattrs(path)
+
+    desired_xattrs: dict[str, bytes] | None
+    if xattrs is _PRESERVE_CURRENT_XATTRS:
+        desired_xattrs = _capture_xattrs(path) if exists else None
+    elif isinstance(xattrs, dict):
+        desired_xattrs = dict(xattrs)
+    else:
+        raise BuildError('invalid extended-metadata snapshot')
 
     fd, temporary = _open_temporary(path, mode)
     active_error: BaseException | None = None
@@ -130,8 +139,8 @@ def write_atomic_bytes(
         os.fsync(fd)
         os.fchown(fd, uid, gid)
         os.fchmod(fd, mode)
-        if xattrs is not None:
-            _apply_xattrs(temporary, xattrs)
+        if desired_xattrs is not None:
+            _apply_xattrs(temporary, desired_xattrs)
         os.fsync(fd)
         descriptor, fd = fd, -1
         os.close(descriptor)
