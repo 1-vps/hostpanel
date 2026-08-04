@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import pathlib
 import sys
 import unittest
@@ -11,7 +12,7 @@ TOOLS = ROOT / 'tools'
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-import hostpanel_build_entry as entry
+import hostpanel_build_cli as cli
 import hostpanel_build_extras_state as state
 from hostpanel_build_config import BuildError
 
@@ -45,93 +46,61 @@ class MongoDbInstalledHardenerTests(unittest.TestCase):
             state._IMPL.base.harden_mongod_config = original_base
 
 
-class EntryCommandGuardTests(unittest.TestCase):
-    @staticmethod
-    def compatibility(options: dict[str, str]) -> None:
-        if options.get('webserver') == 'nginx' and options.get('varnish') == 'on':
-            raise BuildError('incompatible Varnish selection')
+class CliRegressionTests(unittest.TestCase):
+    def test_set_can_repair_existing_incompatible_configuration(self) -> None:
+        current = {'webserver': 'nginx', 'varnish': 'on'}
+        with mock.patch.object(cli.os, 'geteuid', return_value=0), \
+             mock.patch.object(cli, 'read_config', return_value=current), \
+             mock.patch.object(cli, 'require_root'), \
+             mock.patch.object(cli, 'validate_value', return_value='off'), \
+             mock.patch.object(cli, 'write_config') as write_config:
+            result = cli.main([
+                '--config', '/config', 'set', 'varnish', 'off',
+            ])
 
-    def test_set_can_repair_an_existing_incompatible_configuration(self) -> None:
-        parsed = SimpleNamespace(command='set', key='varnish', value='off')
-        with mock.patch.object(
-            entry.cli, 'validate_option_compatibility',
-            side_effect=self.compatibility,
-        ), mock.patch.object(
-            entry.cli, 'validate_value', return_value='off',
-        ):
-            with entry._command_runtime_guards(parsed, pathlib.Path('/config')):
-                entry.cli.validate_option_compatibility({
-                    'webserver': 'nginx', 'varnish': 'on',
-                })
-                entry.cli.validate_option_compatibility({
-                    'webserver': 'nginx', 'varnish': 'off',
-                })
-
-    def test_set_does_not_bypass_unrepaired_incompatibility(self) -> None:
-        parsed = SimpleNamespace(command='set', key='mongodb', value='off')
-        with mock.patch.object(
-            entry.cli, 'validate_option_compatibility',
-            side_effect=self.compatibility,
-        ), mock.patch.object(
-            entry.cli, 'validate_value', return_value='off',
-        ):
-            with entry._command_runtime_guards(parsed, pathlib.Path('/config')):
-                with self.assertRaisesRegex(
-                    BuildError, 'incompatible Varnish selection'
-                ):
-                    entry.cli.validate_option_compatibility({
-                        'webserver': 'nginx',
-                        'varnish': 'on',
-                        'mongodb': '8.0',
-                    })
-
-    def test_validate_all_checks_disabled_mongodb_before_doctor(self) -> None:
-        parsed = SimpleNamespace(
-            command='validate', component='all', roles_file='/roles'
+        self.assertEqual(result, 0)
+        write_config.assert_called_once_with(
+            pathlib.Path('/config'),
+            {'webserver': 'nginx', 'varnish': 'off'},
         )
-        events: list[str] = []
-        with mock.patch.object(
-            entry, 'read_config', return_value={'mongodb': 'off'},
-        ), mock.patch.object(
-            entry, 'read_roles', return_value={'database'},
-        ), mock.patch.object(
-            entry.cli, 'validate_mongodb',
-            side_effect=lambda _log: events.append('mongodb'),
-        ), mock.patch.object(
-            entry.cli, 'run_doctor',
-            side_effect=lambda *_args: events.append('doctor'),
-        ):
-            with entry._command_runtime_guards(parsed, pathlib.Path('/config')):
-                entry.cli.run_doctor(
-                    pathlib.Path('/log'),
-                    pathlib.Path('/python'),
-                    pathlib.Path('/doctor'),
-                )
-        self.assertEqual(events, ['mongodb', 'doctor'])
 
-    def test_validate_all_does_not_duplicate_enabled_mongodb_check(self) -> None:
-        parsed = SimpleNamespace(
-            command='validate', component='all', roles_file='/roles'
+    def test_set_still_rejects_new_incompatible_configuration(self) -> None:
+        current = {'webserver': 'apache', 'varnish': 'on'}
+        with mock.patch.object(cli.os, 'geteuid', return_value=0), \
+             mock.patch.object(cli, 'read_config', return_value=current), \
+             mock.patch.object(cli, 'require_root'), \
+             mock.patch.object(cli, 'validate_value', return_value='nginx'), \
+             mock.patch.object(cli, 'write_config') as write_config:
+            result = cli.main([
+                '--config', '/config', 'set', 'webserver', 'nginx',
+            ])
+
+        self.assertEqual(result, 1)
+        write_config.assert_not_called()
+
+    def test_validate_all_checks_mongodb_when_configured_off(self) -> None:
+        options = {
+            'webserver': 'nginx_apache',
+            'varnish': 'off',
+            'mongodb': 'off',
+        }
+        platform = SimpleNamespace(family='debian')
+        with mock.patch.object(cli.os, 'geteuid', return_value=0), \
+             mock.patch.object(cli, 'read_config', return_value=options), \
+             mock.patch.object(cli, 'detect_platform', return_value=platform), \
+             mock.patch.object(cli, 'read_roles', return_value={'database'}), \
+             mock.patch.object(cli, 'expand_component', return_value=[]), \
+             mock.patch.object(
+                 cli, 'acquire_lock', return_value=contextlib.nullcontext()
+             ), mock.patch.object(cli, 'validate_mongodb') as validate_mongodb, \
+             mock.patch.object(cli, 'run_doctor') as run_doctor:
+            result = cli.main(['validate', 'all'])
+
+        self.assertEqual(result, 0)
+        validate_mongodb.assert_called_once_with(
+            pathlib.Path('/var/log/hostpanel-build.log')
         )
-        events: list[str] = []
-        with mock.patch.object(
-            entry, 'read_config', return_value={'mongodb': '8.0'},
-        ), mock.patch.object(
-            entry, 'read_roles', return_value={'database'},
-        ), mock.patch.object(
-            entry.cli, 'validate_mongodb',
-            side_effect=lambda _log: events.append('mongodb'),
-        ), mock.patch.object(
-            entry.cli, 'run_doctor',
-            side_effect=lambda *_args: events.append('doctor'),
-        ):
-            with entry._command_runtime_guards(parsed, pathlib.Path('/config')):
-                entry.cli.run_doctor(
-                    pathlib.Path('/log'),
-                    pathlib.Path('/python'),
-                    pathlib.Path('/doctor'),
-                )
-        self.assertEqual(events, ['doctor'])
+        run_doctor.assert_called_once()
 
 
 if __name__ == '__main__':
