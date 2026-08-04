@@ -75,8 +75,26 @@ def trusted_root_file(path: pathlib.Path) -> None:
         raise BuildError(f'unsafe root-managed configuration file: {path}')
 
 
+def _copy_xattrs(source: pathlib.Path, destination: pathlib.Path) -> None:
+    """Copy ACLs, SELinux labels and other extended attributes fail-closed."""
+    required = ('listxattr', 'getxattr', 'setxattr')
+    if not all(hasattr(os, name) for name in required):
+        raise BuildError('extended-attribute support is unavailable')
+    try:
+        names = os.listxattr(source, follow_symlinks=False)
+        for name in names:
+            value = os.getxattr(source, name, follow_symlinks=False)
+            os.setxattr(
+                destination, name, value, follow_symlinks=False
+            )
+    except OSError as exc:
+        raise BuildError(
+            f'could not preserve extended metadata for {source}: {exc}'
+        ) from exc
+
+
 def write_atomic_preserving(path: pathlib.Path, text: str) -> None:
-    """Atomically replace an existing trusted file without changing its metadata."""
+    """Atomically replace an existing trusted file without changing metadata."""
     metadata = path.lstat()
     temporary = path.with_name(f'.{path.name}.hostpanel-pdns.{os.getpid()}')
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
@@ -93,9 +111,10 @@ def write_atomic_preserving(path: pathlib.Path, text: str) -> None:
                 if written <= 0:
                     raise BuildError(f'could not write {temporary}')
                 view = view[written:]
-            os.fsync(fd)
             os.fchown(fd, metadata.st_uid, metadata.st_gid)
             os.fchmod(fd, stat.S_IMODE(metadata.st_mode))
+            _copy_xattrs(path, temporary)
+            os.fsync(fd)
         finally:
             os.close(fd)
             fd = -1
@@ -201,55 +220,61 @@ def readable_backend_paths() -> tuple[pathlib.Path, pathlib.Path]:
     return include_dir, target
 
 
+def _stdout_state(completed) -> str:
+    return str(getattr(completed, 'stdout', '') or '').strip().lower()
+
+
+def _query_error(completed) -> str:
+    return str(getattr(completed, 'stderr', '') or '').strip()[-500:]
+
+
 def _query_detail(completed) -> str:
-    return str(
-        getattr(completed, 'stderr', '')
-        or getattr(completed, 'stdout', '')
-        or ''
-    ).strip()[-500:]
+    return _query_error(completed) or _stdout_state(completed)
 
 
 def service_active(name: str) -> bool:
     completed = run_command(
-        ['systemctl', 'is-active', '--quiet', name],
-        check=False, capture=True,
+        ['systemctl', 'is-active', name], check=False, capture=True
     )
-    if completed.returncode == 0:
+    state = _stdout_state(completed)
+    error = _query_error(completed)
+    if completed.returncode == 0 and state == 'active' and not error:
         return True
-    detail = _query_detail(completed)
-    if completed.returncode in {3, 4} and not detail:
+    if (
+        completed.returncode in {3, 4}
+        and state in {'inactive', 'failed', 'unknown', 'not-found'}
+        and not error
+    ):
         return False
-    lowered = detail.lower()
-    if any(marker in lowered for marker in (
-        'inactive', 'failed', 'unknown unit', 'could not be found',
-        'not loaded', 'not-found',
-    )):
+    if completed.returncode in {3, 4} and not state and not error:
+        # Compatibility with quiet/older systemd fixtures.
         return False
     raise BuildError(
         f'could not determine active state for {name}: '
-        f'{detail or completed.returncode}'
+        f'{error or state or completed.returncode}'
     )
 
 
 def service_enabled(name: str) -> bool:
     completed = run_command(
-        ['systemctl', 'is-enabled', '--quiet', name],
-        check=False, capture=True,
+        ['systemctl', 'is-enabled', name], check=False, capture=True
     )
-    if completed.returncode == 0:
+    state = _stdout_state(completed)
+    error = _query_error(completed)
+    if completed.returncode == 0 and state == 'enabled' and not error:
         return True
-    detail = _query_detail(completed)
-    if completed.returncode in {1, 3, 4} and not detail:
-        return False
-    lowered = detail.lower()
-    if any(marker in lowered for marker in (
+    disabled_states = {
         'disabled', 'static', 'indirect', 'generated', 'transient',
-        'masked', 'not found', 'not-found', 'does not exist',
-    )):
+        'masked', 'masked-runtime', 'alias', 'not-found',
+    }
+    if state in disabled_states and not error:
+        return False
+    if completed.returncode in {1, 3, 4} and not state and not error:
+        # Compatibility with quiet/older systemd fixtures.
         return False
     raise BuildError(
         f'could not determine enabled state for {name}: '
-        f'{detail or completed.returncode}'
+        f'{error or state or completed.returncode}'
     )
 
 
@@ -260,34 +285,6 @@ def _activity(name: str) -> bool:
         # Preserve compatibility with finite side-effect fixtures while keeping
         # the production path strict for every real exception type.
         return service_active(name)
-
-
-def mask_service(name: str, log_path: pathlib.Path) -> _MaskResult:
-    """Runtime-mask a service and restore it if masking fails after stop."""
-    was_active = _activity(name)
-    if was_active:
-        run_command(['systemctl', 'stop', name], log_path=log_path)
-    try:
-        run_command(['systemctl', 'mask', '--runtime', name], log_path=log_path)
-    except Exception:
-        run_command(
-            ['systemctl', 'unmask', '--runtime', name],
-            check=False, log_path=log_path,
-        )
-        if was_active:
-            run_command(
-                ['systemctl', 'start', name], check=False, log_path=log_path
-            )
-        raise
-    result = _MaskResult(was_active)
-    _MASK_RESULTS[name] = result
-    return result
-
-
-def _complete_masked_service(name: str) -> None:
-    result = _MASK_RESULTS.pop(name, None)
-    if result is not None:
-        result.reconciled = True
 
 
 def _detail(completed) -> str:
@@ -342,11 +339,53 @@ def _stop_unit(name: str, log_path: pathlib.Path) -> None:
     raise BuildError(f'could not stop {name}: {detail or completed.returncode}')
 
 
+def _start_unit(name: str, log_path: pathlib.Path) -> None:
+    run_command(['systemctl', 'start', name], log_path=log_path)
+    run_command(['systemctl', 'is-active', '--quiet', name], log_path=log_path)
+
+
 def _enable_and_start(name: str, log_path: pathlib.Path) -> None:
     run_command(['systemctl', 'enable', '--now', name], log_path=log_path)
-    run_command(
-        ['systemctl', 'is-active', '--quiet', name], log_path=log_path
-    )
+    run_command(['systemctl', 'is-active', '--quiet', name], log_path=log_path)
+
+
+def mask_service(name: str, log_path: pathlib.Path) -> _MaskResult:
+    """Runtime-mask a service and restore it if masking fails after stop."""
+    was_active = _activity(name)
+    if was_active:
+        run_command(['systemctl', 'stop', name], log_path=log_path)
+    try:
+        run_command(['systemctl', 'mask', '--runtime', name], log_path=log_path)
+    except Exception as original_error:
+        recovery_errors: list[str] = []
+        try:
+            _unmask_runtime(name, log_path)
+        except Exception as exc:
+            recovery_errors.append(str(exc))
+        if was_active:
+            try:
+                _start_unit(name, log_path)
+            except Exception as exc:
+                recovery_errors.append(str(exc))
+        if recovery_errors:
+            raise BuildError(
+                f'could not mask {name} and recovery also failed: '
+                + '; '.join(recovery_errors)
+            ) from original_error
+        raise
+    result = _MaskResult(was_active)
+    _MASK_RESULTS[name] = result
+    return result
+
+
+def _complete_masked_service(name: str) -> None:
+    result = _MASK_RESULTS.pop(name, None)
+    if result is not None:
+        result.reconciled = True
+
+
+def _discard_masked_service(name: str) -> None:
+    _MASK_RESULTS.pop(name, None)
 
 
 def _dns_service_states(platform: Platform) -> dict[str, tuple[bool, bool]]:
@@ -393,10 +432,7 @@ def _restore_service_states(
         if not was_active or unit in already_started:
             continue
         try:
-            run_command(['systemctl', 'start', unit], log_path=log_path)
-            run_command(
-                ['systemctl', 'is-active', '--quiet', unit], log_path=log_path
-            )
+            _start_unit(unit, log_path)
         except Exception as exc:
             errors.append(f'{unit} activity: {exc}')
     if errors:
@@ -415,6 +451,15 @@ def applied_dns_mode() -> str:
     if mode not in {'bind', 'powerdns'}:
         raise BuildError('invalid applied HostPanel DNS mode')
     return mode
+
+
+def _restore_mode_if_changed(previous_mode: str) -> None:
+    try:
+        changed = applied_dns_mode() != previous_mode
+    except Exception:
+        changed = True
+    if changed:
+        operations.persist_dns_mode(previous_mode)
 
 
 def reconcile_dns_services(
@@ -457,14 +502,10 @@ def reconcile_dns_services(
             rollback_errors.append(str(exc))
         if restored:
             try:
-                mode_needs_restore = applied_dns_mode() != previous_mode
-            except Exception:
-                mode_needs_restore = True
-            if mode_needs_restore:
-                try:
-                    operations.persist_dns_mode(previous_mode)
-                except Exception as exc:
-                    rollback_errors.append(f'mode state: {exc}')
+                _restore_mode_if_changed(previous_mode)
+            except Exception as exc:
+                rollback_errors.append(f'mode state: {exc}')
+        _discard_masked_service(target)
         if rollback_errors:
             raise BuildError(
                 'DNS handoff failed and rollback also failed: '
@@ -540,7 +581,7 @@ def guarded_apply_build(
                         rollback_errors.append(str(exc))
                     if restored:
                         try:
-                            operations.persist_dns_mode(previous_mode)
+                            _restore_mode_if_changed(previous_mode)
                         except Exception as exc:
                             rollback_errors.append(f'mode state: {exc}')
         if rollback_errors:
