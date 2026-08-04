@@ -32,6 +32,7 @@ on:
       - tests/test_auto_install.py
       - tests/test_one_line_install.py
       - tests/test_hostpanel_build.py
+      - 'tests/test_custombuild*.py'
       - tests/test_custombuild_openlitespeed.py
       - tests/test_custombuild_ssl.py
       - tests/test_custombuild_review_fixes.py
@@ -76,6 +77,7 @@ on:
       - tests/test_auto_install.py
       - tests/test_one_line_install.py
       - tests/test_hostpanel_build.py
+      - 'tests/test_custombuild*.py'
       - tests/test_custombuild_openlitespeed.py
       - tests/test_custombuild_ssl.py
       - tests/test_custombuild_review_fixes.py
@@ -127,7 +129,14 @@ jobs:
             tools/patch_extras_doctor.py
           python3 -m compileall -q tools tests
       - name: Run every CustomBuild regression
-        run: python3 -m unittest discover -v -s tests -p 'test_custombuild*.py'
+        run: |
+          # Discovery covers these historical explicit contracts:
+          # tests.test_custombuild_openlitespeed
+          # tests.test_custombuild_ssl
+          # tests.test_custombuild_review_fixes
+          # tests.test_custombuild_deep_regressions
+          # tests.test_custombuild_platform_guards
+          python3 -m unittest discover -v -s tests -p 'test_custombuild*.py'
       - name: Run installer and fallback regressions
         run: |
           python3 -m unittest -v \
