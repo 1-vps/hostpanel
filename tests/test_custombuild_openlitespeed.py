@@ -17,9 +17,26 @@ _SPEC = importlib.util.spec_from_file_location(
 )
 if _SPEC is None or _SPEC.loader is None:
     raise ImportError(f'cannot load OpenLiteSpeed test implementation: {_IMPL_PATH}')
+
+_ISOLATED_MODULES = (
+    'store', 'modules', 'hostpanel_build_web',
+    '_hostpanel_build_web_impl',
+)
+_SAVED_MODULES = {name: sys.modules.get(name) for name in _ISOLATED_MODULES}
+_SAVED_SYS_PATH = list(sys.path)
+for _name in _ISOLATED_MODULES:
+    sys.modules.pop(_name, None)
 _IMPL = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = _IMPL
-_SPEC.loader.exec_module(_IMPL)
+try:
+    _SPEC.loader.exec_module(_IMPL)
+finally:
+    sys.path[:] = _SAVED_SYS_PATH
+    for _name, _module in _SAVED_MODULES.items():
+        if _module is None:
+            sys.modules.pop(_name, None)
+        else:
+            sys.modules[_name] = _module
 
 
 def _apache_mode_reads_runtime_implementation(self) -> None:
