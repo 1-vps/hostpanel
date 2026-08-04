@@ -2,13 +2,13 @@
 """Hardened loader for the CustomBuild runtime patch implementation."""
 from __future__ import annotations
 
-import errno
 import importlib.util
 import os
 import pathlib
 import secrets
 import stat
 import sys
+import types
 
 _IMPL_PATH = pathlib.Path(__file__).with_name('patch_custombuild_runtime_impl.py')
 _SPEC = importlib.util.spec_from_file_location(
@@ -54,8 +54,7 @@ def write_atomic(path: pathlib.Path, text: str) -> None:
     active_error: BaseException | None = None
     cleanup_error: BaseException | None = None
     try:
-        payload = text.encode('utf-8')
-        view = memoryview(payload)
+        view = memoryview(text.encode('utf-8'))
         while view:
             written = os.write(fd, view)
             if written <= 0:
@@ -65,6 +64,7 @@ def write_atomic(path: pathlib.Path, text: str) -> None:
         os.fchown(fd, metadata.st_uid, metadata.st_gid)
         os.fchmod(fd, mode)
         copy_xattrs(path, temporary)
+        os.fsync(fd)
         descriptor, fd = fd, -1
         os.close(descriptor)
         os.replace(temporary, path)
@@ -88,11 +88,49 @@ def write_atomic(path: pathlib.Path, text: str) -> None:
 
 
 for _name in dir(_IMPL):
-    if _name not in {'write_atomic'} and _name not in globals():
+    if _name not in {
+        'write_atomic', 'patch_webserver', 'patch_main', 'patch_doctor', 'main'
+    } and _name not in globals():
         globals()[_name] = getattr(_IMPL, _name)
-
 _IMPL.write_atomic = write_atomic
-main = _IMPL.main
+
+
+def _sync_patch_dependencies() -> None:
+    _IMPL.trusted_file = globals()['trusted_file']
+    _IMPL.write_atomic = write_atomic
+
+
+def patch_webserver(path: pathlib.Path) -> None:
+    _sync_patch_dependencies()
+    _IMPL.patch_webserver(path)
+
+
+def patch_main(path: pathlib.Path) -> None:
+    _sync_patch_dependencies()
+    _IMPL.patch_main(path)
+
+
+def patch_doctor(path: pathlib.Path) -> None:
+    _sync_patch_dependencies()
+    _IMPL.patch_doctor(path)
+
+
+def main() -> int:
+    _sync_patch_dependencies()
+    return _IMPL.main()
+
+
+class _ForwardingModule(types.ModuleType):
+    def __setattr__(self, name: str, value) -> None:
+        super().__setattr__(name, value)
+        implementation = super().__getattribute__('_IMPL')
+        if hasattr(implementation, name):
+            setattr(implementation, name, value)
+
+
+_module = sys.modules.get(__name__)
+if _module is not None:
+    _module.__class__ = _ForwardingModule
 
 if __name__ == '__main__':
     raise SystemExit(main())
