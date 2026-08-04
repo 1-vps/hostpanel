@@ -19,6 +19,7 @@ class InstalledWebTransactionLayoutTests(unittest.TestCase):
             'hostpanel_build_packages.py',
             'hostpanel_build_operations.py',
             'hostpanel_build_operations_adapter.py',
+            'hostpanel_build_optional_postcheck_adapter.py',
             'hostpanel_build_cli.py',
             'hostpanel_build_ssl.py',
             'hostpanel_build_extras.py',
@@ -49,12 +50,23 @@ if pathlib.Path(adapter.__file__).parent != root:
     raise SystemExit(f'outer adapter loaded outside installed tree: {adapter.__file__}')
 if not callable(getattr(adapter, 'guarded_execute_build', None)):
     raise SystemExit('installed outer adapter has no guard')
+postcheck = entry.optional_postcheck_adapter
+if pathlib.Path(postcheck.__file__).parent != root:
+    raise SystemExit(
+        f'optional postcheck adapter loaded outside installed tree: {postcheck.__file__}'
+    )
+if not callable(getattr(postcheck, 'guarded_execute_build', None)):
+    raise SystemExit('installed optional postcheck adapter has no guard')
 state = root / 'hostpanel_build_web_state.py'
 if not state.is_file():
     raise SystemExit('installed state helper is missing')
 source = pathlib.Path(entry.__file__).read_text(encoding='utf-8')
-if 'web_transaction_adapter.guarded_execute_build(' not in source:
-    raise SystemExit('installed entry does not invoke outer web guard')
+for marker in (
+    'web_transaction_adapter.guarded_execute_build(',
+    'optional_postcheck_adapter.guarded_execute_build(',
+):
+    if marker not in source:
+        raise SystemExit(f'installed entry is missing transaction layer: {marker}')
 '''
             environment = dict(os.environ)
             environment.pop('PYTHONPATH', None)
@@ -74,6 +86,7 @@ if 'web_transaction_adapter.guarded_execute_build(' not in source:
             encoding='utf-8'
         )
         for name in (
+            'hostpanel_build_optional_postcheck_adapter.py',
             'hostpanel_build_web_impl.py',
             'hostpanel_build_web_state.py',
             'hostpanel_build_web_transaction_adapter.py',
