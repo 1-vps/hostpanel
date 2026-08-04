@@ -13,6 +13,11 @@ from hostpanel_build_config import DEFAULT_CONFIG, read_config
 
 _BASE_EXECUTE_BUILD = cli.execute_build
 _BASE_PRINT_PLAN = cli.print_plan
+_BASE_STATE_ATTEMPT = state._attempt
+_CANDIDATE_STOP_LABELS = {
+    'candidate MongoDB stop',
+    'candidate Varnish stop',
+}
 
 
 def config_path(argv: Sequence[str]) -> pathlib.Path:
@@ -25,10 +30,33 @@ def config_path(argv: Sequence[str]) -> pathlib.Path:
     return DEFAULT_CONFIG
 
 
+def install_optional_rollback_guard() -> None:
+    original = state._attempt
+    if getattr(original, '_hostpanel_candidate_stop_guard', False) is True:
+        return
+
+    def guarded_attempt(errors, label, function, *args, **kwargs):
+        if any(
+            error.startswith(tuple(item + ':' for item in _CANDIDATE_STOP_LABELS))
+            for error in errors
+        ):
+            return False
+        if label in _CANDIDATE_STOP_LABELS and function is state._disable_now:
+            kwargs = dict(kwargs)
+            # A package failure before the unit is materialized is a safe no-op.
+            # Every other stop error still fails and blocks all later rollback.
+            kwargs['allow_absent'] = True
+        return original(errors, label, function, *args, **kwargs)
+
+    guarded_attempt._hostpanel_candidate_stop_guard = True  # type: ignore[attr-defined]
+    state._attempt = guarded_attempt
+
+
 def install_runtime_adapters(selected_config: pathlib.Path) -> None:
     powerdns_adapter.install()
     mongodb_adapter.install()
     state.install()
+    install_optional_rollback_guard()
     cli.apply_mongodb = state.apply_mongodb
     cli.apply_varnish = state.apply_varnish
 
