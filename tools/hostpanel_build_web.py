@@ -341,9 +341,6 @@ def prepare_openlitespeed(options: dict[str, str]) -> None:
             )
 
         run([str(binary), '-t'])
-        run(['systemctl', 'unmask', '--runtime', 'lsws.service'], check=False)
-        run(['systemctl', 'enable', '--now', 'lsws.service'])
-        run(['systemctl', 'is-active', '--quiet', 'lsws.service'])
     except Exception as original_error:
         rollback_errors: list[str] = []
         for path, original, changed in (
@@ -371,6 +368,84 @@ def prepare_openlitespeed(options: dict[str, str]) -> None:
         raise
 
 
+def _command_text(value: object) -> str:
+    if value is None:
+        return ''
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace').strip()
+    return str(value).strip()
+
+
+def _service_active(name: str) -> bool:
+    completed = run(['systemctl', 'is-active', name], check=False)
+    state = _command_text(completed.stdout).lower()
+    error = _command_text(completed.stderr)
+    if completed.returncode == 0 and state == 'active' and not error:
+        return True
+    if (
+        completed.returncode in {3, 4}
+        and state in {'inactive', 'failed', 'unknown', 'not-found'}
+        and not error
+    ):
+        return False
+    detail = error or state or str(completed.returncode)
+    raise BuildError(f'could not determine active state for {name}: {detail}')
+
+
+def _service_enabled(name: str) -> bool:
+    completed = run(['systemctl', 'is-enabled', name], check=False)
+    state = _command_text(completed.stdout).lower()
+    error = _command_text(completed.stderr)
+    if completed.returncode == 0 and state in {'enabled', 'enabled-runtime'} and not error:
+        return True
+    if (
+        completed.returncode in {0, 1, 3, 4}
+        and state in {
+            'disabled', 'static', 'indirect', 'generated', 'transient',
+            'masked', 'masked-runtime', 'not-found',
+        }
+        and not error
+    ):
+        return False
+    detail = error or state or str(completed.returncode)
+    raise BuildError(f'could not determine enabled state for {name}: {detail}')
+
+
+def _restore_service_state(name: str, was_active: bool, was_enabled: bool) -> list[str]:
+    errors: list[str] = []
+    commands = (
+        ['systemctl', 'enable' if was_enabled else 'disable', name],
+        ['systemctl', 'start' if was_active else 'stop', name],
+    )
+    for command in commands:
+        try:
+            run(command)
+        except BuildError as exc:
+            errors.append(str(exc))
+    return errors
+
+
+def activate_openlitespeed() -> None:
+    name = 'lsws.service'
+    run(['systemctl', 'unmask', '--runtime', name])
+    was_active = _service_active(name)
+    was_enabled = _service_enabled(name)
+    try:
+        run(['systemctl', 'enable', '--now', name])
+        if not _service_active(name):
+            raise BuildError('OpenLiteSpeed did not become active')
+    except Exception as original_error:
+        rollback_errors = _restore_service_state(
+            name, was_active, was_enabled
+        )
+        if rollback_errors:
+            raise BuildError(
+                'OpenLiteSpeed activation failed and service rollback also failed: '
+                + '; '.join(rollback_errors)
+            ) from original_error
+        raise
+
+
 def check_openlitespeed(options: dict[str, str]) -> None:
     binary = OLS_ROOT / 'bin/openlitespeed'
     if not binary.is_file() or not os.access(binary, os.X_OK):
@@ -391,7 +466,8 @@ def check_openlitespeed(options: dict[str, str]) -> None:
     if not re.search(r'(?m)^[ \t]*address[ \t]+127\.0\.0\.1:8088[ \t]*$', registry):
         raise BuildError('HostPanel OpenLiteSpeed listener is not loopback-only')
     run([str(binary), '-t'])
-    run(['systemctl', 'is-active', '--quiet', 'lsws.service'])
+    if not _service_active('lsws.service'):
+        raise BuildError('OpenLiteSpeed service is inactive')
 
 
 def rollback_domains(
@@ -441,6 +517,8 @@ def main(argv: list[str] | None = None) -> int:
         mismatches = [name for name in domains if webserver.mode_of(name) != target]
         if mismatches:
             raise BuildError('post-switch validation failed for: ' + ', '.join(mismatches[:10]))
+        if args.mode == 'openlitespeed':
+            activate_openlitespeed()
     except Exception as exc:
         failures = rollback_domains(changed, previous, admin)
         if failures:
