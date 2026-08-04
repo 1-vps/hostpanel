@@ -87,6 +87,26 @@ for _method_name in (
         _with_inactive_optional_service(_original),
     )
 
+
+def _without_operations_adapter_install(original):
+    def wrapped(self):
+        with mock.patch.object(_IMPL.ENTRY.operations_adapter, 'install'):
+            return original(self)
+    wrapped.__name__ = original.__name__
+    return wrapped
+
+
+for _method_name in (
+    'test_entry_wraps_complete_transaction_idempotently',
+    'test_plan_rejects_unsupported_mongodb_target',
+):
+    _original = getattr(_IMPL.DeepCustomBuildRegressionTests, _method_name)
+    setattr(
+        _IMPL.DeepCustomBuildRegressionTests,
+        _method_name,
+        _without_operations_adapter_install(_original),
+    )
+
 for _name in dir(_IMPL):
     _value = getattr(_IMPL, _name)
     if (
