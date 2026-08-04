@@ -86,6 +86,59 @@ class UpdaterAtomicEntryTests(unittest.TestCase):
                 [],
             )
 
+    def test_implementation_write_adapter_completes_short_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = pathlib.Path(directory)
+            entry = load_installed_entry(runtime)
+            destination = runtime / 'payload.bin'
+            descriptor = os.open(
+                destination,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                0o600,
+            )
+            real_write = os.write
+            calls = 0
+
+            def partial_write(fd: int, payload) -> int:
+                nonlocal calls
+                calls += 1
+                view = memoryview(payload)
+                return real_write(fd, view[:max(1, len(view) // 2)])
+
+            try:
+                with mock.patch.object(
+                    entry, '_RAW_OS_WRITE', side_effect=partial_write
+                ):
+                    written = entry._IMPL.os.write(
+                        descriptor, b'complete updater payload'
+                    )
+            finally:
+                os.close(descriptor)
+
+            self.assertEqual(written, len(b'complete updater payload'))
+            self.assertGreater(calls, 1)
+            self.assertEqual(
+                destination.read_bytes(), b'complete updater payload'
+            )
+
+    def test_implementation_os_proxy_does_not_replace_process_os_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = os.write
+            entry = load_installed_entry(pathlib.Path(directory))
+            self.assertIs(os.write, original)
+            self.assertIs(entry.os.write, original)
+            self.assertIsNot(entry._IMPL.os, os)
+            self.assertIs(entry._IMPL.os.write, entry._write_all)
+
+    def test_failed_implementation_write_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            entry = load_installed_entry(pathlib.Path(directory))
+            with mock.patch.object(entry, '_RAW_OS_WRITE', return_value=0):
+                with self.assertRaisesRegex(
+                    entry.UpdateError, 'could not complete updater file write'
+                ):
+                    entry._write_all(123, b'payload')
+
     def test_failed_write_keeps_existing_status_and_cleans_temp(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -165,11 +218,12 @@ class UpdaterAtomicEntryTests(unittest.TestCase):
         self.assertIn('os.fsync(directory_fd)', installer)
         self.assertIn('install -o root -g root -m 644', installer)
 
-    def test_entry_overrides_only_status_writer(self):
+    def test_entry_overrides_status_writer_and_implementation_write_boundary(self):
         source = (TOOLS / 'hostpanel-update-entry.py').read_text(
             encoding='utf-8'
         )
         self.assertIn("_IMPL.atomic_json = atomic_json", source)
+        self.assertIn("_IMPL.os = _UPDATER_OS", source)
         self.assertIn("return _IMPL.main(argv)", source)
         self.assertNotIn('os.getpid()', source)
         self.assertIn('secrets.token_hex(12)', source)
