@@ -30,28 +30,49 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
 
   const byId=id=>document.getElementById(id);
   const clamp=value=>Math.max(0,Math.min(100,Number.isFinite(value)?value:0));
-  const localizedLiveValues=new Set(Object.values(ALL_REDESIGN_TRANSLATIONS).map(messages=>messages.live));
-  const currentLanguage=()=>{
-    const picker=byId('languageSelect');
-    const candidate=String(picker?.value||document.documentElement.lang||'en').toLowerCase().split('-')[0];
+  const normalizeLanguage=value=>{
+    const candidate=String(value||'en').toLowerCase().split('-')[0];
     return Object.hasOwn(ALL_REDESIGN_TRANSLATIONS,candidate)?candidate:'en';
   };
+  const localizedLiveValues=new Set(Object.values(ALL_REDESIGN_TRANSLATIONS).map(messages=>messages.live));
+  let activeLanguage='en';
+  const currentLanguage=()=>activeLanguage;
   const copy=(key,vars={})=>{
     const language=currentLanguage();
     const message=ALL_REDESIGN_TRANSLATIONS[language][key]??REDESIGN_TRANSLATIONS.en[key]??key;
     return String(message).replace(/\{(\w+)\}/g,(_,name)=>Object.hasOwn(vars,name)?String(vars[name]):`{${name}}`);
   };
   const percentFromText=text=>{
-    const match=String(text||'').match(/(-?\d+(?:\.\d+)?)\s*%/);
-    return match?clamp(Number(match[1])):0;
+    const match=String(text||'').match(/(-?\d+(?:[.,]\d+)?)\s*%/);
+    return match?clamp(Number(match[1].replace(',','.'))):0;
+  };
+  const setText=(element,text)=>{
+    if(element&&element.textContent!==text)element.textContent=text;
+  };
+  const scheduleFrame=callback=>{
+    let pending=false;
+    return ()=>{
+      if(pending)return;
+      pending=true;
+      const run=()=>{
+        pending=false;
+        callback();
+      };
+      if(typeof window.requestAnimationFrame==='function')window.requestAnimationFrame(run);
+      else setTimeout(run,0);
+    };
   };
 
   function setMeter(valueId,meterId){
     const value=byId(valueId);
     const meter=byId(meterId);
     if(!value||!meter)return;
-    const update=()=>meter.style.setProperty('--hp-value',`${percentFromText(value.textContent)}%`);
-    new MutationObserver(update).observe(value,{childList:true,characterData:true,subtree:true});
+    const update=()=>{
+      const next=`${percentFromText(value.textContent)}%`;
+      if(meter.style.getPropertyValue('--hp-value')!==next)meter.style.setProperty('--hp-value',next);
+    };
+    const scheduleUpdate=scheduleFrame(update);
+    new MutationObserver(scheduleUpdate).observe(value,{childList:true,characterData:true,subtree:true});
     update();
   }
 
@@ -66,19 +87,25 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     const running=rows.filter(row=>row.querySelector('.tag.ok')).length;
     const total=rows.length;
     const healthy=total?Math.round((running/total)*100):0;
-    count.textContent=total?`${running} / ${total}`:'—';
-    percent.textContent=total?`${healthy}%`:'—';
-    ring.style.setProperty('--hp-health-angle',`${healthy*3.6}deg`);
-    summary.textContent=!total?copy('waitingForServices'):running===total?copy('runningCount',{running}):copy('runningOf',{running,total});
-    summary.dataset.state=total&&running===total?'ok':'warn';
+    setText(count,total?`${running} / ${total}`:'—');
+    setText(percent,total?`${healthy}%`:'—');
+    const angle=`${healthy*3.6}deg`;
+    if(ring.style.getPropertyValue('--hp-health-angle')!==angle)ring.style.setProperty('--hp-health-angle',angle);
+    setText(summary,!total?copy('waitingForServices'):running===total?copy('runningCount',{running}):copy('runningOf',{running,total}));
+    const state=total&&running===total?'ok':'warn';
+    if(summary.dataset.state!==state)summary.dataset.state=state;
   }
 
-  function mirrorText(sourceId,targetId){
+  function mirrorText(sourceId,targetIds){
     const source=byId(sourceId);
-    const target=byId(targetId);
-    if(!source||!target)return;
-    const update=()=>{target.textContent=source.textContent||'—';};
-    new MutationObserver(update).observe(source,{childList:true,characterData:true,subtree:true});
+    const targets=targetIds.map(byId).filter(Boolean);
+    if(!source||!targets.length)return;
+    const update=()=>{
+      const next=source.textContent||'—';
+      targets.forEach(target=>setText(target,next));
+    };
+    const scheduleUpdate=scheduleFrame(update);
+    new MutationObserver(scheduleUpdate).observe(source,{childList:true,characterData:true,subtree:true});
     update();
   }
 
@@ -87,14 +114,16 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     const state=byId('hpMailState');
     if(!count||!state)return;
     const n=Number.parseInt(count.textContent,10);
-    state.textContent=!Number.isFinite(n)?copy('waitingForQueueStatus'):n>0?copy('queueRequiresAttention'):copy('deliveryQueueHealthy');
-    state.dataset.state=!Number.isFinite(n)?'pending':n>0?'warn':'ok';
+    setText(state,!Number.isFinite(n)?copy('waitingForQueueStatus'):n>0?copy('queueRequiresAttention'):copy('deliveryQueueHealthy'));
+    const nextState=!Number.isFinite(n)?'pending':n>0?'warn':'ok';
+    if(state.dataset.state!==nextState)state.dataset.state=nextState;
   }
 
   function bindMailState(){
     const count=byId('mq');
     if(!count)return;
-    new MutationObserver(renderMailState).observe(count,{childList:true,characterData:true,subtree:true});
+    const scheduleUpdate=scheduleFrame(renderMailState);
+    new MutationObserver(scheduleUpdate).observe(count,{childList:true,characterData:true,subtree:true});
     renderMailState();
   }
 
@@ -120,15 +149,12 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
       }
       return;
     }
-    if(crumb.textContent.trim()!==label)crumb.textContent=label;
+    setText(crumb,label);
     const title=`HostPanel — ${label}`;
     if(document.title!==title)document.title=title;
   }
 
-  function scheduleRouteLabel(){
-    queueMicrotask(syncRouteLabel);
-    setTimeout(syncRouteLabel,0);
-  }
+  const scheduleRouteLabel=scheduleFrame(syncRouteLabel);
 
   function pageLinkFor(control){
     const page=control.getAttribute('data-hp-page');
@@ -153,6 +179,8 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     });
   }
 
+  const schedulePageLinkVisibility=scheduleFrame(syncPageLinkVisibility);
+
   function bindPageLinks(){
     document.querySelectorAll('[data-hp-page]').forEach(control=>{
       const page=control.getAttribute('data-hp-page');
@@ -164,17 +192,17 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
         }
         event.preventDefault();
         navLink.click();
-        if(location.hash!==`#/panel/${page}`)location.hash = `#/panel/${page}`;
+        if(location.hash!==`#/panel/${page}`)location.hash=`#/panel/${page}`;
         scheduleRouteLabel();
       });
     });
     const nav=byId('nav');
     if(nav){
-      new MutationObserver(syncPageLinkVisibility).observe(nav,{
+      new MutationObserver(schedulePageLinkVisibility).observe(nav,{
         subtree:true,
         childList:true,
         attributes:true,
-        attributeFilter:['hidden','aria-hidden','class','style']
+        attributeFilter:['hidden','aria-hidden']
       });
     }
     syncPageLinkVisibility();
@@ -189,15 +217,17 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
   function applyLocalizedCopy(){
     const refresh=byId('dashboardRetry');
     if(refresh){
-      refresh.setAttribute('aria-label',copy('refreshDashboardData'));
-      refresh.setAttribute('title',copy('refreshDashboardData'));
+      const label=copy('refreshDashboardData');
+      if(refresh.getAttribute('aria-label')!==label)refresh.setAttribute('aria-label',label);
+      if(refresh.getAttribute('title')!==label)refresh.setAttribute('title',label);
     }
     const open=document.querySelector('.hp-health-row [data-hp-page="security"]');
-    if(open)open.textContent=copy('open');
+    setText(open,copy('open'));
     const overview=document.querySelector('.hp-dashboard-rail');
-    if(overview)overview.setAttribute('aria-label',copy('dashboardOverview'));
+    const overviewLabel=copy('dashboardOverview');
+    if(overview&&overview.getAttribute('aria-label')!==overviewLabel)overview.setAttribute('aria-label',overviewLabel);
     const live=byId('dashboardUptimeRail');
-    if(live&&(!live.textContent||localizedLiveValues.has(live.textContent.trim())))live.textContent=copy('live');
+    if(live&&(!live.textContent||localizedLiveValues.has(live.textContent.trim())))setText(live,copy('live'));
     updateServiceHealth();
     renderMailState();
   }
@@ -207,26 +237,28 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     if(search){
       search.setAttribute('enterkeyhint','search');
       search.setAttribute('autocomplete','off');
+      search.setAttribute('spellcheck','false');
     }
     applyLocalizedCopy();
   }
 
   function bindLanguage(){
     const picker=byId('languageSelect');
-    let activeLanguage=currentLanguage();
+    const hasOption=language=>Boolean(picker?.querySelector(`option[value="${CSS.escape(language)}"]`));
+    activeLanguage=normalizeLanguage(picker?.value||document.documentElement.lang||'en');
+    if(picker&&hasOption(activeLanguage)&&picker.value!==activeLanguage)picker.value=activeLanguage;
     if(picker){
-      picker.value=activeLanguage;
       picker.addEventListener('change',()=>{
-        activeLanguage=currentLanguage();
+        activeLanguage=normalizeLanguage(picker.value);
         queueMicrotask(applyLocalizedCopy);
       });
     }
     new MutationObserver(()=>{
-      const nextLanguage=currentLanguage();
+      const nextLanguage=normalizeLanguage(document.documentElement.lang);
       if(nextLanguage===activeLanguage)return;
       activeLanguage=nextLanguage;
       queueMicrotask(()=>{
-        if(picker&&picker.value!==activeLanguage)picker.value=activeLanguage;
+        if(picker&&hasOption(activeLanguage)&&picker.value!==activeLanguage)picker.value=activeLanguage;
         applyLocalizedCopy();
         syncRouteLabel();
       });
@@ -234,20 +266,22 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
   }
 
   function boot(){
+    if(document.body.dataset.hpRedesignBound==='true')return;
+    document.body.dataset.hpRedesignBound='true';
     document.body.classList.add('hp-redesign');
-    document.body.dataset.uiVersion = '3.0.0';
+    document.body.dataset.uiVersion='3.0.0';
     setMeter('cpu','cpuMeter');
     setMeter('ram','ramMeter');
     setMeter('disk','diskMeter');
-    mirrorText('uptime','dashboardUptime');
-    mirrorText('uptime','dashboardUptimeRail');
+    mirrorText('uptime',['dashboardUptime','dashboardUptimeRail']);
     bindPageLinks();
     bindLanguage();
     improveToolbar();
 
     const services=byId('svcBody');
     if(services){
-      new MutationObserver(updateServiceHealth).observe(services,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
+      const scheduleHealth=scheduleFrame(updateServiceHealth);
+      new MutationObserver(scheduleHealth).observe(services,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
       updateServiceHealth();
     }
     bindMailState();
