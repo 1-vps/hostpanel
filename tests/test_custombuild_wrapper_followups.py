@@ -127,7 +127,7 @@ class WrapperFollowupTests(unittest.TestCase):
             self.assertEqual(
                 applied[0][1], {'security.selinux': b'original'}
             )
-            self.assertEqual(fsync.call_count, 2)
+            self.assertEqual(fsync.call_count, 3)
 
     def test_new_extras_file_keeps_filesystem_security_context(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -157,7 +157,7 @@ class WrapperFollowupTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), b'new')
             capture.assert_not_called()
             apply_xattrs.assert_not_called()
-            self.assertEqual(fsync.call_count, 2)
+            self.assertEqual(fsync.call_count, 3)
 
     def test_extras_atomic_writer_rejects_writable_existing_file(self):
         with tempfile.TemporaryDirectory() as directory:
