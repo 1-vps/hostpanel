@@ -16,6 +16,30 @@ import hostpanel_build_powerdns_adapter as ADAPTER
 
 
 class PowerDnsPermissionsAdapterTests(unittest.TestCase):
+    MUTATED_OPERATIONS = (
+        'native_powerdns_config',
+        'powerdns_include_dir',
+        'launch_values',
+        'active_setting_keys',
+        'service_active',
+        'mask_service',
+        'reconcile_dns_services',
+        'configure_powerdns',
+    )
+
+    def setUp(self):
+        originals = {
+            name: getattr(ADAPTER.operations, name)
+            for name in self.MUTATED_OPERATIONS
+        }
+
+        def restore() -> None:
+            for name, value in originals.items():
+                setattr(ADAPTER.operations, name, value)
+            ADAPTER._MASK_RESULTS.clear()
+
+        self.addCleanup(restore)
+
     def test_native_config_requires_exactly_one_trusted_candidate(self):
         first = pathlib.Path('/etc/powerdns/pdns.conf')
         second = pathlib.Path('/etc/pdns/pdns.conf')
@@ -110,6 +134,7 @@ class PowerDnsPermissionsAdapterTests(unittest.TestCase):
         self.assertIs(ADAPTER.operations.reconcile_dns_services, ADAPTER.reconcile_dns_services)
         self.assertIs(ADAPTER.operations.native_powerdns_config, ADAPTER.native_powerdns_config)
         self.assertIs(ADAPTER.operations.mask_service, ADAPTER.mask_service)
+        self.assertIs(ADAPTER.operations.service_active, ADAPTER.service_active)
 
 
 if __name__ == '__main__':
