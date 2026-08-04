@@ -16,6 +16,7 @@ on:
       - tools/hostpanel_build_packages.py
       - tools/hostpanel_build_operations.py
       - tools/hostpanel_build_operations_adapter.py
+      - tools/hostpanel_build_optional_postcheck_adapter.py
       - tools/hostpanel_build_cli.py
       - tools/hostpanel_build_ssl.py
       - tools/hostpanel_build_extras.py
@@ -66,6 +67,7 @@ on:
       - tools/hostpanel_build_packages.py
       - tools/hostpanel_build_operations.py
       - tools/hostpanel_build_operations_adapter.py
+      - tools/hostpanel_build_optional_postcheck_adapter.py
       - tools/hostpanel_build_cli.py
       - tools/hostpanel_build_ssl.py
       - tools/hostpanel_build_extras.py
@@ -126,6 +128,7 @@ jobs:
             tools/hostpanel_build_packages.py \
             tools/hostpanel_build_operations.py \
             tools/hostpanel_build_operations_adapter.py \
+            tools/hostpanel_build_optional_postcheck_adapter.py \
             tools/hostpanel_build_cli.py \
             tools/hostpanel_build_ssl.py \
             tools/hostpanel_build_extras.py \
