@@ -11,6 +11,7 @@ on:
       - CUSTOMBUILD-EXTRAS.md
       - examples/cloud-init-hostpanel.yaml
       - tools/harden_install.py
+      - tools/harden_install_driver.py
       - tools/hostpanel-build.py
       - tools/hostpanel_build_config.py
       - tools/hostpanel_build_packages.py
@@ -62,6 +63,7 @@ on:
       - CUSTOMBUILD-EXTRAS.md
       - examples/cloud-init-hostpanel.yaml
       - tools/harden_install.py
+      - tools/harden_install_driver.py
       - tools/hostpanel-build.py
       - tools/hostpanel_build_config.py
       - tools/hostpanel_build_packages.py
