@@ -5,9 +5,11 @@ from __future__ import annotations
 import importlib.util
 import os
 import pathlib
+import secrets
 import stat
 import subprocess
 import sys
+import tempfile
 
 DRIVER_NAME = "harden_install_driver.py"
 EXPECTED_DRIVER_BLOB = "19d29feb55969d6925c87ea5b8419a624d4cdb52"
@@ -106,6 +108,7 @@ DRIVER = load_driver(trusted_driver())
 DRIVER.EXPECTED_UPDATE_AGENT_BLOBS["tools/install-update-agent.sh"] = (
     EXPECTED_UPDATE_INSTALLER_BLOB
 )
+ORIGINAL_APPLY_POST_INSTALL_HEALTH_FIX = DRIVER.apply_post_install_health_fix
 
 for _name in dir(DRIVER):
     if not _name.startswith("__") and _name not in globals():
@@ -114,11 +117,150 @@ for _name in dir(DRIVER):
 EXPECTED_UPDATE_AGENT_BLOBS = DRIVER.EXPECTED_UPDATE_AGENT_BLOBS
 
 
+def _capture_xattrs(path: pathlib.Path) -> dict[str, bytes]:
+    required = ("listxattr", "getxattr", "setxattr", "removexattr")
+    if not all(hasattr(os, name) for name in required):
+        raise SystemExit("extended-attribute support is unavailable")
+    try:
+        return {
+            name: os.getxattr(path, name, follow_symlinks=False)
+            for name in os.listxattr(path, follow_symlinks=False)
+        }
+    except OSError as exc:
+        raise SystemExit(
+            f"could not capture generated-installer metadata: {exc}"
+        ) from exc
+
+
+def _apply_xattrs(path: pathlib.Path, values: dict[str, bytes]) -> None:
+    try:
+        existing = set(os.listxattr(path, follow_symlinks=False))
+        desired = set(values)
+        for name in existing - desired:
+            os.removexattr(path, name, follow_symlinks=False)
+        for name, value in values.items():
+            os.setxattr(path, name, value, follow_symlinks=False)
+    except OSError as exc:
+        raise SystemExit(
+            f"could not restore generated-installer metadata: {exc}"
+        ) from exc
+
+
+def _open_temporary(path: pathlib.Path, mode: int) -> tuple[int, pathlib.Path]:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    for _ in range(32):
+        temporary = path.with_name(
+            f".{path.name}.hostpanel-hardener.{secrets.token_hex(12)}"
+        )
+        try:
+            return os.open(temporary, flags, mode), temporary
+        except FileExistsError:
+            continue
+    raise SystemExit(f"could not allocate installer temporary for {path}")
+
+
+def _fsync_parent(path: pathlib.Path) -> None:
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    directory_fd = os.open(path.parent, flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _write_atomic(
+    path: pathlib.Path,
+    payload: bytes,
+    metadata: os.stat_result,
+    xattrs: dict[str, bytes],
+) -> None:
+    mode = stat.S_IMODE(metadata.st_mode)
+    fd, temporary = _open_temporary(path, mode)
+    active_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
+    try:
+        view = memoryview(payload)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise SystemExit(f"could not write generated installer: {temporary}")
+            view = view[written:]
+        os.fsync(fd)
+        os.fchown(fd, metadata.st_uid, metadata.st_gid)
+        os.fchmod(fd, mode)
+        _apply_xattrs(temporary, xattrs)
+        os.fsync(fd)
+        descriptor, fd = fd, -1
+        os.close(descriptor)
+        os.replace(temporary, path)
+        _fsync_parent(path)
+    except BaseException as exc:
+        active_error = exc
+        raise
+    finally:
+        if fd >= 0:
+            descriptor, fd = fd, -1
+            try:
+                os.close(descriptor)
+            except BaseException as exc:
+                cleanup_error = exc
+        try:
+            temporary.unlink(missing_ok=True)
+        except BaseException as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if active_error is None and cleanup_error is not None:
+            raise cleanup_error
+
+
+def apply_post_install_health_fix(path: pathlib.Path) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise SystemExit(f"missing generated installer target: {path}") from exc
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise SystemExit(f"unsafe generated installer target: {path}")
+    xattrs = _capture_xattrs(path)
+    original = path.read_bytes()
+
+    stage_root = pathlib.Path(
+        tempfile.mkdtemp(prefix=".hostpanel-hardener-stage.", dir=path.parent)
+    )
+    stage = stage_root / "generated-installer"
+    try:
+        stage.write_bytes(original)
+        os.chmod(stage, stat.S_IMODE(metadata.st_mode))
+        ORIGINAL_APPLY_POST_INSTALL_HEALTH_FIX(stage)
+        transformed = stage.read_bytes()
+        _write_atomic(path, transformed, metadata, xattrs)
+    finally:
+        for candidate in stage_root.iterdir():
+            candidate.unlink(missing_ok=True)
+        stage_root.rmdir()
+
+
 def main() -> None:
     DRIVER.EXPECTED_UPDATE_AGENT_BLOBS["tools/install-update-agent.sh"] = (
         EXPECTED_UPDATE_INSTALLER_BLOB
     )
-    DRIVER.main()
+    previous = DRIVER.apply_post_install_health_fix
+    DRIVER.apply_post_install_health_fix = apply_post_install_health_fix
+    try:
+        DRIVER.main()
+    finally:
+        DRIVER.apply_post_install_health_fix = previous
 
 
 if __name__ == "__main__":
