@@ -119,19 +119,34 @@ class PowerDnsPermissionsAdapterTests(unittest.TestCase):
     def test_install_replaces_all_security_sensitive_operations(self):
         with mock.patch.object(ADAPTER.operations, 'configure_powerdns'):
             ADAPTER.install()
-        self.assertIs(ADAPTER.operations.reconcile_dns_services, ADAPTER.reconcile_dns_services)
-        self.assertIs(ADAPTER.operations.native_powerdns_config, ADAPTER.native_powerdns_config)
-        self.assertIs(ADAPTER.operations.mask_service, ADAPTER.mask_service)
-        self.assertIs(ADAPTER.operations.service_active, ADAPTER.service_active)
-        self.assertIs(ADAPTER.operations.write_atomic_root, ADAPTER.write_atomic_root)
-        self.assertIs(
-            ADAPTER.operations.select_powerdns_backend_config,
-            ADAPTER.select_powerdns_backend_config,
-        )
-        self.assertIs(
-            ADAPTER.operations.configure_powerdns,
-            ADAPTER._configure_powerdns_readable,
-        )
+            self.assertIs(
+                ADAPTER.operations.reconcile_dns_services,
+                ADAPTER.reconcile_dns_services,
+            )
+            self.assertIs(
+                ADAPTER.operations.native_powerdns_config,
+                ADAPTER.native_powerdns_config,
+            )
+            self.assertIs(
+                ADAPTER.operations.mask_service,
+                ADAPTER.mask_service,
+            )
+            self.assertIs(
+                ADAPTER.operations.service_active,
+                ADAPTER.service_active,
+            )
+            self.assertIs(
+                ADAPTER.operations.write_atomic_root,
+                ADAPTER.write_atomic_root,
+            )
+            self.assertIs(
+                ADAPTER.operations.select_powerdns_backend_config,
+                ADAPTER.select_powerdns_backend_config,
+            )
+            self.assertIs(
+                ADAPTER.operations.configure_powerdns,
+                ADAPTER._configure_powerdns_readable,
+            )
 
 
 if __name__ == '__main__':
