@@ -147,6 +147,52 @@ def _patched_root_text(text: str) -> str:
     )
 
 
+def _content_matches(path: pathlib.Path, expected: str) -> bool:
+    try:
+        return path.read_text(encoding='utf-8') == expected
+    except (OSError, UnicodeError):
+        return False
+
+
+def _rollback_runtime_files(
+    core_path: pathlib.Path,
+    core_original: str,
+    core_metadata: os.stat_result,
+    root_path: pathlib.Path,
+    root_original: str,
+    root_metadata: os.stat_result,
+    original_error: BaseException,
+) -> None:
+    root_needs_restore = not _content_matches(root_path, root_original)
+    core_needs_restore = not _content_matches(core_path, core_original)
+    errors: list[str] = []
+    root_restored = True
+
+    if root_needs_restore:
+        try:
+            write_atomic(root_path, root_original, root_metadata)
+        except BaseException as exc:
+            root_restored = False
+            errors.append(f'root-helper rollback failed: {exc}')
+
+    if core_needs_restore:
+        if root_needs_restore and not root_restored:
+            errors.append(
+                'core rollback skipped because root-helper rollback failed'
+            )
+        else:
+            try:
+                write_atomic(core_path, core_original, core_metadata)
+            except BaseException as exc:
+                errors.append(f'core rollback failed: {exc}')
+
+    if errors:
+        raise SystemExit(
+            'PowerDNS runtime patch failed and rollback also failed: '
+            + '; '.join(errors)
+        ) from original_error
+
+
 def main() -> int:
     if os.geteuid() != 0:
         raise SystemExit('patch_powerdns_runtime.py must run as root')
@@ -161,17 +207,19 @@ def main() -> int:
     core_updated = _patched_core_text(core_original)
     root_updated = _patched_root_text(root_original)
 
-    write_atomic(core_path, core_updated, core_metadata)
     try:
+        write_atomic(core_path, core_updated, core_metadata)
         write_atomic(root_path, root_updated, root_metadata)
     except BaseException as original_error:
-        try:
-            write_atomic(core_path, core_original, core_metadata)
-        except BaseException as rollback_error:
-            raise SystemExit(
-                'PowerDNS runtime patch failed and core rollback also failed: '
-                f'{rollback_error}'
-            ) from original_error
+        _rollback_runtime_files(
+            core_path,
+            core_original,
+            core_metadata,
+            root_path,
+            root_original,
+            root_metadata,
+            original_error,
+        )
         raise
     return 0
 
