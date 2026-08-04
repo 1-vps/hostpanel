@@ -50,8 +50,9 @@ class MongoDbYamlGuardTests(unittest.TestCase):
             '  authorization: enabled\n'
         )
         hardened = extras.harden_mongod_config(text)
-        self.assertEqual(hardened.count('\nnet:\n'), 1)
-        self.assertEqual(hardened.count('\nsecurity:\n'), 1)
+        lines = hardened.splitlines()
+        self.assertEqual(lines.count('net:'), 1)
+        self.assertEqual(lines.count('security:'), 1)
         self.assertIn('  bindIp: 127.0.0.1', hardened)
         self.assertIn('  authorization: enabled', hardened)
 
