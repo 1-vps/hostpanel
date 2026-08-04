@@ -19,11 +19,15 @@ import hostpanel_build_extras_state as STATE
 class CustomBuildExtrasStateTests(unittest.TestCase):
     def test_mongodb_off_requires_an_inactive_service(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
-        inactive = subprocess.CompletedProcess(['systemctl'], 3, '', '')
+        inactive = subprocess.CompletedProcess(
+            ['systemctl'], 3, 'inactive\n', ''
+        )
         with mock.patch.object(STATE, '_runtime_mode', return_value='off'), \
              mock.patch.object(STATE, 'run_command', return_value=inactive):
             STATE.validate_mongodb(options, pathlib.Path('/tmp/log'))
-        active = subprocess.CompletedProcess(['systemctl'], 0, '', '')
+        active = subprocess.CompletedProcess(
+            ['systemctl'], 0, 'active\n', ''
+        )
         with mock.patch.object(STATE, '_runtime_mode', return_value='off'), \
              mock.patch.object(STATE, 'run_command', return_value=active):
             with self.assertRaisesRegex(CONFIG.BuildError, 'active'):
