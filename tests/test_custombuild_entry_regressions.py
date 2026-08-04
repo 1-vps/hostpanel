@@ -194,6 +194,76 @@ class DnsRuntimeValidationTests(unittest.TestCase):
                 )
 
 
+class DoctorAppliedRuntimeValidationTests(unittest.TestCase):
+    def test_doctor_checks_exact_applied_service_states(self) -> None:
+        parsed = SimpleNamespace(roles_file='/roles', os_release='/os-release')
+        platform = SimpleNamespace(family='debian')
+        dns_active = {
+            'pdns.service': True,
+            'bind9.service': False,
+            'hostpanel-pdns-zones.path': True,
+        }
+        optional_active = {
+            'mongod.service': True,
+            'varnish.service': False,
+        }
+
+        def runtime_mode(path, default):
+            if path == state.MONGODB_MODE_FILE:
+                return state.MONGODB_VERSION
+            if path == state.VARNISH_MODE_FILE:
+                return 'off'
+            raise AssertionError(path)
+
+        with mock.patch.object(
+            entry, 'read_roles', return_value={'dns', 'database', 'web'}
+        ), mock.patch.object(
+            entry.cli, 'detect_platform', return_value=platform
+        ), mock.patch.object(
+            entry.powerdns_adapter, 'applied_dns_mode', return_value='powerdns'
+        ), mock.patch.object(
+            entry.powerdns_adapter.operations, 'dns_layout',
+            return_value=(
+                pathlib.Path('/etc/bind/named.conf.local'),
+                pathlib.Path('/etc/bind/zones'),
+                'bind', 'bind9.service',
+            ),
+        ), mock.patch.object(
+            entry.powerdns_adapter, 'service_active',
+            side_effect=dns_active.__getitem__,
+        ), mock.patch.object(
+            entry.powerdns_adapter, 'service_enabled',
+            side_effect=dns_active.__getitem__,
+        ), mock.patch.object(
+            state, '_runtime_mode', side_effect=runtime_mode
+        ), mock.patch.object(
+            state, '_service_active', side_effect=optional_active.__getitem__
+        ), mock.patch.object(
+            state, '_service_enabled', side_effect=optional_active.__getitem__
+        ):
+            entry.validate_applied_runtime(parsed)
+
+    def test_doctor_rejects_disabled_mode_with_boot_enabled_service(self) -> None:
+        parsed = SimpleNamespace(roles_file='/roles', os_release='/os-release')
+        with mock.patch.object(
+            entry, 'read_roles', return_value={'database'}
+        ), mock.patch.object(
+            entry.cli, 'detect_platform',
+            return_value=SimpleNamespace(family='debian'),
+        ), mock.patch.object(
+            state, '_runtime_mode', return_value='off'
+        ), mock.patch.object(
+            state, '_service_active', return_value=False
+        ), mock.patch.object(
+            state, '_service_enabled', return_value=True
+        ):
+            with self.assertRaisesRegex(
+                BuildError,
+                'mongod.service enabled state is True; expected False',
+            ):
+                entry.validate_applied_runtime(parsed)
+
+
 class CliRegressionTests(unittest.TestCase):
     def test_set_can_repair_existing_incompatible_configuration(self) -> None:
         current = {'webserver': 'nginx', 'varnish': 'on'}
