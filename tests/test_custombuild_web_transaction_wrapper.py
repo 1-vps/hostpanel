@@ -80,6 +80,63 @@ class OpenLiteSpeedTransactionWrapperTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn('systemctl unavailable', errors[0])
 
+    def test_activation_restores_runtime_mask_after_failure(self) -> None:
+        calls: list[list[str]] = []
+        enablement_queries = iter(('masked-runtime', 'enabled'))
+
+        def run(command, **_kwargs):
+            calls.append(command)
+            if command[:2] == ['systemctl', 'is-enabled']:
+                state = next(enablement_queries)
+                return subprocess.CompletedProcess(
+                    command,
+                    1 if state == 'masked-runtime' else 0,
+                    state + '\n',
+                    '',
+                )
+            if command[:2] == ['systemctl', 'is-active']:
+                return subprocess.CompletedProcess(
+                    command, 3, 'inactive\n', ''
+                )
+            if command[:3] == ['systemctl', 'enable', '--now']:
+                raise OSError('activation failed')
+            return subprocess.CompletedProcess(command, 0, '', '')
+
+        with mock.patch.object(self.web, 'run', side_effect=run):
+            with self.assertRaisesRegex(OSError, 'activation failed'):
+                self.web.activate_openlitespeed()
+
+        self.assertEqual(
+            calls,
+            [
+                ['systemctl', 'is-enabled', 'lsws.service'],
+                ['systemctl', 'unmask', '--runtime', 'lsws.service'],
+                ['systemctl', 'is-active', 'lsws.service'],
+                ['systemctl', 'is-enabled', 'lsws.service'],
+                ['systemctl', 'enable', '--now', 'lsws.service'],
+                ['systemctl', 'enable', 'lsws.service'],
+                ['systemctl', 'stop', 'lsws.service'],
+                ['systemctl', 'mask', '--runtime', 'lsws.service'],
+            ],
+        )
+
+    def test_persistent_mask_is_rejected_without_mutation(self) -> None:
+        calls: list[list[str]] = []
+
+        def run(command, **_kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 1, 'masked\n', '')
+
+        with mock.patch.object(self.web, 'run', side_effect=run):
+            with self.assertRaisesRegex(
+                self.web.BuildError, 'persistently masked'
+            ):
+                self.web.activate_openlitespeed()
+
+        self.assertEqual(
+            calls, [['systemctl', 'is-enabled', 'lsws.service']]
+        )
+
     def test_late_domain_failure_restores_preparation_snapshot(self) -> None:
         snapshots = [(pathlib.Path('/main'), ('file', 'old'))]
         server = types.SimpleNamespace(
