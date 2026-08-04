@@ -158,6 +158,18 @@ class WrapperFollowupTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), b'original')
             self.assertEqual(restored, [original_xattrs])
 
+    def test_legacy_state_snapshot_does_not_clear_xattrs(self):
+        target = pathlib.Path('/tmp/legacy-state-config')
+        legacy = (b'legacy', 0o640, 0, 0)
+        with mock.patch.object(
+            STATE._IMPL.base, 'write_atomic_bytes'
+        ) as write, mock.patch.object(
+            STATE._IMPL.base, '_apply_xattrs'
+        ) as apply_xattrs:
+            STATE._restore(target, legacy)
+        write.assert_called_once_with(target, b'legacy', 0o640, 0, 0)
+        apply_xattrs.assert_not_called()
+
     def test_workflow_tracks_preserved_sources(self):
         workflow = (
             ROOT / '.github/workflows/automatic-installer.yml'
