@@ -88,6 +88,77 @@ for _method_name in (
     )
 
 
+def _entry_wraps_complete_transaction_idempotently(self) -> None:
+    entry = _IMPL.ENTRY
+    cli = entry.cli
+    saved = {
+        'execute_build': cli.execute_build,
+        'apply_mongodb': cli.apply_mongodb,
+        'apply_varnish': cli.apply_varnish,
+        'validate_mongodb': cli.validate_mongodb,
+        'validate_varnish': cli.validate_varnish,
+        'print_plan': cli.print_plan,
+    }
+    passthrough = lambda function, *args, **kwargs: function(*args, **kwargs)
+    try:
+        with mock.patch.object(entry.operations_adapter, 'install'), \
+             mock.patch.object(entry.powerdns_adapter, 'install'), \
+             mock.patch.object(entry.mongodb_adapter, 'install'), \
+             mock.patch.object(entry.state, 'install'), \
+             mock.patch.object(entry.state, 'ensure_safe_web_switch'), \
+             mock.patch.object(
+                 entry.web_transaction_adapter,
+                 'guarded_execute_build',
+                 side_effect=passthrough,
+             ) as web_guard, mock.patch.object(
+                 entry.powerdns_adapter,
+                 'guarded_apply_build',
+                 side_effect=passthrough,
+             ) as powerdns_guard, mock.patch.object(
+                 entry.optional_postcheck_adapter,
+                 'guarded_execute_build',
+                 return_value='ok',
+             ) as optional_guard:
+            entry.install_runtime_adapters(entry.DEFAULT_CONFIG)
+            first_wrapper = cli.execute_build
+            entry.install_runtime_adapters(entry.DEFAULT_CONFIG)
+            second_wrapper = cli.execute_build
+            self.assertIsNot(first_wrapper, second_wrapper)
+
+            result = second_wrapper(
+                'web',
+                dict(_IMPL.config.DEFAULT_OPTIONS),
+                _IMPL.config.Platform('debian', 'ubuntu', '24.04'),
+                pathlib.Path('/tmp/log'),
+                pathlib.Path('/tmp/backups'),
+                pathlib.Path('/python'),
+                pathlib.Path('/doctor'),
+                {'web'},
+                pathlib.Path('/web-helper'),
+                pathlib.Path('/mode'),
+            )
+
+        self.assertEqual(result, 'ok')
+        optional_guard.assert_called_once()
+        self.assertIs(optional_guard.call_args.args[0], entry._BASE_EXECUTE_BUILD)
+        self.assertEqual(
+            powerdns_guard.call_args.args[0].__name__,
+            'optional_guarded_execute',
+        )
+        self.assertEqual(
+            web_guard.call_args.args[0].__name__,
+            'powerdns_guarded_execute',
+        )
+    finally:
+        for name, value in saved.items():
+            setattr(cli, name, value)
+
+
+_IMPL.DeepCustomBuildRegressionTests.test_entry_wraps_complete_transaction_idempotently = (
+    _entry_wraps_complete_transaction_idempotently
+)
+
+
 def _without_operations_adapter_install(original):
     def wrapped(self):
         passthrough = lambda function, *args, **kwargs: function(*args, **kwargs)
@@ -104,7 +175,6 @@ def _without_operations_adapter_install(original):
 
 
 for _method_name in (
-    'test_entry_wraps_complete_transaction_idempotently',
     'test_plan_rejects_unsupported_mongodb_target',
 ):
     _original = getattr(_IMPL.DeepCustomBuildRegressionTests, _method_name)
