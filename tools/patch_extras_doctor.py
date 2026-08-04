@@ -49,6 +49,19 @@ def _open_temporary(path: pathlib.Path, mode: int) -> tuple[int, pathlib.Path]:
     raise SystemExit(f'could not allocate temporary file for {path}')
 
 
+def _fsync_parent(path: pathlib.Path) -> None:
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, 'O_DIRECTORY'):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    directory_fd = os.open(path.parent, flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def write_atomic(
     path: pathlib.Path, text: str, metadata: os.stat_result
 ) -> None:
@@ -71,6 +84,7 @@ def write_atomic(
         descriptor, fd = fd, -1
         os.close(descriptor)
         os.replace(temporary, path)
+        _fsync_parent(path)
     except BaseException as exc:
         active_error = exc
         raise
