@@ -143,6 +143,50 @@ class CustomBuildWebAtomicityTests(unittest.TestCase):
             )
             self.assertEqual(list(root.glob('.lsphp.hostpanel-build.*')), [])
 
+    def test_runtime_snapshots_restore_legacy_symlink_and_state_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            legacy = root / 'legacy-lsphp'
+            current = root / 'current-lsphp'
+            legacy.write_text('legacy', encoding='utf-8')
+            current.write_text('current', encoding='utf-8')
+            link = root / 'lsphp'
+            link.symlink_to(legacy)
+            state = root / 'lsphp-versions'
+            state.write_text('74\n', encoding='utf-8')
+            state.chmod(0o640)
+
+            with mock.patch.object(
+                WEB, 'trusted_root_file', return_value=self.metadata()
+            ), mock.patch.object(
+                WEB, '_capture_xattrs', return_value={}
+            ), mock.patch.object(WEB.os, 'fchown'):
+                link_snapshot = WEB._snapshot_path(
+                    link, allow_symlink=True
+                )
+                state_snapshot = WEB._snapshot_path(state)
+                WEB._replace_symlink(link, current)
+                WEB.write_new_root_file(state, '85\n', 0o644)
+                WEB._restore_path(link, link_snapshot)
+                WEB._restore_path(state, state_snapshot)
+
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(link.resolve(), legacy)
+            self.assertEqual(state.read_text(encoding='utf-8'), '74\n')
+            self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o640)
+            self.assertEqual(
+                list(root.glob('.*.hostpanel-build.*')), []
+            )
+
+    def test_runtime_snapshot_rejects_regular_file_as_lsphp_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            link = pathlib.Path(directory) / 'lsphp'
+            link.write_text('not a symlink', encoding='utf-8')
+            with self.assertRaisesRegex(
+                BuildError, 'unsafe managed runtime path'
+            ):
+                WEB._snapshot_path(link, allow_symlink=True)
+
     def test_source_uses_random_temporaries_and_atomic_metadata(self):
         source = (TOOLS / 'hostpanel_build_web.py').read_text(
             encoding='utf-8'
@@ -153,6 +197,9 @@ class CustomBuildWebAtomicityTests(unittest.TestCase):
         self.assertIn('_capture_xattrs(path)', source)
         self.assertIn('_fsync_parent(path)', source)
         self.assertIn('_unlink_durable(OLS_REGISTRY)', source)
+        self.assertIn('lsphp_link_snapshot = _snapshot_path', source)
+        self.assertIn('lsphp_state_snapshot = _snapshot_path', source)
+        self.assertIn('_restore_path(path, snapshot)', source)
 
 
 if __name__ == '__main__':
