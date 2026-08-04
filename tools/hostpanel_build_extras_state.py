@@ -92,8 +92,9 @@ def _restore(
         _IMPL.base.write_atomic_bytes(path, payload, mode, uid, gid)
         return
     payload, mode, uid, gid, xattrs = captured
-    _IMPL.base.write_atomic_bytes(path, payload, mode, uid, gid)
-    _IMPL.base._apply_xattrs(path, xattrs)
+    _IMPL.base.write_atomic_bytes(
+        path, payload, mode, uid, gid, xattrs=xattrs
+    )
 
 
 def _attempt(errors: list[str], label: str, function, *args, **kwargs) -> bool:
