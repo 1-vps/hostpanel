@@ -216,19 +216,34 @@ def _read_support_file(
             manifest[relative_name] = previous
 
 
-def synchronize_custombuild_runtime(
-    reviewed_root: pathlib.Path, target_root: pathlib.Path
-) -> None:
-    reviewed_root = reviewed_root.absolute()
-    target_root = target_root.absolute()
-    IMPLEMENTATION.synchronize_custombuild_runtime(reviewed_root, target_root)
-
-    verified = {
+def _verify_all_overlay_inputs(
+    reviewed_root: pathlib.Path,
+) -> dict[str, bytes]:
+    if set(CUSTOMBUILD_RUNTIME_MODES) != set(CUSTOMBUILD_RUNTIME_BLOBS):
+        raise SystemExit("CustomBuild runtime manifest is incomplete")
+    for relative_name in CUSTOMBUILD_RUNTIME_MODES:
+        IMPLEMENTATION._read_reviewed_runtime_file(
+            reviewed_root, relative_name
+        )
+    return {
         relative_name: _read_support_file(
             reviewed_root, relative_name, expected_blob
         )
         for relative_name, (expected_blob, _mode) in HARDENER_SUPPORT_FILES.items()
     }
+
+
+def synchronize_custombuild_runtime(
+    reviewed_root: pathlib.Path, target_root: pathlib.Path
+) -> None:
+    reviewed_root = reviewed_root.absolute()
+    target_root = target_root.absolute()
+    verified_support = _verify_all_overlay_inputs(reviewed_root)
+
+    # The preserved implementation re-verifies runtime files at its own
+    # publication boundary. The preflight above guarantees that every runtime
+    # and support input is trusted before it can create or replace target files.
+    IMPLEMENTATION.synchronize_custombuild_runtime(reviewed_root, target_root)
     if reviewed_root == target_root:
         return
     for relative_name, (_expected_blob, mode) in HARDENER_SUPPORT_FILES.items():
@@ -236,7 +251,7 @@ def synchronize_custombuild_runtime(
             *pathlib.PurePosixPath(relative_name).parts
         )
         IMPLEMENTATION._publish_runtime_file(
-            destination, verified[relative_name], mode
+            destination, verified_support[relative_name], mode
         )
 
 
