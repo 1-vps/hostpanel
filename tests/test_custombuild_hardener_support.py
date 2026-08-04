@@ -81,6 +81,33 @@ class HardenerSecondPassSupportTests(unittest.TestCase):
             publish.assert_not_called()
             self.assertFalse((target / 'tools').exists())
 
+    def test_unsafe_support_target_precedes_runtime_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = pathlib.Path(directory) / 'source'
+            tools = target / 'tools'
+            tools.mkdir(parents=True, mode=0o755)
+            driver = tools / 'harden_install_driver.py'
+            driver.symlink_to('/etc/passwd')
+            verified_support = {
+                relative: b'reviewed'
+                for relative in HARDENER.HARDENER_SUPPORT_FILES
+            }
+            with mock.patch.object(
+                HARDENER,
+                '_verify_all_overlay_inputs',
+                return_value=verified_support,
+            ), mock.patch.object(
+                HARDENER.IMPLEMENTATION,
+                'synchronize_custombuild_runtime',
+            ) as publish:
+                with self.assertRaisesRegex(
+                    SystemExit, 'unsafe CustomBuild overlay target'
+                ):
+                    HARDENER.synchronize_custombuild_runtime(ROOT, target)
+            publish.assert_not_called()
+            self.assertTrue(driver.is_symlink())
+            self.assertFalse((tools / 'hostpanel-build.py').exists())
+
     def test_first_pass_installs_support_for_no_git_second_pass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             target = pathlib.Path(directory) / 'source'
