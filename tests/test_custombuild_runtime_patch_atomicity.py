@@ -42,6 +42,24 @@ class RuntimePatcherAtomicityTests(unittest.TestCase):
                 )
                 self.assertEqual(list(root.glob(pattern)), [])
 
+    def test_failed_custombuild_patch_write_preserves_original_and_metadata(self):
+        module = self.load('patch_custombuild_runtime.py')
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            target = root / 'runtime'
+            target.write_text('original\n', encoding='utf-8')
+            target.chmod(0o640)
+            before = target.stat()
+            with mock.patch.object(module.os, 'write', return_value=0):
+                with self.assertRaisesRegex(SystemExit, 'could not write'):
+                    module.write_atomic(target, 'replacement\n')
+            after = target.stat()
+            self.assertEqual(target.read_text(encoding='utf-8'), 'original\n')
+            self.assertEqual(after.st_uid, before.st_uid)
+            self.assertEqual(after.st_gid, before.st_gid)
+            self.assertEqual(after.st_mode, before.st_mode)
+            self.assertEqual(list(root.glob('.runtime.custombuild.*')), [])
+
 
 if __name__ == '__main__':
     unittest.main()
