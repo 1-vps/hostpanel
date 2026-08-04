@@ -10,6 +10,7 @@ import hostpanel_build_extras_state as state
 import hostpanel_build_operations_adapter as operations_adapter
 import hostpanel_build_powerdns_adapter as powerdns_adapter
 import hostpanel_build_mongodb_adapter as mongodb_adapter
+import hostpanel_build_web_transaction_adapter as web_transaction_adapter
 from hostpanel_build_config import DEFAULT_CONFIG, read_config
 
 _BASE_EXECUTE_BUILD = cli.execute_build
@@ -95,8 +96,23 @@ def install_runtime_adapters(selected_config: pathlib.Path) -> None:
         python_path, doctor_path, roles, web_helper, mode_file,
     ):
         state.ensure_safe_web_switch(component, options, mode_file)
-        return powerdns_adapter.guarded_apply_build(
-            _BASE_EXECUTE_BUILD,
+
+        def powerdns_guarded_execute(
+            inner_component, inner_options, inner_platform,
+            inner_log_path, inner_backup_dir,
+            inner_python_path, inner_doctor_path, inner_roles,
+            inner_web_helper, inner_mode_file,
+        ):
+            return powerdns_adapter.guarded_apply_build(
+                _BASE_EXECUTE_BUILD,
+                inner_component, inner_options, inner_platform,
+                inner_log_path, inner_backup_dir,
+                inner_python_path, inner_doctor_path, inner_roles,
+                inner_web_helper, inner_mode_file,
+            )
+
+        return web_transaction_adapter.guarded_execute_build(
+            powerdns_guarded_execute,
             component, options, platform, log_path, backup_dir,
             python_path, doctor_path, roles, web_helper, mode_file,
         )
