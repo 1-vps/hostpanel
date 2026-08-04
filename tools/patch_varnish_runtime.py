@@ -15,16 +15,31 @@ VARNISH_MODE_FILE = Path("/etc/hostpanel/varnish-mode")
 VARNISH_PORT = 6081
 
 
-def varnish_enabled() -> bool:
+def applied_varnish_mode() -> str:
+    try:
+        metadata = VARNISH_MODE_FILE.lstat()
+    except FileNotFoundError:
+        return "off"
+    except OSError as exc:
+        raise RuntimeError(f"cannot inspect HostPanel Varnish mode: {exc}") from exc
+    if (
+        metadata.st_mode & 0o170000 != 0o100000
+        or metadata.st_uid != 0
+        or metadata.st_nlink != 1
+        or metadata.st_mode & 0o022
+    ):
+        raise RuntimeError("unsafe HostPanel Varnish mode file")
     try:
         mode = VARNISH_MODE_FILE.read_text(encoding="ascii").strip()
-    except OSError:
-        mode = "off"
-    if mode == "on":
-        return True
-    if mode == "off":
-        return False
-    raise RuntimeError("invalid HostPanel Varnish mode")
+    except (OSError, UnicodeError) as exc:
+        raise RuntimeError(f"cannot read HostPanel Varnish mode: {exc}") from exc
+    if mode not in {"off", "on"}:
+        raise RuntimeError("invalid HostPanel Varnish mode")
+    return mode
+
+
+def varnish_enabled() -> bool:
+    return applied_varnish_mode() == "on"
 
 
 def backend_proxy_port(origin_port: int) -> int:
@@ -78,6 +93,22 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     raise SystemExit(f'unexpected {label} shape: old={old_count} new={new_count}')
 
 
+def copy_xattrs(source: pathlib.Path, destination: pathlib.Path) -> None:
+    required = ('listxattr', 'getxattr', 'setxattr')
+    if not all(hasattr(os, name) for name in required):
+        raise SystemExit('extended-attribute support is unavailable')
+    try:
+        for name in os.listxattr(source, follow_symlinks=False):
+            value = os.getxattr(source, name, follow_symlinks=False)
+            os.setxattr(
+                destination, name, value, follow_symlinks=False
+            )
+    except OSError as exc:
+        raise SystemExit(
+            f'could not preserve extended metadata for {source}: {exc}'
+        ) from exc
+
+
 def write_atomic(path: pathlib.Path, text: str, metadata: os.stat_result) -> None:
     temporary = path.with_name(f'.{path.name}.varnish.{os.getpid()}')
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
@@ -94,9 +125,10 @@ def write_atomic(path: pathlib.Path, text: str, metadata: os.stat_result) -> Non
                 if written <= 0:
                     raise SystemExit(f'could not write {temporary}')
                 view = view[written:]
-            os.fsync(fd)
             os.fchown(fd, metadata.st_uid, metadata.st_gid)
             os.fchmod(fd, stat.S_IMODE(metadata.st_mode))
+            copy_xattrs(path, temporary)
+            os.fsync(fd)
         finally:
             os.close(fd)
             fd = -1
