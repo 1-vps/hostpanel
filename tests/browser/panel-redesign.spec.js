@@ -44,6 +44,29 @@ async function expectTouchTargets(page, selectors) {
   }
 }
 
+function cssTimeMilliseconds(value) {
+  return Math.max(0, ...String(value || '').split(',').map(part => {
+    const token = part.trim();
+    if (token.endsWith('ms')) return Number.parseFloat(token);
+    if (token.endsWith('s')) return Number.parseFloat(token) * 1000;
+    return 0;
+  }).filter(Number.isFinite));
+}
+
+async function expectReducedMotion(page) {
+  const timings = await page.locator('.hp-meter > span').first().evaluate(element => {
+    const style = getComputedStyle(element);
+    return {
+      transitionDuration: style.transitionDuration,
+      transitionDelay: style.transitionDelay,
+      animationDuration: style.animationDuration,
+    };
+  });
+  expect(cssTimeMilliseconds(timings.transitionDuration)).toBeLessThanOrEqual(0.1);
+  expect(cssTimeMilliseconds(timings.transitionDelay)).toBe(0);
+  expect(cssTimeMilliseconds(timings.animationDuration)).toBeLessThanOrEqual(0.1);
+}
+
 test('desktop dashboard has a stable information hierarchy', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page);
@@ -163,6 +186,17 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
       await expect(page.locator('.hp-dashboard-rail')).toHaveAttribute('aria-label', overview);
       await expect(page.locator('.hp-health-row [data-hp-page="security"]')).toHaveText(open);
     }
+
+    await page.evaluate(() => { document.documentElement.lang = 'sv'; });
+    await expect(page.locator('#languageSelect')).toHaveValue('sv');
+    await expect(page.locator('#dashboardRetry')).toHaveAttribute(
+      'aria-label', 'Uppdatera data i kontrollpanelen'
+    );
+
+    await page.locator('#cpu').evaluate(element => { element.textContent = '12,5%'; });
+    await expect.poll(() => page.locator('#cpuMeter').evaluate(
+      element => element.style.getPropertyValue('--hp-value')
+    )).toBe('12.5%');
   } finally {
     await page.evaluate(() => {
       window.hpNormalizeLanguage = window.__hostpanelOriginalNormalizeLanguage;
@@ -181,6 +215,7 @@ test('phone layout is touch-safe, drawer-safe and free of viewport overflow', as
   await expect(page.locator('.hp-dashboard-rail')).toBeVisible();
   await expect(page.locator('.hp-quick-action:not([hidden])')).toHaveCount(6);
   await expectNoViewportOverflow(page);
+  await expectReducedMotion(page);
 
   const closedDrawer = await page.locator('#sidebar').boundingBox();
   expect(closedDrawer).not.toBeNull();
@@ -194,6 +229,7 @@ test('phone layout is touch-safe, drawer-safe and free of viewport overflow', as
   expect(openDrawer).not.toBeNull();
   expect(openDrawer.x).toBeGreaterThanOrEqual(-1);
   expect(openDrawer.width).toBeLessThanOrEqual(390 * 0.88 + 2);
+  expect(openDrawer.height).toBeLessThanOrEqual(844 + 1);
 
   await expectTouchTargets(page, [
     '#menuBtn',
@@ -233,6 +269,57 @@ test('phone layout is touch-safe, drawer-safe and free of viewport overflow', as
   await servicesCard.scrollIntoViewIfNeeded();
   await expect(servicesCard).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath('phone-dashboard-bottom.png') });
+});
+
+test('320px reflow handles long localized content and remains accessible', async ({ page }, testInfo) => {
+  await page.route('**/api/settings/language', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true }),
+  }));
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await signIn(page);
+  await page.locator('#languageSelect').selectOption('de');
+  await expect(page.locator('#dashboardRetry')).toHaveAttribute(
+    'aria-label', 'Dashboarddaten aktualisieren'
+  );
+
+  const columns = await page.locator('.hp-quick-grid').evaluate(element =>
+    getComputedStyle(element).gridTemplateColumns.split(' ').length
+  );
+  expect(columns).toBe(1);
+  await expectTouchTargets(page, [
+    '#menuBtn',
+    '#themeToggle',
+    '#jobBell',
+    '.language-select',
+    '.hp-quick-action:not([hidden])',
+    '.hp-security-link:not([hidden])',
+  ]);
+  await expectReducedMotion(page);
+  await expectNoViewportOverflow(page);
+
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations.filter(item => ['critical', 'serious'].includes(item.impact))).toEqual([]);
+  await page.screenshot({ path: testInfo.outputPath('phone-320-dashboard.png'), fullPage: true });
+});
+
+test('landscape phone keeps the drawer and topbar usable', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 844, height: 390 });
+  await signIn(page);
+  await expectNoViewportOverflow(page);
+  await page.locator('#menuBtn').click();
+  await expect(page.locator('#sidebar')).toHaveClass(/open/);
+  const drawer = await page.locator('#sidebar').boundingBox();
+  expect(drawer).not.toBeNull();
+  expect(drawer.x).toBeGreaterThanOrEqual(-1);
+  expect(drawer.height).toBeLessThanOrEqual(391);
+  await expect(page.locator('.side-foot')).toBeHidden();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#menuBtn')).toBeFocused();
+  await expectNoViewportOverflow(page);
+  await page.screenshot({ path: testInfo.outputPath('phone-landscape-dashboard.png') });
 });
 
 test('tablet transition keeps cards, rail and controls usable', async ({ page }) => {
