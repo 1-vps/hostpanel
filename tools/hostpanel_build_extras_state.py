@@ -312,14 +312,12 @@ def _unmask_service(unit: str, log_path: pathlib.Path) -> None:
 
 def _start_service(unit: str, log_path: pathlib.Path) -> None:
     _checked_systemctl(['start', unit], log_path)
-    if not _service_active(unit):
-        raise BuildError(f'{unit} did not become active')
+    run_command(['systemctl', 'is-active', '--quiet', unit], log_path=log_path)
 
 
 def _enable_now(unit: str, log_path: pathlib.Path) -> None:
     _checked_systemctl(['enable', '--now', unit], log_path)
-    if not _service_active(unit):
-        raise BuildError(f'{unit} did not become active')
+    run_command(['systemctl', 'is-active', '--quiet', unit], log_path=log_path)
 
 
 def _disable_now(
@@ -328,8 +326,6 @@ def _disable_now(
     _checked_systemctl(
         ['disable', '--now', unit], log_path, allow_absent=allow_absent
     )
-    if not allow_absent and _service_active(unit):
-        raise BuildError(f'{unit} remained active after disable --now')
 
 
 def _restore_service_state(
