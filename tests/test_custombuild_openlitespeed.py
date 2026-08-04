@@ -160,16 +160,23 @@ def _prepare_openlitespeed_restores_configs_on_validation_failure(self) -> None:
 
 
 def _activation_happens_after_domain_reconciliation(self) -> None:
-    source = (_IMPL.TOOLS / 'hostpanel_build_web.py').read_text(
+    wrapper = (_IMPL.TOOLS / 'hostpanel_build_web.py').read_text(
         encoding='utf-8'
     )
-    main_body = source.split('def main(', 1)[1]
-    switch = main_body.index('webserver.set_mode(domain, target, admin)')
+    implementation = (
+        _IMPL.TOOLS / 'hostpanel_build_web_impl.py'
+    ).read_text(encoding='utf-8')
+    main_body = wrapper.split('def main(', 1)[1]
+    snapshots = main_body.index('_preparation_snapshots()')
+    prepare = main_body.index('prepare_openlitespeed(options)', snapshots)
+    switch = main_body.index('webserver.set_mode(domain, target, admin)', prepare)
     validate = main_body.index("if mismatches:", switch)
     activate = main_body.index('activate_openlitespeed()', validate)
+    self.assertLess(snapshots, prepare)
+    self.assertLess(prepare, switch)
     self.assertLess(switch, validate)
     self.assertLess(validate, activate)
-    prepare_body = source.split('def prepare_openlitespeed', 1)[1].split(
+    prepare_body = implementation.split('def prepare_openlitespeed', 1)[1].split(
         'def _command_text', 1
     )[0]
     self.assertNotIn("'enable', '--now'", prepare_body)
