@@ -21,6 +21,7 @@ def load_web_module():
     modules.webserver = types.SimpleNamespace()
     previous_store = sys.modules.get('store')
     previous_modules = sys.modules.get('modules')
+    previous_impl = sys.modules.get('_hostpanel_build_web_impl')
     sys.modules['store'] = store
     sys.modules['modules'] = modules
     try:
@@ -42,6 +43,10 @@ def load_web_module():
             sys.modules.pop('modules', None)
         else:
             sys.modules['modules'] = previous_modules
+        if previous_impl is None:
+            sys.modules.pop('_hostpanel_build_web_impl', None)
+        else:
+            sys.modules['_hostpanel_build_web_impl'] = previous_impl
 
 
 WEB = load_web_module()
@@ -206,9 +211,13 @@ class CustomBuildWebAtomicityTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(wrapper.stat().st_mode), 0o755)
 
     def test_source_uses_random_temporaries_and_atomic_metadata(self):
-        source = (TOOLS / 'hostpanel_build_web.py').read_text(
+        wrapper = (TOOLS / 'hostpanel_build_web.py').read_text(
             encoding='utf-8'
         )
+        implementation = (TOOLS / 'hostpanel_build_web_impl.py').read_text(
+            encoding='utf-8'
+        )
+        source = wrapper + '\n' + implementation
         self.assertNotIn('os.getpid()', source)
         self.assertIn('secrets.token_hex(12)', source)
         self.assertIn('os.fchmod(fd, mode)', source)
@@ -218,6 +227,8 @@ class CustomBuildWebAtomicityTests(unittest.TestCase):
         self.assertIn('lsphp_link_snapshot = _snapshot_path', source)
         self.assertIn('lsphp_state_snapshot = _snapshot_path', source)
         self.assertIn('_restore_path(path, snapshot)', source)
+        self.assertIn('_preparation_snapshots()', wrapper)
+        self.assertIn('_restore_preparation(preparation)', wrapper)
 
 
 if __name__ == '__main__':
