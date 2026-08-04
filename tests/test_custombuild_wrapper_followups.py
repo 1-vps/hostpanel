@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import stat
+import subprocess
 import sys
 import tempfile
 import types
@@ -15,6 +16,7 @@ sys.path.insert(0, str(TOOLS))
 
 import hostpanel_build_extras as EXTRAS
 import hostpanel_build_extras_state as STATE
+import hostpanel_build_powerdns_adapter as POWERDNS
 from hostpanel_build_config import BuildError
 
 
@@ -44,6 +46,45 @@ class WrapperFollowupTests(unittest.TestCase):
                 spec.loader.exec_module(module)
                 self.assertNotIn(name, sys.modules)
                 self.assertTrue(callable(module.main))
+
+    def test_powerdns_adapter_does_not_require_registration(self):
+        name = 'unregistered_hostpanel_build_powerdns_adapter'
+        sys.modules.pop(name, None)
+        spec = importlib.util.spec_from_file_location(
+            name, TOOLS / 'hostpanel_build_powerdns_adapter.py'
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertNotIn(name, sys.modules)
+        self.assertTrue(callable(module.service_active))
+        self.assertTrue(callable(module.guarded_apply_build))
+
+    def test_powerdns_probes_require_explicit_state_text(self):
+        with mock.patch.object(
+            POWERDNS, 'run_command', return_value=subprocess.CompletedProcess(
+                [], 3, '', ''
+            )
+        ), self.assertRaisesRegex(BuildError, 'could not determine active state'):
+            POWERDNS.service_active('pdns.service')
+        with mock.patch.object(
+            POWERDNS, 'run_command', return_value=subprocess.CompletedProcess(
+                [], 1, '', ''
+            )
+        ), self.assertRaisesRegex(BuildError, 'could not determine enabled state'):
+            POWERDNS.service_enabled('pdns.service')
+        with mock.patch.object(
+            POWERDNS, 'run_command', return_value=subprocess.CompletedProcess(
+                [], 3, 'inactive\n', ''
+            )
+        ):
+            self.assertFalse(POWERDNS.service_active('pdns.service'))
+        with mock.patch.object(
+            POWERDNS, 'run_command', return_value=subprocess.CompletedProcess(
+                [], 0, 'static\n', ''
+            )
+        ):
+            self.assertFalse(POWERDNS.service_enabled('pdns.service'))
 
     def test_extras_atomic_writer_preserves_exact_xattrs(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -182,7 +223,7 @@ class WrapperFollowupTests(unittest.TestCase):
                 (root / '.config.hostpanel-build.fresh').exists()
             )
 
-    def test_state_snapshot_restores_original_xattrs(self):
+    def test_state_snapshot_restores_original_xattrs_atomically(self):
         with tempfile.TemporaryDirectory() as directory:
             target = pathlib.Path(directory) / 'config'
             target.write_bytes(b'original')
@@ -203,20 +244,21 @@ class WrapperFollowupTests(unittest.TestCase):
                 captured = STATE._capture(target)
             self.assertIsNotNone(captured)
             target.write_bytes(b'candidate')
-            restored: list[dict[str, bytes]] = []
+            writes: list[tuple[bytes, dict[str, bytes]]] = []
 
-            def write(path, payload, mode, uid, gid):
+            def write(path, payload, mode, uid, gid, *, xattrs):
+                writes.append((payload, dict(xattrs)))
                 path.write_bytes(payload)
 
             with mock.patch.object(
                 STATE._IMPL.base, 'write_atomic_bytes', side_effect=write
             ), mock.patch.object(
-                STATE._IMPL.base, '_apply_xattrs',
-                side_effect=lambda path, values: restored.append(dict(values)),
-            ):
+                STATE._IMPL.base, '_apply_xattrs'
+            ) as post_replace:
                 STATE._restore(target, captured)
             self.assertEqual(target.read_bytes(), b'original')
-            self.assertEqual(restored, [original_xattrs])
+            self.assertEqual(writes, [(b'original', original_xattrs)])
+            post_replace.assert_not_called()
 
     def test_legacy_state_snapshot_does_not_clear_xattrs(self):
         target = pathlib.Path('/tmp/legacy-state-config')
