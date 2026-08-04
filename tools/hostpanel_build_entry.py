@@ -13,9 +13,7 @@ import hostpanel_build_optional_postcheck_adapter as optional_postcheck_adapter
 import hostpanel_build_powerdns_adapter as powerdns_adapter
 import hostpanel_build_mongodb_adapter as mongodb_adapter
 import hostpanel_build_web_transaction_adapter as web_transaction_adapter
-from hostpanel_build_config import (
-    BuildError, DEFAULT_CONFIG, read_config, read_roles,
-)
+from hostpanel_build_config import BuildError, DEFAULT_CONFIG, read_config
 
 _BASE_EXECUTE_BUILD = cli.execute_build
 _BASE_PRINT_PLAN = cli.print_plan
@@ -159,46 +157,6 @@ def _requires_outer_lock(parsed) -> bool:
     return False
 
 
-@contextlib.contextmanager
-def _command_runtime_guards(parsed, selected_config: pathlib.Path):
-    """Install command-specific compatibility checks around the legacy CLI."""
-    original_compatibility = cli.validate_option_compatibility
-    original_doctor = cli.run_doctor
-
-    if parsed.command == 'set':
-        def repairable_compatibility(options: dict[str, str]) -> None:
-            try:
-                original_compatibility(options)
-            except BuildError:
-                repaired = dict(options)
-                repaired[parsed.key] = cli.validate_value(
-                    parsed.key, parsed.value
-                )
-                original_compatibility(repaired)
-
-        cli.validate_option_compatibility = repairable_compatibility
-
-    if parsed.command == 'validate' and parsed.component == 'all':
-        def validating_doctor(
-            log_path: pathlib.Path,
-            python_path: pathlib.Path,
-            doctor_path: pathlib.Path,
-        ) -> None:
-            options = read_config(selected_config)
-            roles = read_roles(pathlib.Path(parsed.roles_file))
-            if 'database' in roles and options.get('mongodb', 'off') == 'off':
-                cli.validate_mongodb(log_path)
-            original_doctor(log_path, python_path, doctor_path)
-
-        cli.run_doctor = validating_doctor
-
-    try:
-        yield
-    finally:
-        cli.validate_option_compatibility = original_compatibility
-        cli.run_doctor = original_doctor
-
-
 def _run_prelocked(values: list[str], lock_file: str) -> int:
     original_acquire_lock = cli.acquire_lock
     with original_acquire_lock(pathlib.Path(lock_file)):
@@ -211,14 +169,12 @@ def _run_prelocked(values: list[str], lock_file: str) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     values = list(sys.argv[1:] if argv is None else argv)
-    selected_config = config_path(values)
-    install_runtime_adapters(selected_config)
+    install_runtime_adapters(config_path(values))
     try:
         parsed = cli.parse_args(values)
-        with _command_runtime_guards(parsed, selected_config):
-            if _requires_outer_lock(parsed):
-                return _run_prelocked(values, parsed.lock_file)
-            return cli.main(values)
+        if _requires_outer_lock(parsed):
+            return _run_prelocked(values, parsed.lock_file)
+        return cli.main(values)
     except (BuildError, OSError) as exc:
         print(f'hostpanel-build failed: {exc}', file=sys.stderr)
         return 1
