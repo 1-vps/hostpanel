@@ -141,6 +141,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     values = list(sys.argv[1:] if argv is None else argv)
     install_runtime_adapters(config_path(values))
     try:
+        parsed = cli.parse_args(values)
+        if parsed.command == 'set':
+            with cli.acquire_lock(pathlib.Path(parsed.lock_file)):
+                return cli.main(values)
         return cli.main(values)
     except OSError as exc:
         print(f'hostpanel-build failed: {exc}', file=sys.stderr)
