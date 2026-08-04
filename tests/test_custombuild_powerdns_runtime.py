@@ -166,6 +166,47 @@ launch += gsqlite3
             self.assertEqual(core.read_text(encoding='utf-8'), core_source)
             self.assertEqual(helper.read_text(encoding='utf-8'), root_source)
 
+    def test_runtime_patcher_restores_both_after_root_parent_fsync_failure(self):
+        module = self._load_runtime_patcher()
+        core_source = module.CORE_OLD
+        root_source = (
+            'RHEL_FAMILY=no\nDNS_UNIT="named"\n'
+            + module.ROOT_ANCHOR
+            + 'case "$verb" in\n'
+            + module.ALLOW_OLD
+            + '\n'
+            + module.DNSSEC_OLD
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            app_root = pathlib.Path(directory)
+            core = app_root / 'core.py'
+            helper = app_root / 'hostpanel-root'
+            core.write_text(core_source, encoding='utf-8')
+            helper.write_text(root_source, encoding='utf-8')
+            core.chmod(0o644)
+            helper.chmod(0o755)
+            synced: list[pathlib.Path] = []
+
+            def fail_second_sync(path: pathlib.Path) -> None:
+                synced.append(path)
+                if len(synced) == 2:
+                    raise OSError('root directory fsync failed')
+
+            with mock.patch.object(module, 'APP_ROOT', app_root), \
+                 mock.patch.object(module.os, 'geteuid', return_value=0), \
+                 mock.patch.object(
+                     module, 'trusted_file', side_effect=lambda item: item.stat()
+                 ), mock.patch.object(
+                     module, '_fsync_parent', side_effect=fail_second_sync
+                 ):
+                with self.assertRaisesRegex(
+                    OSError, 'root directory fsync failed'
+                ):
+                    module.main()
+            self.assertEqual(core.read_text(encoding='utf-8'), core_source)
+            self.assertEqual(helper.read_text(encoding='utf-8'), root_source)
+            self.assertEqual(synced, [core, helper, helper, core])
+
     def test_runtime_patcher_prevalidates_both_shapes_before_first_write(self):
         module = self._load_runtime_patcher()
         with tempfile.TemporaryDirectory() as directory:
