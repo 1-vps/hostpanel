@@ -172,7 +172,7 @@ def _rollback_runtime_files(
         try:
             write_atomic(root_path, root_original, root_metadata)
         except BaseException as exc:
-            root_restored = False
+            root_restored = _content_matches(root_path, root_original)
             errors.append(f'root-helper rollback failed: {exc}')
 
     if core_needs_restore:
