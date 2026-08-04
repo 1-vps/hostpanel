@@ -21,6 +21,7 @@ def load_wrapper(name: str):
     modules.webserver = types.SimpleNamespace()
     previous_store = sys.modules.get('store')
     previous_modules = sys.modules.get('modules')
+    previous_impl = sys.modules.get('_hostpanel_build_web_impl')
     sys.modules['store'] = store
     sys.modules['modules'] = modules
     try:
@@ -40,6 +41,10 @@ def load_wrapper(name: str):
             sys.modules.pop('modules', None)
         else:
             sys.modules['modules'] = previous_modules
+        if previous_impl is None:
+            sys.modules.pop('_hostpanel_build_web_impl', None)
+        else:
+            sys.modules['_hostpanel_build_web_impl'] = previous_impl
 
 
 class OpenLiteSpeedTransactionWrapperTests(unittest.TestCase):
