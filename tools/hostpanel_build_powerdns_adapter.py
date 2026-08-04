@@ -1,6 +1,7 @@
 """Runtime compatibility adapter for PowerDNS BIND-backend operation."""
 from __future__ import annotations
 
+import contextlib
 import grp
 import os
 import pathlib
@@ -58,6 +59,34 @@ def trusted_root_file(path: pathlib.Path) -> None:
         or stat.S_IMODE(metadata.st_mode) & 0o022
     ):
         raise BuildError(f'unsafe root-managed configuration file: {path}')
+
+
+def write_atomic_preserving(path: pathlib.Path, text: str) -> None:
+    """Atomically replace an existing trusted file without changing its metadata."""
+    metadata = path.lstat()
+    temporary = path.with_name(f'.{path.name}.hostpanel-pdns.{os.getpid()}')
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(temporary, flags, stat.S_IMODE(metadata.st_mode))
+    try:
+        payload = text.encode('utf-8')
+        view = memoryview(payload)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise BuildError(f'could not write {temporary}')
+            view = view[written:]
+        os.fsync(fd)
+        os.fchown(fd, metadata.st_uid, metadata.st_gid)
+        os.fchmod(fd, stat.S_IMODE(metadata.st_mode))
+    finally:
+        os.close(fd)
+    try:
+        os.replace(temporary, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
 
 
 def trusted_managed_zone_directory(path: pathlib.Path, service_group: str) -> None:
@@ -119,8 +148,8 @@ def powerdns_include_dir(native: pathlib.Path) -> pathlib.Path:
     include_dir = unique[0] if unique else native.parent / 'pdns.d'
     if not unique:
         suffix = '' if text.endswith('\n') or not text else '\n'
-        operations.write_atomic_root(
-            native, text + suffix + f'include-dir={include_dir}\n', 0o640
+        write_atomic_preserving(
+            native, text + suffix + f'include-dir={include_dir}\n'
         )
     prepare_include_directory(include_dir)
     return include_dir
@@ -174,6 +203,96 @@ def mask_service(name: str, log_path: pathlib.Path) -> bool:
     return was_active
 
 
+def service_enabled(name: str) -> bool:
+    return run_command(
+        ['systemctl', 'is-enabled', '--quiet', name],
+        check=False, capture=True,
+    ).returncode == 0
+
+
+def _detail(completed) -> str:
+    return str(completed.stderr or completed.stdout or '').strip()[-500:]
+
+
+def _unit_absent(detail: str) -> bool:
+    lowered = detail.lower()
+    return any(
+        marker in lowered
+        for marker in ('does not exist', 'not found', 'not loaded', 'no such file')
+    )
+
+
+def _unmask_runtime(name: str, log_path: pathlib.Path) -> None:
+    completed = run_command(
+        ['systemctl', 'unmask', '--runtime', name],
+        check=False, capture=True, log_path=log_path,
+    )
+    if completed.returncode != 0:
+        detail = _detail(completed)
+        if not _unit_absent(detail):
+            raise BuildError(f'could not unmask {name}: {detail or completed.returncode}')
+
+
+def _set_enabled(name: str, enabled: bool, log_path: pathlib.Path) -> None:
+    action = 'enable' if enabled else 'disable'
+    completed = run_command(
+        ['systemctl', action, name],
+        check=False, capture=True, log_path=log_path,
+    )
+    if completed.returncode == 0:
+        return
+    detail = _detail(completed)
+    if not enabled and _unit_absent(detail):
+        return
+    raise BuildError(
+        f'could not {action} {name}: {detail or completed.returncode}'
+    )
+
+
+def _dns_service_states(platform: Platform) -> dict[str, tuple[bool, bool]]:
+    _, _, _, bind_service = operations.dns_layout(platform)
+    units = (
+        bind_service,
+        'pdns.service',
+        operations.PDNS_PATH_UNIT.name,
+    )
+    return {
+        unit: (operations.service_active(unit), service_enabled(unit))
+        for unit in units
+    }
+
+
+def _restore_service_states(
+    states: dict[str, tuple[bool, bool]],
+    start_order: tuple[str, ...],
+    log_path: pathlib.Path,
+) -> None:
+    errors: list[str] = []
+    for unit in states:
+        run_command(
+            ['systemctl', 'stop', unit], check=False, log_path=log_path
+        )
+    for unit, (_was_active, was_enabled) in states.items():
+        try:
+            _unmask_runtime(unit, log_path)
+            _set_enabled(unit, was_enabled, log_path)
+        except Exception as exc:
+            errors.append(f'{unit} enablement: {exc}')
+    for unit in start_order:
+        was_active, _was_enabled = states[unit]
+        if not was_active:
+            continue
+        try:
+            run_command(['systemctl', 'start', unit], log_path=log_path)
+            run_command(
+                ['systemctl', 'is-active', '--quiet', unit], log_path=log_path
+            )
+        except Exception as exc:
+            errors.append(f'{unit} activity: {exc}')
+    if errors:
+        raise BuildError('; '.join(errors))
+
+
 def dns_requested(component: str, roles: set[str]) -> bool:
     return component == 'dns' or (component == 'all' and 'dns' in roles)
 
@@ -199,43 +318,52 @@ def reconcile_dns_services(
     path_service = operations.PDNS_PATH_UNIT.name
     target = pdns_service if mode == 'powerdns' else bind_service
     other = bind_service if mode == 'powerdns' else pdns_service
-    other_was_active = operations.service_active(other)
-    path_was_active = operations.service_active(path_service)
+    previous_mode = applied_dns_mode()
+    states = _dns_service_states(platform)
 
-    run_command(['systemctl', 'stop', path_service], check=False, log_path=log_path)
-    run_command(['systemctl', 'stop', other], check=False, log_path=log_path)
-    operations.unmask_service(target, log_path)
     try:
-        run_command(['systemctl', 'enable', '--now', target], log_path=log_path)
+        run_command(
+            ['systemctl', 'stop', path_service],
+            check=states[path_service][0], log_path=log_path,
+        )
+        run_command(
+            ['systemctl', 'stop', other],
+            check=states[other][0], log_path=log_path,
+        )
+        _unmask_runtime(target, log_path)
+        _set_enabled(target, True, log_path)
+        run_command(['systemctl', 'start', target], log_path=log_path)
         run_command(['systemctl', 'is-active', '--quiet', target], log_path=log_path)
         if mode == 'powerdns':
             run_command(['pdns_control', 'rediscover'], log_path=log_path)
             run_command(['pdns_control', 'reload'], log_path=log_path)
-            run_command(
-                ['systemctl', 'enable', '--now', path_service], log_path=log_path
-            )
+            _set_enabled(path_service, True, log_path)
+            run_command(['systemctl', 'start', path_service], log_path=log_path)
             run_command(
                 ['systemctl', 'is-active', '--quiet', path_service], log_path=log_path
             )
+        else:
+            _set_enabled(path_service, False, log_path)
+        _set_enabled(other, False, log_path)
         operations.persist_dns_mode(mode)
-    except Exception:
-        run_command(['systemctl', 'stop', target], check=False, log_path=log_path)
-        if other_was_active:
-            run_command(
-                ['systemctl', 'enable', '--now', other],
-                check=False, log_path=log_path,
+    except Exception as original_error:
+        rollback_errors: list[str] = []
+        try:
+            _restore_service_states(
+                states, (bind_service, pdns_service, path_service), log_path
             )
-        if path_was_active and other == pdns_service:
-            run_command(
-                ['systemctl', 'enable', '--now', path_service],
-                check=False, log_path=log_path,
-            )
+        except Exception as exc:
+            rollback_errors.append(str(exc))
+        try:
+            operations.persist_dns_mode(previous_mode)
+        except Exception as exc:
+            rollback_errors.append(f'mode state: {exc}')
+        if rollback_errors:
+            raise BuildError(
+                'DNS handoff failed and rollback also failed: '
+                + '; '.join(rollback_errors)
+            ) from original_error
         raise
-    run_command(['systemctl', 'disable', other], check=False, log_path=log_path)
-    if mode == 'bind':
-        run_command(
-            ['systemctl', 'disable', path_service], check=False, log_path=log_path
-        )
 
 
 def guarded_apply_build(
@@ -244,37 +372,33 @@ def guarded_apply_build(
 ):
     requested = dns_requested(component, roles)
     previous_mode = applied_dns_mode() if requested else None
-    watcher = operations.PDNS_PATH_UNIT.name
-    watcher_was_active = operations.service_active(watcher) if requested else False
+    previous_states = _dns_service_states(platform) if requested else None
     try:
         return original(
             component, options, platform, log_path, backup_dir,
             python_path, doctor_path, roles, web_helper, mode_file,
         )
     except Exception as original_error:
-        rollback_error: Exception | None = None
-        if requested and previous_mode is not None:
+        rollback_errors: list[str] = []
+        if requested and previous_mode is not None and previous_states is not None:
+            _, _, _, bind_service = operations.dns_layout(platform)
+            path_service = operations.PDNS_PATH_UNIT.name
             try:
-                current_mode = applied_dns_mode()
-            except Exception:
-                current_mode = None
-            if current_mode != previous_mode:
-                rollback_options = dict(options)
-                rollback_options['dns'] = previous_mode
-                try:
-                    operations.reconcile_dns_services(
-                        rollback_options, platform, log_path
-                    )
-                except Exception as exc:
-                    rollback_error = exc
-        if watcher_was_active and previous_mode == 'powerdns':
-            run_command(
-                ['systemctl', 'enable', '--now', watcher],
-                check=False, log_path=log_path,
-            )
-        if rollback_error is not None:
+                _restore_service_states(
+                    previous_states,
+                    (bind_service, 'pdns.service', path_service),
+                    log_path,
+                )
+            except Exception as exc:
+                rollback_errors.append(str(exc))
+            try:
+                operations.persist_dns_mode(previous_mode)
+            except Exception as exc:
+                rollback_errors.append(f'mode state: {exc}')
+        if rollback_errors:
             raise BuildError(
-                f'build failed and DNS rollback also failed: {rollback_error}'
+                'build failed and DNS rollback also failed: '
+                + '; '.join(rollback_errors)
             ) from original_error
         raise
 
