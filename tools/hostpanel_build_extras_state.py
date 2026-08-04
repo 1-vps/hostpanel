@@ -27,6 +27,8 @@ _ORIGINAL_ATTEMPT = _IMPL._attempt
 _ORIGINAL_FINISH_ROLLBACK = _IMPL._finish_rollback
 _ORIGINAL_APPLY_MONGODB = _IMPL.apply_mongodb
 _ORIGINAL_APPLY_VARNISH = _IMPL.apply_varnish
+_ORIGINAL_VALIDATE_MONGODB = _IMPL.validate_mongodb
+_ORIGINAL_VALIDATE_VARNISH = _IMPL.validate_varnish
 _ORIGINAL_INSTALL = _IMPL.install
 _SAFE_HARDEN_MONGOD_CONFIG = _IMPL.base.harden_mongod_config
 _ROLLBACK_GUARDS: dict[int, bool] = {}
@@ -82,6 +84,38 @@ def _service_enabled(unit: str) -> bool:
     raise BuildError(
         f'could not determine enabled state for {unit}: '
         f'{error or state or completed.returncode}'
+    )
+
+
+def _validate_service_enablement(
+    unit: str, expected: bool, component: str
+) -> None:
+    enabled = _service_enabled(unit)
+    if enabled == expected:
+        return
+    state = 'enabled' if enabled else 'disabled'
+    expected_state = 'enabled' if expected else 'disabled'
+    raise BuildError(
+        f'{unit} is {state} while {component} requires it to be '
+        f'{expected_state}'
+    )
+
+
+def validate_mongodb(options: dict[str, str], log_path: pathlib.Path) -> None:
+    _ORIGINAL_VALIDATE_MONGODB(options, log_path)
+    configured = options.get('mongodb', 'off')
+    _validate_service_enablement(
+        'mongod.service', configured == _IMPL.MONGODB_VERSION,
+        f'mongodb={configured}',
+    )
+
+
+def validate_varnish(options: dict[str, str], log_path: pathlib.Path) -> None:
+    _ORIGINAL_VALIDATE_VARNISH(options, log_path)
+    configured = options.get('varnish', 'off')
+    _validate_service_enablement(
+        'varnish.service', configured == 'on',
+        f'varnish={configured}',
     )
 
 
@@ -233,7 +267,7 @@ for _name in dir(_IMPL):
     if _name not in {
         '_service_active', '_service_enabled', '_capture', '_restore',
         '_attempt', '_finish_rollback', 'apply_mongodb', 'apply_varnish',
-        'install',
+        'validate_mongodb', 'validate_varnish', 'install',
     } and _name not in globals():
         globals()[_name] = getattr(_IMPL, _name)
 
@@ -243,9 +277,9 @@ _IMPL._capture = _capture
 _IMPL._restore = _restore
 _IMPL._attempt = _attempt
 _IMPL._finish_rollback = _finish_rollback
+_IMPL.validate_mongodb = validate_mongodb
+_IMPL.validate_varnish = validate_varnish
 
-validate_mongodb = _IMPL.validate_mongodb
-validate_varnish = _IMPL.validate_varnish
 ensure_safe_web_switch = _IMPL.ensure_safe_web_switch
 
 
@@ -254,6 +288,8 @@ def install() -> None:
     _ORIGINAL_INSTALL()
     _IMPL.harden_mongod_config = _SAFE_HARDEN_MONGOD_CONFIG
     _IMPL.base.harden_mongod_config = _SAFE_HARDEN_MONGOD_CONFIG
+    _IMPL.validate_mongodb = validate_mongodb
+    _IMPL.validate_varnish = validate_varnish
 
 
 class _ForwardingModule(types.ModuleType):
