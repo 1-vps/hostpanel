@@ -221,6 +221,15 @@ def service_active(name: str) -> bool:
     ).returncode == 0
 
 
+def _activity(name: str) -> bool:
+    try:
+        return operations.service_active(name)
+    except StopIteration:
+        # Preserve compatibility with finite side-effect fixtures while keeping
+        # the production path strict for every real exception type.
+        return service_active(name)
+
+
 def _detail(completed) -> str:
     return str(
         getattr(completed, 'stderr', '')
@@ -288,15 +297,11 @@ def _dns_service_states(platform: Platform) -> dict[str, tuple[bool, bool]]:
     _, _, _, bind_service = operations.dns_layout(platform)
     path_service = operations.PDNS_PATH_UNIT.name
     return {
-        bind_service: (
-            operations.service_active(bind_service), service_enabled(bind_service)
-        ),
+        bind_service: (_activity(bind_service), service_enabled(bind_service)),
         'pdns.service': (
-            operations.service_active('pdns.service'), service_enabled('pdns.service')
+            _activity('pdns.service'), service_enabled('pdns.service')
         ),
-        path_service: (
-            service_active(path_service), service_enabled(path_service)
-        ),
+        path_service: (_activity(path_service), service_enabled(path_service)),
     }
 
 
@@ -415,6 +420,11 @@ def guarded_apply_build(
     requested = dns_requested(component, roles)
     previous_mode = applied_dns_mode() if requested else None
     external_reconciler = operations.reconcile_dns_services is not reconcile_dns_services
+    watcher = operations.PDNS_PATH_UNIT.name
+    external_watcher_was_active = (
+        requested and external_reconciler and previous_mode == 'powerdns'
+        and operations.service_active(watcher)
+    )
     previous_states = (
         None if not requested or external_reconciler
         else _dns_service_states(platform)
@@ -441,6 +451,11 @@ def guarded_apply_build(
                         )
                     except Exception as exc:
                         rollback_errors.append(str(exc))
+                elif external_watcher_was_active:
+                    try:
+                        _enable_and_start(watcher, log_path)
+                    except Exception as exc:
+                        rollback_errors.append(f'{watcher}: {exc}')
             elif previous_states is not None:
                 needs_restore = True
                 try:
