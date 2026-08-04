@@ -32,6 +32,9 @@ class CustomBuildTransactionFailureTests(unittest.TestCase):
                 STATE._mask_service('mongod.service', pathlib.Path('/tmp/log'))
         self.assertIn(['systemctl', 'stop', 'mongod.service'], commands)
         self.assertIn(['systemctl', 'start', 'mongod.service'], commands)
+        self.assertIn(
+            ['systemctl', 'is-active', '--quiet', 'mongod.service'], commands
+        )
         unmask.assert_called_once_with('mongod.service', pathlib.Path('/tmp/log'))
 
     def test_core_mask_adapter_restarts_previously_active_service(self):
@@ -63,7 +66,7 @@ class CustomBuildTransactionFailureTests(unittest.TestCase):
 
         with mock.patch.object(STATE, '_runtime_mode', return_value='8.0'), \
              mock.patch.object(
-                 STATE, '_service_active', side_effect=[True, False]
+                 STATE, '_service_active', return_value=True
              ), mock.patch.object(STATE, '_service_enabled', return_value=False), \
              mock.patch.object(
                  STATE.base, 'write_atomic_text', side_effect=write_mode
@@ -88,7 +91,7 @@ class CustomBuildTransactionFailureTests(unittest.TestCase):
 
         with mock.patch.object(STATE, '_runtime_mode', return_value='8.0'), \
              mock.patch.object(
-                 STATE, '_service_active', side_effect=[True, False]
+                 STATE, '_service_active', return_value=True
              ), mock.patch.object(STATE, '_service_enabled', return_value=False), \
              mock.patch.object(
                  STATE.base, 'write_atomic_text',
@@ -145,8 +148,6 @@ class CustomBuildTransactionFailureTests(unittest.TestCase):
     def test_restore_service_state_preserves_active_but_disabled(self):
         commands: list[list[str]] = []
         with mock.patch.object(STATE, '_unmask_service'), mock.patch.object(
-            STATE, '_service_active', return_value=True
-        ), mock.patch.object(
             STATE, 'run_command',
             side_effect=lambda command, **kwargs: commands.append(command)
             or subprocess.CompletedProcess(command, 0, '', ''),
@@ -159,6 +160,7 @@ class CustomBuildTransactionFailureTests(unittest.TestCase):
             [
                 ['systemctl', 'disable', 'varnish.service'],
                 ['systemctl', 'start', 'varnish.service'],
+                ['systemctl', 'is-active', '--quiet', 'varnish.service'],
             ],
         )
 
