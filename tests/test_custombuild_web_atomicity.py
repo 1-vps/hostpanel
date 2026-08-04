@@ -80,6 +80,8 @@ class CustomBuildWebAtomicityTests(unittest.TestCase):
                     (path, dict(values))
                 ),
             ), mock.patch.object(
+                WEB, '_apply_expected_selinux_context'
+            ) as expected_context, mock.patch.object(
                 WEB, '_fsync_parent'
             ) as fsync_parent:
                 WEB.write_atomic(target, 'new\n')
@@ -90,6 +92,7 @@ class CustomBuildWebAtomicityTests(unittest.TestCase):
             self.assertEqual(
                 applied[0][1], {'security.selinux': b'hostpanel'}
             )
+            expected_context.assert_not_called()
             fsync_parent.assert_called_once_with(target)
             self.assertEqual(list(root.glob('.httpd_config.conf.hostpanel-build.*')), [])
 
@@ -112,12 +115,20 @@ class CustomBuildWebAtomicityTests(unittest.TestCase):
                 (root / '.admin_config.conf.hostpanel-build.fresh').exists()
             )
 
-    def test_new_file_sets_metadata_before_publish_and_fsyncs_parent(self):
+    def test_new_file_sets_metadata_and_policy_context_before_publish(self):
         with tempfile.TemporaryDirectory() as directory:
             target = pathlib.Path(directory) / 'hostpanel.conf'
+            context_calls: list[tuple[int, pathlib.Path, int]] = []
             with mock.patch.object(
                 WEB.os, 'fchown'
             ) as fchown, mock.patch.object(
+                WEB, '_apply_expected_selinux_context',
+                side_effect=lambda fd, path, mode: context_calls.append(
+                    (fd, path, mode)
+                ),
+            ), mock.patch.object(
+                WEB, '_apply_xattrs'
+            ) as apply_xattrs, mock.patch.object(
                 WEB, '_fsync_parent'
             ) as fsync_parent:
                 WEB.write_new_root_file(
@@ -128,6 +139,9 @@ class CustomBuildWebAtomicityTests(unittest.TestCase):
             )
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640)
             fchown.assert_called_once()
+            apply_xattrs.assert_not_called()
+            self.assertEqual(len(context_calls), 1)
+            self.assertEqual(context_calls[0][1:], (target, 0o640))
             fsync_parent.assert_called_once_with(target)
 
     def test_symlink_replace_and_unlink_are_directory_durable(self):
@@ -165,6 +179,8 @@ class CustomBuildWebAtomicityTests(unittest.TestCase):
                 WEB, 'trusted_root_file', return_value=self.metadata()
             ), mock.patch.object(
                 WEB, '_capture_xattrs', return_value={}
+            ), mock.patch.object(
+                WEB, '_apply_expected_selinux_context'
             ), mock.patch.object(WEB.os, 'fchown'):
                 link_snapshot = WEB._snapshot_path(
                     link, allow_symlink=True
@@ -222,6 +238,7 @@ class CustomBuildWebAtomicityTests(unittest.TestCase):
         self.assertIn('secrets.token_hex(12)', source)
         self.assertIn('os.fchmod(fd, mode)', source)
         self.assertIn('_capture_xattrs(path)', source)
+        self.assertIn('_apply_expected_selinux_context(fd, path, mode)', wrapper)
         self.assertIn('_fsync_parent(path)', source)
         self.assertIn('_unlink_durable(OLS_REGISTRY)', source)
         self.assertIn('lsphp_link_snapshot = _snapshot_path', source)
