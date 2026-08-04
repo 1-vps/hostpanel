@@ -21,6 +21,24 @@ sys.modules[_SPEC.name] = _IMPL
 _SPEC.loader.exec_module(_IMPL)
 
 UpdateError = _IMPL.UpdateError
+_RAW_OS_WRITE = os.write
+
+
+def _write_all(fd: int, payload) -> int:
+    view = memoryview(payload)
+    total = len(view)
+    while view:
+        written = _RAW_OS_WRITE(fd, view)
+        if written <= 0:
+            raise UpdateError('could not complete updater file write')
+        view = view[written:]
+    return total
+
+
+# The preserved updater uses os.write for release downloads, archive
+# extraction, and status publication. Replace that raw primitive once so all
+# three paths handle legitimate short writes without changing their callers.
+_IMPL.os.write = _write_all
 
 
 def _capture_xattrs(path: pathlib.Path) -> dict[str, bytes]:
@@ -158,6 +176,7 @@ _IMPL.atomic_json = atomic_json
 
 
 def main(argv: list[str] | None = None) -> int:
+    _IMPL.os.write = _write_all
     _IMPL.atomic_json = atomic_json
     return _IMPL.main(argv)
 
