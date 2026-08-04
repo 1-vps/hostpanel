@@ -19,7 +19,7 @@ RUNTIME_BLOB_OVERRIDES = {
         "69873098d3693cd6af3bbd5315e7d65fc829c986"
     ),
     "tools/hostpanel_build_web_transaction_adapter.py": (
-        "6b840081201e4d29a4adfd55b4a894cbcd71c030"
+        "c5ea511a479fdcf2b6e84e7fbffdaf8d7e98c144"
     ),
 }
 
