@@ -27,6 +27,8 @@ _ORIGINAL_ATTEMPT = _IMPL._attempt
 _ORIGINAL_FINISH_ROLLBACK = _IMPL._finish_rollback
 _ORIGINAL_APPLY_MONGODB = _IMPL.apply_mongodb
 _ORIGINAL_APPLY_VARNISH = _IMPL.apply_varnish
+_ORIGINAL_INSTALL = _IMPL.install
+_SAFE_HARDEN_MONGOD_CONFIG = _IMPL.base.harden_mongod_config
 _ROLLBACK_GUARDS: dict[int, bool] = {}
 _MONGODB_RPM_KEY = pathlib.Path(
     '/etc/pki/rpm-gpg/MONGODB-SERVER-8.0.gpg'
@@ -231,6 +233,7 @@ for _name in dir(_IMPL):
     if _name not in {
         '_service_active', '_service_enabled', '_capture', '_restore',
         '_attempt', '_finish_rollback', 'apply_mongodb', 'apply_varnish',
+        'install',
     } and _name not in globals():
         globals()[_name] = getattr(_IMPL, _name)
 
@@ -244,13 +247,19 @@ _IMPL._finish_rollback = _finish_rollback
 validate_mongodb = _IMPL.validate_mongodb
 validate_varnish = _IMPL.validate_varnish
 ensure_safe_web_switch = _IMPL.ensure_safe_web_switch
-install = _IMPL.install
+
+
+def install() -> None:
+    """Install state hooks without replacing the stricter YAML normalizer."""
+    _ORIGINAL_INSTALL()
+    _IMPL.harden_mongod_config = _SAFE_HARDEN_MONGOD_CONFIG
+    _IMPL.base.harden_mongod_config = _SAFE_HARDEN_MONGOD_CONFIG
 
 
 class _ForwardingModule(types.ModuleType):
     def __setattr__(self, name: str, value) -> None:
         super().__setattr__(name, value)
-        if name in {'apply_mongodb', 'apply_varnish'}:
+        if name in {'apply_mongodb', 'apply_varnish', 'install'}:
             return
         implementation = super().__getattribute__('_IMPL')
         if hasattr(implementation, name):
