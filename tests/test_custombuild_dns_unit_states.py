@@ -66,6 +66,42 @@ class PowerDnsUnitStateTests(unittest.TestCase):
         self.assertNotIn(['systemctl', 'enable', 'bind9.service'], events)
         persist.assert_called_once_with('bind')
 
+    def test_rollback_stop_failure_does_not_start_old_dns_or_rewrite_mode(self):
+        options = dict(CONFIG.DEFAULT_OPTIONS)
+        options['dns'] = 'powerdns'
+        states = {
+            'bind9.service': (True, True),
+            'pdns.service': (False, False),
+            'hostpanel-pdns-zones.path': (False, False),
+        }
+        events: list[list[str]] = []
+
+        def command(argv, **kwargs):
+            events.append(argv)
+            if argv == ['pdns_control', 'reload']:
+                raise CONFIG.BuildError('reload failed')
+            if argv == ['systemctl', 'stop', 'pdns.service']:
+                return self.completed(argv, 1, 'permission denied')
+            return self.completed(argv)
+
+        with mock.patch.object(ADAPTER.operations, 'dns_layout', return_value=self.layout), \
+             mock.patch.object(
+                 ADAPTER.operations, 'service_active',
+                 side_effect=lambda unit: states[unit][0],
+             ), mock.patch.object(
+                 ADAPTER, 'service_enabled',
+                 side_effect=lambda unit: states[unit][1],
+             ), mock.patch.object(ADAPTER, 'applied_dns_mode', return_value='bind'), \
+             mock.patch.object(ADAPTER.operations, 'persist_dns_mode') as persist, \
+             mock.patch.object(ADAPTER, 'run_command', side_effect=command):
+            with self.assertRaisesRegex(CONFIG.BuildError, 'rollback also failed'):
+                ADAPTER.reconcile_dns_services(
+                    options, self.platform, pathlib.Path('/tmp/log')
+                )
+
+        self.assertNotIn(['systemctl', 'start', 'bind9.service'], events)
+        persist.assert_not_called()
+
     def test_obsolete_unit_disable_failure_rolls_back_before_mode_persist(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
         options['dns'] = 'powerdns'
@@ -146,10 +182,15 @@ class PowerDnsUnitStateTests(unittest.TestCase):
         self.assertIn(['systemctl', 'start', 'pdns.service'], events)
 
     def test_late_build_failure_restores_exact_boot_and_runtime_states(self):
-        states = {
+        previous = {
             'bind9.service': (True, False),
             'pdns.service': (False, True),
             'hostpanel-pdns-zones.path': (False, True),
+        }
+        changed = {
+            'bind9.service': (False, False),
+            'pdns.service': (True, True),
+            'hostpanel-pdns-zones.path': (True, True),
         }
         events: list[list[str]] = []
 
@@ -158,11 +199,17 @@ class PowerDnsUnitStateTests(unittest.TestCase):
             return self.completed(argv)
 
         original = mock.Mock(side_effect=OSError('later component failed'))
-        with mock.patch.object(ADAPTER, 'applied_dns_mode', return_value='bind'), \
-             mock.patch.object(ADAPTER, '_dns_service_states', return_value=states), \
-             mock.patch.object(ADAPTER.operations, 'dns_layout', return_value=self.layout), \
-             mock.patch.object(ADAPTER.operations, 'persist_dns_mode') as persist, \
-             mock.patch.object(ADAPTER, 'run_command', side_effect=command):
+        with mock.patch.object(
+                 ADAPTER, 'applied_dns_mode', side_effect=['bind', 'powerdns']
+             ), mock.patch.object(
+                 ADAPTER, '_dns_service_states', side_effect=[previous, changed]
+             ), mock.patch.object(
+                 ADAPTER.operations, 'dns_layout', return_value=self.layout
+             ), mock.patch.object(
+                 ADAPTER.operations, 'persist_dns_mode'
+             ) as persist, mock.patch.object(
+                 ADAPTER, 'run_command', side_effect=command
+             ):
             with self.assertRaisesRegex(OSError, 'later component failed'):
                 ADAPTER.guarded_apply_build(
                     original, 'all', {'dns': 'powerdns'}, self.platform,
@@ -178,6 +225,29 @@ class PowerDnsUnitStateTests(unittest.TestCase):
         self.assertIn(['systemctl', 'enable', 'hostpanel-pdns-zones.path'], events)
         self.assertNotIn(['systemctl', 'start', 'hostpanel-pdns-zones.path'], events)
         persist.assert_called_once_with('bind')
+
+    def test_late_non_dns_failure_does_not_restart_unchanged_dns(self):
+        states = {
+            'bind9.service': (True, True),
+            'pdns.service': (False, False),
+            'hostpanel-pdns-zones.path': (False, False),
+        }
+        original = mock.Mock(side_effect=OSError('later component failed'))
+        with mock.patch.object(
+                 ADAPTER, 'applied_dns_mode', side_effect=['bind', 'bind']
+             ), mock.patch.object(
+                 ADAPTER, '_dns_service_states', side_effect=[states, states]
+             ), mock.patch.object(ADAPTER, 'run_command') as command, \
+             mock.patch.object(ADAPTER.operations, 'persist_dns_mode') as persist:
+            with self.assertRaisesRegex(OSError, 'later component failed'):
+                ADAPTER.guarded_apply_build(
+                    original, 'all', {'dns': 'bind'}, self.platform,
+                    pathlib.Path('/tmp/log'), pathlib.Path('/tmp/backup'),
+                    pathlib.Path('/tmp/python'), pathlib.Path('/tmp/doctor'),
+                    {'dns'}, pathlib.Path('/tmp/web'), pathlib.Path('/tmp/mode'),
+                )
+        command.assert_not_called()
+        persist.assert_not_called()
 
     def test_native_config_append_preserves_mode_owner_and_group(self):
         with tempfile.TemporaryDirectory() as directory:
