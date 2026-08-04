@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import pathlib
+import re
 import secrets
 import shutil
 import stat
@@ -23,6 +24,10 @@ _SPEC.loader.exec_module(_IMPL)
 BuildError = _IMPL.BuildError
 VARNISH_MODE_FILE = _IMPL.VARNISH_MODE_FILE
 _PRESERVE_CURRENT_XATTRS = object()
+_ORIGINAL_HARDEN_MONGOD_CONFIG = _IMPL.harden_mongod_config
+_TOP_LEVEL_MONGOD_SECTION = re.compile(
+    r"^(?P<quote>['\"]?)(?P<key>net|security)(?P=quote)\s*:(?P<tail>.*)$"
+)
 
 
 def _trusted_varnish_mode(default: str = 'off') -> str:
@@ -188,6 +193,38 @@ def write_atomic_text(path: pathlib.Path, text: str, mode: int = 0o644) -> None:
     write_atomic_bytes(path, text.encode('utf-8'), mode, uid, gid)
 
 
+def _normalize_mongod_top_level_sections(text: str) -> str:
+    lines = text.splitlines()
+    indexes: dict[str, list[int]] = {'net': [], 'security': []}
+    for index, line in enumerate(lines):
+        if not line or line.startswith((' ', '\t', '#')):
+            continue
+        match = _TOP_LEVEL_MONGOD_SECTION.fullmatch(line)
+        if match is None:
+            continue
+        key = match.group('key')
+        indexes[key].append(index)
+        tail = match.group('tail').strip()
+        if tail and not tail.startswith('#'):
+            raise BuildError(
+                f'mongod.conf uses an unsupported inline {key} mapping'
+            )
+    for key, matches in indexes.items():
+        if len(matches) > 1:
+            raise BuildError(
+                f'mongod.conf contains multiple top-level {key} sections'
+            )
+        if matches:
+            lines[matches[0]] = f'{key}:'
+    return '\n'.join(lines) + ('\n' if text.endswith('\n') else '')
+
+
+def harden_mongod_config(text: str) -> str:
+    return _ORIGINAL_HARDEN_MONGOD_CONFIG(
+        _normalize_mongod_top_level_sections(text)
+    )
+
+
 def _command_text(value: object) -> str:
     if value is None:
         return ''
@@ -259,10 +296,12 @@ def validate_varnish(options: dict[str, str], log_path: pathlib.Path) -> None:
 
 for _name in dir(_IMPL):
     if _name not in {
-        'validate_varnish', 'write_atomic_bytes', 'write_atomic_text'
+        'harden_mongod_config', 'validate_varnish',
+        'write_atomic_bytes', 'write_atomic_text'
     } and _name not in globals():
         globals()[_name] = getattr(_IMPL, _name)
 
+_IMPL.harden_mongod_config = harden_mongod_config
 _IMPL.validate_varnish = validate_varnish
 _IMPL.write_atomic_bytes = write_atomic_bytes
 _IMPL.write_atomic_text = write_atomic_text
