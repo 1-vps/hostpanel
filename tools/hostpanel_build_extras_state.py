@@ -64,9 +64,17 @@ def _service_enabled(unit: str) -> bool:
     error = str(getattr(completed, 'stderr', '') or '').strip()
     if completed.returncode == 0 and state == 'enabled' and not error:
         return True
+    if (
+        state in {'masked', 'masked-runtime'}
+        and completed.returncode in {0, 1, 3, 4}
+        and not error
+    ):
+        raise BuildError(
+            f'{unit} is {state}; refusing to remove an administrative mask'
+        )
     if state in {
         'disabled', 'static', 'indirect', 'generated', 'transient',
-        'masked', 'masked-runtime', 'alias', 'not-found',
+        'alias', 'not-found',
     } and completed.returncode in {0, 1, 3, 4} and not error:
         return False
     raise BuildError(
