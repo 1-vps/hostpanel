@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import pathlib
 import stat
 import subprocess
@@ -192,12 +191,25 @@ class PowerDnsUnitStateTests(unittest.TestCase):
                  mock.patch.object(ADAPTER.os, 'fchown') as fchown:
                 include = ADAPTER.powerdns_include_dir(native)
             after = native.stat()
+            updated = native.read_text(encoding='utf-8')
+            leftovers = list(root.glob('.pdns.conf.hostpanel-pdns.*'))
 
-        self.assertEqual(include, root / 'pdns.d')
-        self.assertEqual(stat.S_IMODE(after.st_mode), 0o640)
-        self.assertIn('include-dir=', native.read_text(encoding='utf-8'))
-        fchown.assert_called_once_with(mock.ANY, before.st_uid, before.st_gid)
-        self.assertEqual(list(root.glob('.pdns.conf.hostpanel-pdns.*')), [])
+            self.assertEqual(include, root / 'pdns.d')
+            self.assertEqual(stat.S_IMODE(after.st_mode), 0o640)
+            self.assertIn('include-dir=', updated)
+            fchown.assert_called_once_with(mock.ANY, before.st_uid, before.st_gid)
+            self.assertEqual(leftovers, [])
+
+    def test_failed_native_config_write_removes_temporary_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            native = root / 'pdns.conf'
+            native.write_text('guardian=yes\n', encoding='utf-8')
+            with mock.patch.object(ADAPTER.os, 'write', return_value=0):
+                with self.assertRaisesRegex(CONFIG.BuildError, 'could not write'):
+                    ADAPTER.write_atomic_preserving(native, 'replacement\n')
+            self.assertEqual(native.read_text(encoding='utf-8'), 'guardian=yes\n')
+            self.assertEqual(list(root.glob('.pdns.conf.hostpanel-pdns.*')), [])
 
 
 if __name__ == '__main__':
