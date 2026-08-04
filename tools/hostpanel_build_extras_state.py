@@ -1,7 +1,6 @@
 """Durable runtime-state and rollback wrapper for optional CustomBuild extras."""
 from __future__ import annotations
 
-import contextlib
 import os
 import pathlib
 import pwd
@@ -235,52 +234,141 @@ def _ensure_varnish_secret() -> pathlib.Path:
     return _trusted_varnish_secret(target, identity.pw_gid)
 
 
+def _command_detail(completed) -> str:
+    return str(
+        getattr(completed, 'stderr', '')
+        or getattr(completed, 'stdout', '')
+        or ''
+    ).strip()[-500:]
+
+
+def _unit_absent(detail: str) -> bool:
+    lowered = detail.lower()
+    return any(
+        marker in lowered
+        for marker in ('does not exist', 'not found', 'not loaded', 'no such file')
+    )
+
+
 def _service_active(unit: str) -> bool:
-    return run_command(
-        ['systemctl', 'is-active', '--quiet', unit], check=False, capture=True
-    ).returncode == 0
+    completed = run_command(
+        ['systemctl', 'is-active', unit], check=False, capture=True
+    )
+    state = str(getattr(completed, 'stdout', '') or '').strip().lower()
+    error = str(getattr(completed, 'stderr', '') or '').strip()
+    if completed.returncode == 0 and (state in {'', 'active'}) and not error:
+        return True
+    if completed.returncode in {3, 4} and state in {'', 'inactive', 'failed', 'unknown', 'not-found'} and not error:
+        return False
+    raise BuildError(
+        f'could not determine active state for {unit}: '
+        f'{error or state or completed.returncode}'
+    )
 
 
 def _service_enabled(unit: str) -> bool:
-    return run_command(
-        ['systemctl', 'is-enabled', '--quiet', unit], check=False, capture=True
-    ).returncode == 0
+    completed = run_command(
+        ['systemctl', 'is-enabled', unit], check=False, capture=True
+    )
+    state = str(getattr(completed, 'stdout', '') or '').strip().lower()
+    error = str(getattr(completed, 'stderr', '') or '').strip()
+    if completed.returncode == 0 and state in {'', 'enabled'} and not error:
+        return True
+    if state in {
+        'disabled', 'static', 'indirect', 'generated', 'transient',
+        'masked', 'masked-runtime', 'alias', 'not-found',
+    } and not error:
+        return False
+    if completed.returncode in {1, 3, 4} and not state and not error:
+        return False
+    raise BuildError(
+        f'could not determine enabled state for {unit}: '
+        f'{error or state or completed.returncode}'
+    )
+
+
+def _checked_systemctl(
+    arguments: list[str], log_path: pathlib.Path,
+    *, allow_absent: bool = False,
+) -> None:
+    command = ['systemctl', *arguments]
+    completed = run_command(
+        command, check=False, capture=True, log_path=log_path
+    )
+    if completed.returncode == 0:
+        return
+    detail = _command_detail(completed)
+    if allow_absent and _unit_absent(detail):
+        return
+    raise BuildError(
+        f"systemctl {' '.join(arguments)} failed: "
+        f'{detail or completed.returncode}'
+    )
 
 
 def _unmask_service(unit: str, log_path: pathlib.Path) -> None:
-    run_command(
-        ['systemctl', 'unmask', '--runtime', unit], check=False, log_path=log_path
+    _checked_systemctl(['unmask', '--runtime', unit], log_path, allow_absent=True)
+
+
+def _start_service(unit: str, log_path: pathlib.Path) -> None:
+    _checked_systemctl(['start', unit], log_path)
+    if not _service_active(unit):
+        raise BuildError(f'{unit} did not become active')
+
+
+def _enable_now(unit: str, log_path: pathlib.Path) -> None:
+    _checked_systemctl(['enable', '--now', unit], log_path)
+    if not _service_active(unit):
+        raise BuildError(f'{unit} did not become active')
+
+
+def _disable_now(
+    unit: str, log_path: pathlib.Path, *, allow_absent: bool = False
+) -> None:
+    _checked_systemctl(
+        ['disable', '--now', unit], log_path, allow_absent=allow_absent
     )
+    if not allow_absent and _service_active(unit):
+        raise BuildError(f'{unit} remained active after disable --now')
 
 
 def _restore_service_state(
     unit: str, was_active: bool, was_enabled: bool, log_path: pathlib.Path
 ) -> None:
     _unmask_service(unit, log_path)
-    if was_enabled:
-        command = ['systemctl', 'enable']
-        if was_active:
-            command.append('--now')
-        command.append(unit)
-        run_command(command, check=False, log_path=log_path)
+    if was_enabled and was_active:
+        _enable_now(unit, log_path)
         return
-    run_command(['systemctl', 'disable', unit], check=False, log_path=log_path)
+    if was_enabled:
+        _checked_systemctl(['enable', unit], log_path)
+        return
+    _checked_systemctl(['disable', unit], log_path, allow_absent=True)
     if was_active:
-        run_command(['systemctl', 'start', unit], check=False, log_path=log_path)
+        _start_service(unit, log_path)
 
 
 def _mask_service(unit: str, log_path: pathlib.Path) -> bool:
     was_active = _service_active(unit)
     if was_active:
-        run_command(['systemctl', 'stop', unit], log_path=log_path)
+        _checked_systemctl(['stop', unit], log_path)
     try:
-        run_command(['systemctl', 'mask', '--runtime', unit], log_path=log_path)
-    except Exception:
-        _unmask_service(unit, log_path)
+        _checked_systemctl(['mask', '--runtime', unit], log_path)
+    except Exception as original_error:
+        errors: list[str] = []
+        try:
+            _unmask_service(unit, log_path)
+        except Exception as exc:
+            errors.append(str(exc))
         if was_active:
-            run_command(
-                ['systemctl', 'start', unit], check=False, log_path=log_path
-            )
+            try:
+                _start_service(unit, log_path)
+            except Exception as exc:
+                errors.append(str(exc))
+        if errors:
+            raise BuildError(
+                f'could not mask {unit} and recovery also failed: '
+                + '; '.join(errors)
+            ) from original_error
         raise
     return was_active
 
@@ -301,6 +389,30 @@ def _restore(path: pathlib.Path, captured: tuple[bytes, int, int, int] | None) -
         return
     payload, mode, uid, gid = captured
     base.write_atomic_bytes(path, payload, mode, uid, gid)
+
+
+def _restore_mode(path: pathlib.Path, previous: str, default: str) -> None:
+    current = _runtime_mode(path, default)
+    if current != previous:
+        base.write_atomic_text(path, previous + '\n')
+
+
+def _attempt(errors: list[str], label: str, function, *args, **kwargs) -> bool:
+    try:
+        function(*args, **kwargs)
+        return True
+    except Exception as exc:
+        errors.append(f'{label}: {exc}')
+        return False
+
+
+def _finish_rollback(
+    label: str, original_error: Exception, errors: list[str]
+) -> None:
+    if errors:
+        raise BuildError(
+            f'{label} failed and rollback also failed: ' + '; '.join(errors)
+        ) from original_error
 
 
 def validate_mongodb(options: dict[str, str], log_path: pathlib.Path) -> None:
@@ -343,18 +455,23 @@ def apply_mongodb(
         was_active = _service_active('mongod.service')
         was_enabled = _service_enabled('mongod.service')
         try:
-            run_command(
-                ['systemctl', 'disable', '--now', 'mongod.service'],
-                check=was_active or was_enabled, log_path=log_path,
+            _disable_now(
+                'mongod.service', log_path,
+                allow_absent=not (was_active or was_enabled),
             )
             base.write_atomic_text(MONGODB_MODE_FILE, 'off\n')
             validate_mongodb(options, log_path)
-        except Exception:
-            with contextlib.suppress(Exception):
-                base.write_atomic_text(MONGODB_MODE_FILE, previous_mode + '\n')
-            _restore_service_state(
-                'mongod.service', was_active, was_enabled, log_path
+        except Exception as original_error:
+            errors: list[str] = []
+            _attempt(
+                errors, 'MongoDB mode restore', _restore_mode,
+                MONGODB_MODE_FILE, previous_mode, 'off',
             )
+            _attempt(
+                errors, 'MongoDB service restore', _restore_service_state,
+                'mongod.service', was_active, was_enabled, log_path,
+            )
+            _finish_rollback('MongoDB disable', original_error, errors)
             raise
         return
     if configured != MONGODB_VERSION:
@@ -395,24 +512,30 @@ def apply_mongodb(
             base.MONGODB_CONFIG, updated, stat.S_IMODE(metadata.st_mode)
         )
         _unmask_service('mongod.service', log_path)
-        run_command(['systemctl', 'enable', '--now', 'mongod.service'], log_path=log_path)
+        _enable_now('mongod.service', log_path)
         base.write_atomic_text(MONGODB_MODE_FILE, MONGODB_VERSION + '\n')
         validate_mongodb(options, log_path)
-    except Exception:
-        run_command(
-            ['systemctl', 'disable', '--now', 'mongod.service'],
-            check=False, log_path=log_path,
+    except Exception as original_error:
+        errors: list[str] = []
+        stopped = _attempt(
+            errors, 'candidate MongoDB stop', _disable_now,
+            'mongod.service', log_path,
         )
-        with contextlib.suppress(Exception):
-            _restore(base.MONGODB_CONFIG, previous_config)
-        with contextlib.suppress(Exception):
-            base.write_atomic_text(MONGODB_MODE_FILE, previous_mode + '\n')
-        _restore_service_state(
-            'mongod.service', was_active, was_enabled, log_path
+        _attempt(
+            errors, 'MongoDB configuration restore', _restore,
+            base.MONGODB_CONFIG, previous_config,
         )
+        if stopped:
+            _attempt(
+                errors, 'MongoDB mode restore', _restore_mode,
+                MONGODB_MODE_FILE, previous_mode, 'off',
+            )
+            _attempt(
+                errors, 'MongoDB service restore', _restore_service_state,
+                'mongod.service', was_active, was_enabled, log_path,
+            )
+        _finish_rollback('MongoDB enable', original_error, errors)
         raise
-    finally:
-        _unmask_service('mongod.service', log_path)
 
 
 def validate_varnish(options: dict[str, str], log_path: pathlib.Path) -> None:
@@ -487,21 +610,29 @@ def apply_varnish(
         try:
             base.write_atomic_text(VARNISH_MODE_FILE, 'off\n')
             base.rewrite_varnish_proxies(False, origin_port, log_path)
-            run_command(
-                ['systemctl', 'disable', '--now', 'varnish.service'],
-                check=previous_active or previous_enabled, log_path=log_path,
+            _disable_now(
+                'varnish.service', log_path,
+                allow_absent=not (previous_active or previous_enabled),
             )
             validate_varnish(effective, log_path)
             return
-        except Exception:
-            with contextlib.suppress(Exception):
-                base.write_atomic_text(VARNISH_MODE_FILE, previous_mode + '\n')
-            if previous_mode == 'on':
-                with contextlib.suppress(Exception):
-                    base.rewrite_varnish_proxies(True, origin_port, log_path)
-            _restore_service_state(
-                'varnish.service', previous_active, previous_enabled, log_path
+        except Exception as original_error:
+            errors: list[str] = []
+            _attempt(
+                errors, 'Varnish mode restore', _restore_mode,
+                VARNISH_MODE_FILE, previous_mode, 'off',
             )
+            if previous_mode == 'on':
+                _attempt(
+                    errors, 'Varnish proxy restore',
+                    base.rewrite_varnish_proxies,
+                    True, origin_port, log_path,
+                )
+            _attempt(
+                errors, 'Varnish service restore', _restore_service_state,
+                'varnish.service', previous_active, previous_enabled, log_path,
+            )
+            _finish_rollback('Varnish disable', original_error, errors)
             raise
 
     base.refresh_packages(platform, log_path)
@@ -525,8 +656,7 @@ def apply_varnish(
         run_command([binary, '-C', '-f', str(base.VARNISH_VCL)], log_path=log_path)
         run_command(['systemctl', 'daemon-reload'], log_path=log_path)
         _unmask_service('varnish.service', log_path)
-        run_command(['systemctl', 'enable', '--now', 'varnish.service'], log_path=log_path)
-        run_command(['systemctl', 'is-active', '--quiet', 'varnish.service'], log_path=log_path)
+        _enable_now('varnish.service', log_path)
         if not base.loopback_listener(base.VARNISH_PORT):
             raise BuildError('Varnish did not bind exclusively to 127.0.0.1:6081')
         if not base.loopback_listener(base.VARNISH_ADMIN_PORT):
@@ -534,29 +664,44 @@ def apply_varnish(
         base.write_atomic_text(VARNISH_MODE_FILE, 'on\n')
         base.rewrite_varnish_proxies(True, origin_port, log_path)
         validate_varnish(effective, log_path)
-    except Exception:
-        run_command(
-            ['systemctl', 'disable', '--now', 'varnish.service'],
-            check=False, log_path=log_path,
+    except Exception as original_error:
+        errors: list[str] = []
+        stopped = _attempt(
+            errors, 'candidate Varnish stop', _disable_now,
+            'varnish.service', log_path,
         )
-        with contextlib.suppress(Exception):
-            base.rewrite_varnish_proxies(
-                previous_mode == 'on', origin_port, log_path
+        _attempt(
+            errors, 'Varnish proxy restore', base.rewrite_varnish_proxies,
+            previous_mode == 'on', origin_port, log_path,
+        )
+        _attempt(
+            errors, 'Varnish VCL restore', _restore,
+            base.VARNISH_VCL, previous_vcl,
+        )
+        _attempt(
+            errors, 'Varnish systemd drop-in restore', _restore,
+            base.VARNISH_DROPIN, previous_dropin,
+        )
+        for path, captured in previous_secrets.items():
+            _attempt(
+                errors, f'Varnish secret restore {path}',
+                _restore, path, captured,
             )
-        with contextlib.suppress(Exception):
-            _restore(base.VARNISH_VCL, previous_vcl)
-            _restore(base.VARNISH_DROPIN, previous_dropin)
-            for path, captured in previous_secrets.items():
-                _restore(path, captured)
-            run_command(['systemctl', 'daemon-reload'], check=False, log_path=log_path)
-        with contextlib.suppress(Exception):
-            base.write_atomic_text(VARNISH_MODE_FILE, previous_mode + '\n')
-        _restore_service_state(
-            'varnish.service', previous_active, previous_enabled, log_path
+        _attempt(
+            errors, 'Varnish daemon-reload', run_command,
+            ['systemctl', 'daemon-reload'], log_path=log_path,
         )
+        if stopped:
+            _attempt(
+                errors, 'Varnish mode restore', _restore_mode,
+                VARNISH_MODE_FILE, previous_mode, 'off',
+            )
+            _attempt(
+                errors, 'Varnish service restore', _restore_service_state,
+                'varnish.service', previous_active, previous_enabled, log_path,
+            )
+        _finish_rollback('Varnish enable', original_error, errors)
         raise
-    finally:
-        _unmask_service('varnish.service', log_path)
 
 
 def ensure_safe_web_switch(
