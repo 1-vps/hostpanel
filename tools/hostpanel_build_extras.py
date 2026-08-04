@@ -90,6 +90,19 @@ def _open_temporary(path: pathlib.Path, mode: int) -> tuple[int, pathlib.Path]:
     raise BuildError(f'could not allocate temporary file for {path}')
 
 
+def _fsync_parent(path: pathlib.Path) -> None:
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, 'O_DIRECTORY'):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    directory_fd = os.open(path.parent, flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def write_atomic_bytes(
     path: pathlib.Path, payload: bytes, mode: int = 0o644,
     uid: int = 0, gid: int = 0, *,
@@ -145,6 +158,7 @@ def write_atomic_bytes(
         descriptor, fd = fd, -1
         os.close(descriptor)
         os.replace(temporary, path)
+        _fsync_parent(path)
     except BaseException as exc:
         active_error = exc
         raise
@@ -174,6 +188,35 @@ def write_atomic_text(path: pathlib.Path, text: str, mode: int = 0o644) -> None:
     write_atomic_bytes(path, text.encode('utf-8'), mode, uid, gid)
 
 
+def _command_text(value: object) -> str:
+    if value is None:
+        return ''
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace').strip()
+    return str(value).strip()
+
+
+def _varnish_service_active() -> bool:
+    completed = _IMPL.run_command(
+        ['systemctl', 'is-active', 'varnish.service'],
+        check=False, capture=True,
+    )
+    state = _command_text(getattr(completed, 'stdout', '')).lower()
+    error = _command_text(getattr(completed, 'stderr', ''))
+    if completed.returncode == 0 and state == 'active' and not error:
+        return True
+    if (
+        completed.returncode in {3, 4}
+        and state in {'inactive', 'failed', 'unknown', 'not-found'}
+        and not error
+    ):
+        return False
+    detail = error or state or str(completed.returncode)
+    raise BuildError(
+        f'could not determine active state for varnish.service: {detail}'
+    )
+
+
 def validate_varnish(options: dict[str, str], log_path: pathlib.Path) -> None:
     origin_port = _IMPL.varnish_origin_port(options) \
         if options.get('varnish') == 'on' else (
@@ -183,11 +226,7 @@ def validate_varnish(options: dict[str, str], log_path: pathlib.Path) -> None:
     if mode != options.get('varnish'):
         raise BuildError('Varnish runtime mode does not match build.conf')
     if mode == 'off':
-        active = _IMPL.run_command(
-            ['systemctl', 'is-active', '--quiet', 'varnish.service'],
-            check=False, capture=True,
-        )
-        if active.returncode == 0:
+        if _varnish_service_active():
             raise BuildError('Varnish service is active while varnish=off')
         for path in _IMPL.managed_proxy_files():
             if (
