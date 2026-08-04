@@ -29,6 +29,43 @@ class PowerDnsUnitStateTests(unittest.TestCase):
     def completed(command: list[str], returncode: int = 0, detail: str = ''):
         return subprocess.CompletedProcess(command, returncode, '', detail)
 
+    def test_state_probe_errors_fail_closed(self):
+        failure = subprocess.CompletedProcess(
+            ['systemctl'], 1, '', 'Failed to connect to bus'
+        )
+        with mock.patch.object(ADAPTER, 'run_command', return_value=failure):
+            with self.assertRaisesRegex(CONFIG.BuildError, 'active state'):
+                ADAPTER.service_active('pdns.service')
+            with self.assertRaisesRegex(CONFIG.BuildError, 'enabled state'):
+                ADAPTER.service_enabled('pdns.service')
+
+        inactive = subprocess.CompletedProcess(['systemctl'], 3, '', '')
+        disabled = subprocess.CompletedProcess(['systemctl'], 1, '', '')
+        with mock.patch.object(ADAPTER, 'run_command', return_value=inactive):
+            self.assertFalse(ADAPTER.service_active('pdns.service'))
+        with mock.patch.object(ADAPTER, 'run_command', return_value=disabled):
+            self.assertFalse(ADAPTER.service_enabled('pdns.service'))
+
+    def test_reconciled_mask_token_suppresses_core_fallback_restart(self):
+        events: list[list[str]] = []
+        with mock.patch.object(
+            ADAPTER.operations, 'service_active', return_value=True
+        ), mock.patch.object(
+            ADAPTER, 'run_command',
+            side_effect=lambda command, **kwargs: events.append(command)
+            or self.completed(command),
+        ):
+            token = ADAPTER.mask_service(
+                'pdns.service', pathlib.Path('/tmp/log')
+            )
+        self.assertTrue(token)
+        ADAPTER._complete_masked_service('pdns.service')
+        self.assertFalse(token)
+        self.assertIn(['systemctl', 'stop', 'pdns.service'], events)
+        self.assertIn(
+            ['systemctl', 'mask', '--runtime', 'pdns.service'], events
+        )
+
     def test_reload_failure_restores_active_but_disabled_bind(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
         options['dns'] = 'powerdns'
@@ -66,7 +103,7 @@ class PowerDnsUnitStateTests(unittest.TestCase):
         self.assertNotIn(['systemctl', 'enable', 'bind9.service'], events)
         persist.assert_not_called()
 
-    def test_rollback_stop_failure_does_not_start_old_dns_or_rewrite_mode(self):
+    def test_rollback_stop_failure_does_not_mutate_boot_or_mode_state(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
         options['dns'] = 'powerdns'
         states = {
@@ -99,10 +136,14 @@ class PowerDnsUnitStateTests(unittest.TestCase):
                     options, self.platform, pathlib.Path('/tmp/log')
                 )
 
-        self.assertNotIn(['systemctl', 'start', 'bind9.service'], events)
-        self.assertNotIn(
-            ['systemctl', 'enable', '--now', 'bind9.service'], events
-        )
+        failure_index = events.index(['systemctl', 'stop', 'pdns.service'])
+        after_failure = events[failure_index + 1:]
+        self.assertFalse(any(
+            len(command) > 1 and command[1] in {
+                'enable', 'disable', 'unmask', 'start'
+            }
+            for command in after_failure
+        ))
         persist.assert_not_called()
 
     def test_obsolete_unit_disable_failure_rolls_back_before_mode_persist(self):
