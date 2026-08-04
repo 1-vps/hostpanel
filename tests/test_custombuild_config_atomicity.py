@@ -50,7 +50,9 @@ class CustomBuildConfigAtomicityTests(unittest.TestCase):
                 return_value={'security.selinux': b'context'},
             ), mock.patch.object(
                 config, '_apply_xattrs', side_effect=apply_xattrs
-            ), mock.patch.object(config.os, 'fchown'), \
+            ), mock.patch.object(
+                config, '_apply_expected_selinux_context'
+            ) as selinux, mock.patch.object(config.os, 'fchown'), \
                  mock.patch.object(config.os, 'replace', side_effect=replace), \
                  mock.patch.object(
                      config, '_fsync_parent',
@@ -61,8 +63,42 @@ class CustomBuildConfigAtomicityTests(unittest.TestCase):
 
             self.assertLess(events.index('xattrs'), events.index('replace'))
             self.assertEqual(events[-1], 'parent-fsync')
+            selinux.assert_not_called()
             chmod.assert_not_called()
             chown.assert_not_called()
+            self.assertEqual(config.read_config(target)['dns'], 'powerdns')
+
+    def test_new_file_uses_final_path_selinux_context_before_replace(self) -> None:
+        events: list[str] = []
+        with tempfile.TemporaryDirectory() as directory:
+            target = pathlib.Path(directory) / 'build.conf'
+            original_replace = os.replace
+
+            def apply_selinux(fd: int, path: pathlib.Path, mode: int) -> None:
+                self.assertGreaterEqual(fd, 0)
+                self.assertEqual(path, target)
+                self.assertEqual(mode, 0o600)
+                events.append('selinux')
+
+            def replace(source, destination) -> None:
+                events.append('replace')
+                original_replace(source, destination)
+
+            with mock.patch.object(
+                config, 'owner_ids', return_value=(os.getuid(), os.getgid())
+            ), mock.patch.object(config.os, 'fchown'), mock.patch.object(
+                config, '_apply_expected_selinux_context',
+                side_effect=apply_selinux,
+            ) as selinux, mock.patch.object(
+                config, '_apply_xattrs'
+            ) as xattrs, mock.patch.object(
+                config.os, 'replace', side_effect=replace
+            ), mock.patch.object(config, '_fsync_parent'):
+                config.write_config(target, self.options())
+
+            selinux.assert_called_once()
+            xattrs.assert_not_called()
+            self.assertLess(events.index('selinux'), events.index('replace'))
             self.assertEqual(config.read_config(target)['dns'], 'powerdns')
 
     def test_short_writes_are_completed(self) -> None:
@@ -81,7 +117,9 @@ class CustomBuildConfigAtomicityTests(unittest.TestCase):
             with mock.patch.object(
                 config, 'owner_ids', return_value=(os.getuid(), os.getgid())
             ), mock.patch.object(config.os, 'write', side_effect=short_write), \
-                 mock.patch.object(config.os, 'fchown'):
+                 mock.patch.object(config.os, 'fchown'), mock.patch.object(
+                     config, '_apply_expected_selinux_context'
+                 ):
                 config.write_config(target, self.options())
 
             self.assertGreater(calls, 1)
@@ -109,6 +147,10 @@ class CustomBuildConfigAtomicityTests(unittest.TestCase):
         writer = source.split('def write_config(', 1)[1]
         self.assertLess(writer.index('os.fchmod(fd, 0o600)'), writer.index('_apply_xattrs('))
         self.assertLess(writer.index('_apply_xattrs('), writer.index('os.replace('))
+        self.assertLess(
+            writer.index('_apply_expected_selinux_context('),
+            writer.index('os.replace('),
+        )
         self.assertNotIn('os.chmod(path', writer)
         self.assertNotIn('os.chown(path', writer)
 
