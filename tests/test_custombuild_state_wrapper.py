@@ -44,13 +44,21 @@ class OptionalServiceStateWrapperTests(unittest.TestCase):
             (subprocess.CompletedProcess([], 0, 'enabled\n', ''), True),
             (subprocess.CompletedProcess([], 0, 'static\n', ''), False),
             (subprocess.CompletedProcess([], 1, 'disabled\n', ''), False),
-            (subprocess.CompletedProcess([], 1, 'masked\n', ''), False),
         )
         for completed, expected in cases:
             with self.subTest(completed=completed), mock.patch.object(
                 STATE, 'run_command', return_value=completed
             ):
                 self.assertIs(STATE._service_enabled('unit.service'), expected)
+        for state in ('masked', 'masked-runtime'):
+            with self.subTest(state=state), mock.patch.object(
+                STATE,
+                'run_command',
+                return_value=subprocess.CompletedProcess([], 1, state + '\n', ''),
+            ), self.assertRaisesRegex(
+                BuildError, 'refusing to remove an administrative mask'
+            ):
+                STATE._service_enabled('unit.service')
         with mock.patch.object(
             STATE, 'run_command', return_value=subprocess.CompletedProcess(
                 [], 0, '', ''
