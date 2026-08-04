@@ -64,7 +64,7 @@ class PowerDnsUnitStateTests(unittest.TestCase):
         self.assertIn(['systemctl', 'start', 'bind9.service'], events)
         self.assertIn(['systemctl', 'disable', 'pdns.service'], events)
         self.assertNotIn(['systemctl', 'enable', 'bind9.service'], events)
-        persist.assert_called_once_with('bind')
+        persist.assert_not_called()
 
     def test_rollback_stop_failure_does_not_start_old_dns_or_rewrite_mode(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
@@ -139,8 +139,7 @@ class PowerDnsUnitStateTests(unittest.TestCase):
         self.assertIn(
             ['systemctl', 'enable', '--now', 'bind9.service'], events
         )
-        self.assertNotIn(mock.call('powerdns'), persist.call_args_list)
-        persist.assert_called_once_with('bind')
+        persist.assert_not_called()
 
     def test_successful_handoff_disables_obsolete_units_before_persisting(self):
         options = dict(CONFIG.DEFAULT_OPTIONS)
