@@ -20,6 +20,7 @@ sys.modules[_SPEC.name] = _IMPL
 _SPEC.loader.exec_module(_IMPL)
 
 POWERDNS = _IMPL.POWERDNS
+STATE = _IMPL.STATE
 
 
 def _dns_handoff_rolls_back_on_non_build_error(self) -> None:
@@ -61,6 +62,30 @@ def _dns_handoff_rolls_back_on_non_build_error(self) -> None:
 _IMPL.DeepCustomBuildRegressionTests.test_dns_handoff_rolls_back_on_non_build_error = (
     _dns_handoff_rolls_back_on_non_build_error
 )
+
+
+def _with_inactive_optional_service(original):
+    def wrapped(self):
+        with mock.patch.object(
+            STATE, '_service_active', return_value=False
+        ), mock.patch.object(
+            STATE, '_service_enabled', return_value=False
+        ):
+            return original(self)
+    wrapped.__name__ = original.__name__
+    return wrapped
+
+
+for _method_name in (
+    'test_mongodb_masks_service_before_package_scripts',
+    'test_varnish_masks_service_checks_ports_and_repairs_proxies',
+):
+    _original = getattr(_IMPL.DeepCustomBuildRegressionTests, _method_name)
+    setattr(
+        _IMPL.DeepCustomBuildRegressionTests,
+        _method_name,
+        _with_inactive_optional_service(_original),
+    )
 
 for _name in dir(_IMPL):
     _value = getattr(_IMPL, _name)
