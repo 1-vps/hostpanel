@@ -26,6 +26,7 @@ _ORIGINAL_ATTEMPT = _IMPL._attempt
 _ORIGINAL_FINISH_ROLLBACK = _IMPL._finish_rollback
 _ROLLBACK_GUARDS: dict[int, bool] = {}
 
+LegacyCapturedFile = tuple[bytes, int, int, int]
 CapturedFile = tuple[bytes, int, int, int, dict[str, bytes]]
 
 
@@ -79,11 +80,18 @@ def _capture(path: pathlib.Path) -> CapturedFile | None:
     )
 
 
-def _restore(path: pathlib.Path, captured: CapturedFile | None) -> None:
+def _restore(
+    path: pathlib.Path,
+    captured: CapturedFile | LegacyCapturedFile | None,
+) -> None:
     if captured is None:
         path.unlink(missing_ok=True)
         return
-    payload, mode, uid, gid, xattrs = captured
+    if len(captured) == 4:
+        payload, mode, uid, gid = captured
+        xattrs: dict[str, bytes] = {}
+    else:
+        payload, mode, uid, gid, xattrs = captured
     _IMPL.base.write_atomic_bytes(path, payload, mode, uid, gid)
     _IMPL.base._apply_xattrs(path, xattrs)
 
