@@ -17,7 +17,7 @@ from hostpanel_build_config import BuildError
 
 
 class PowerDnsWriterTests(unittest.TestCase):
-    def test_backend_selection_trusts_every_included_conf(self):
+    def test_backend_selection_trusts_directory_and_every_included_conf(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             native = root / 'pdns.conf'
@@ -30,21 +30,47 @@ class PowerDnsWriterTests(unittest.TestCase):
 
             def trust(path: pathlib.Path) -> None:
                 if path == ignored:
-                    raise BuildError(f'unsafe root-managed configuration file: {path}')
+                    raise BuildError(
+                        f'unsafe root-managed configuration file: {path}'
+                    )
 
             with mock.patch.object(
+                ADAPTER, 'trusted_root_directory_chain'
+            ) as trusted_chain, mock.patch.object(
                 ADAPTER, 'trusted_root_file', side_effect=trust
-            ) as trusted:
+            ) as trusted_file:
                 with self.assertRaisesRegex(
                     BuildError, 'unsafe root-managed configuration file'
                 ):
                     ADAPTER.select_powerdns_backend_config(
                         native, include, default
                     )
+            trusted_chain.assert_called_once_with(include)
             self.assertEqual(
-                trusted.call_args_list,
+                trusted_file.call_args_list,
                 [mock.call(native), mock.call(ignored)],
             )
+
+    def test_backend_selection_rejects_unsafe_include_directory_before_glob(self):
+        native = pathlib.Path('/etc/powerdns/pdns.conf')
+        include = pathlib.Path('/unsafe/pdns.d')
+        default = include / 'hostpanel-bind.conf'
+        with mock.patch.object(
+            ADAPTER, 'trusted_root_file'
+        ) as trusted_file, mock.patch.object(
+            ADAPTER, 'trusted_root_directory_chain',
+            side_effect=BuildError('unsafe root-managed directory'),
+        ), mock.patch.object(
+            ADAPTER.pathlib.Path, 'glob'
+        ) as glob:
+            with self.assertRaisesRegex(
+                BuildError, 'unsafe root-managed directory'
+            ):
+                ADAPTER.select_powerdns_backend_config(
+                    native, include, default
+                )
+        trusted_file.assert_called_once_with(native)
+        glob.assert_not_called()
 
     def test_root_writer_preserves_xattrs_and_fsyncs_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
