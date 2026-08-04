@@ -43,8 +43,6 @@ def install_optional_rollback_guard() -> None:
             return False
         if label in _CANDIDATE_STOP_LABELS and function is state._disable_now:
             kwargs = dict(kwargs)
-            # A package failure before the unit is materialized is a safe no-op.
-            # Every other stop error still fails and blocks all later rollback.
             kwargs['allow_absent'] = True
         return original(errors, label, function, *args, **kwargs)
 
@@ -52,13 +50,25 @@ def install_optional_rollback_guard() -> None:
     state._attempt = guarded_attempt
 
 
+def guarded_optional_apply(function):
+    def apply(*args, **kwargs):
+        previous = state._attempt
+        install_optional_rollback_guard()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            state._attempt = previous
+
+    apply._hostpanel_optional_rollback_guard = True  # type: ignore[attr-defined]
+    return apply
+
+
 def install_runtime_adapters(selected_config: pathlib.Path) -> None:
     powerdns_adapter.install()
     mongodb_adapter.install()
     state.install()
-    install_optional_rollback_guard()
-    cli.apply_mongodb = state.apply_mongodb
-    cli.apply_varnish = state.apply_varnish
+    cli.apply_mongodb = guarded_optional_apply(state.apply_mongodb)
+    cli.apply_varnish = guarded_optional_apply(state.apply_varnish)
 
     def validate_mongodb(log_path: pathlib.Path) -> None:
         state.validate_mongodb(read_config(selected_config), log_path)
