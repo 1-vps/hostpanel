@@ -21,10 +21,13 @@ MODULES=(
   hostpanel_build_cli.py
   hostpanel_build_ssl.py
   hostpanel_build_extras.py
+  hostpanel_build_extras_impl.py
   hostpanel_build_extras_state.py
   hostpanel_build_entry.py
   hostpanel_build_powerdns_adapter.py
+  hostpanel_build_powerdns_adapter_impl.py
   hostpanel_build_mongodb_adapter.py
+  patch_custombuild_runtime_impl.py
 )
 EXECUTABLES=(
   hostpanel_build_web.py
