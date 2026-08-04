@@ -25,6 +25,8 @@ class PowerDnsPermissionsAdapterTests(unittest.TestCase):
         'mask_service',
         'reconcile_dns_services',
         'configure_powerdns',
+        'write_atomic_root',
+        'select_powerdns_backend_config',
     )
 
     def setUp(self):
@@ -135,6 +137,11 @@ class PowerDnsPermissionsAdapterTests(unittest.TestCase):
         self.assertIs(ADAPTER.operations.native_powerdns_config, ADAPTER.native_powerdns_config)
         self.assertIs(ADAPTER.operations.mask_service, ADAPTER.mask_service)
         self.assertIs(ADAPTER.operations.service_active, ADAPTER.service_active)
+        self.assertIs(ADAPTER.operations.write_atomic_root, ADAPTER.write_atomic_root)
+        self.assertIs(
+            ADAPTER.operations.select_powerdns_backend_config,
+            ADAPTER.select_powerdns_backend_config,
+        )
 
 
 if __name__ == '__main__':
