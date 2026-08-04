@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
+import stat
 import sys
 import types
 
@@ -23,6 +25,8 @@ run_command = _IMPL.run_command
 _ORIGINAL_ATTEMPT = _IMPL._attempt
 _ORIGINAL_FINISH_ROLLBACK = _IMPL._finish_rollback
 _ROLLBACK_GUARDS: dict[int, bool] = {}
+
+CapturedFile = tuple[bytes, int, int, int, dict[str, bytes]]
 
 
 def _service_active(unit: str) -> bool:
@@ -64,6 +68,26 @@ def _service_enabled(unit: str) -> bool:
     )
 
 
+def _capture(path: pathlib.Path) -> CapturedFile | None:
+    if not os.path.lexists(path):
+        return None
+    metadata = _IMPL._trusted_config(path)
+    xattrs = _IMPL.base._capture_xattrs(path)
+    return (
+        path.read_bytes(), stat.S_IMODE(metadata.st_mode),
+        metadata.st_uid, metadata.st_gid, xattrs,
+    )
+
+
+def _restore(path: pathlib.Path, captured: CapturedFile | None) -> None:
+    if captured is None:
+        path.unlink(missing_ok=True)
+        return
+    payload, mode, uid, gid, xattrs = captured
+    _IMPL.base.write_atomic_bytes(path, payload, mode, uid, gid)
+    _IMPL.base._apply_xattrs(path, xattrs)
+
+
 def _attempt(errors: list[str], label: str, function, *args, **kwargs) -> bool:
     key = id(errors)
     if label.startswith('candidate ') and label.endswith(' stop'):
@@ -88,12 +112,15 @@ def _finish_rollback(
 
 for _name in dir(_IMPL):
     if _name not in {
-        '_service_active', '_service_enabled', '_attempt', '_finish_rollback'
+        '_service_active', '_service_enabled', '_capture', '_restore',
+        '_attempt', '_finish_rollback',
     } and _name not in globals():
         globals()[_name] = getattr(_IMPL, _name)
 
 _IMPL._service_active = _service_active
 _IMPL._service_enabled = _service_enabled
+_IMPL._capture = _capture
+_IMPL._restore = _restore
 _IMPL._attempt = _attempt
 _IMPL._finish_rollback = _finish_rollback
 
@@ -113,4 +140,6 @@ class _ForwardingModule(types.ModuleType):
             setattr(implementation, name, value)
 
 
-sys.modules[__name__].__class__ = _ForwardingModule
+_module = sys.modules.get(__name__)
+if _module is not None:
+    _module.__class__ = _ForwardingModule
