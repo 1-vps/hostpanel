@@ -8,6 +8,7 @@ from typing import Sequence
 import hostpanel_build_cli as cli
 import hostpanel_build_extras_state as state
 import hostpanel_build_operations_adapter as operations_adapter
+import hostpanel_build_optional_postcheck_adapter as optional_postcheck_adapter
 import hostpanel_build_powerdns_adapter as powerdns_adapter
 import hostpanel_build_mongodb_adapter as mongodb_adapter
 import hostpanel_build_web_transaction_adapter as web_transaction_adapter
@@ -62,6 +63,8 @@ def guarded_optional_apply(function):
             state._attempt = previous
 
     apply._hostpanel_optional_rollback_guard = True  # type: ignore[attr-defined]
+    if getattr(function, '_hostpanel_transactional_post_apply', False):
+        apply._hostpanel_transactional_post_apply = True  # type: ignore[attr-defined]
     return apply
 
 
@@ -97,6 +100,20 @@ def install_runtime_adapters(selected_config: pathlib.Path) -> None:
     ):
         state.ensure_safe_web_switch(component, options, mode_file)
 
+        def optional_guarded_execute(
+            inner_component, inner_options, inner_platform,
+            inner_log_path, inner_backup_dir,
+            inner_python_path, inner_doctor_path, inner_roles,
+            inner_web_helper, inner_mode_file,
+        ):
+            return optional_postcheck_adapter.guarded_execute_build(
+                _BASE_EXECUTE_BUILD,
+                inner_component, inner_options, inner_platform,
+                inner_log_path, inner_backup_dir,
+                inner_python_path, inner_doctor_path, inner_roles,
+                inner_web_helper, inner_mode_file,
+            )
+
         def powerdns_guarded_execute(
             inner_component, inner_options, inner_platform,
             inner_log_path, inner_backup_dir,
@@ -104,7 +121,7 @@ def install_runtime_adapters(selected_config: pathlib.Path) -> None:
             inner_web_helper, inner_mode_file,
         ):
             return powerdns_adapter.guarded_apply_build(
-                _BASE_EXECUTE_BUILD,
+                optional_guarded_execute,
                 inner_component, inner_options, inner_platform,
                 inner_log_path, inner_backup_dir,
                 inner_python_path, inner_doctor_path, inner_roles,
