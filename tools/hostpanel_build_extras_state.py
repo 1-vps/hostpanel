@@ -28,6 +28,9 @@ _ORIGINAL_FINISH_ROLLBACK = _IMPL._finish_rollback
 _ORIGINAL_APPLY_MONGODB = _IMPL.apply_mongodb
 _ORIGINAL_APPLY_VARNISH = _IMPL.apply_varnish
 _ROLLBACK_GUARDS: dict[int, bool] = {}
+_MONGODB_RPM_KEY = pathlib.Path(
+    '/etc/pki/rpm-gpg/MONGODB-SERVER-8.0.gpg'
+)
 
 LegacyCapturedFile = tuple[bytes, int, int, int]
 CapturedFile = tuple[bytes, int, int, int, dict[str, bytes]]
@@ -159,14 +162,47 @@ def _apply_with_post_validation(
         )
 
 
+def _mongodb_repository_paths() -> tuple[pathlib.Path, ...]:
+    return (
+        _IMPL.base.MONGODB_APT_KEY,
+        _IMPL.base.MONGODB_APT_LIST,
+        _IMPL.base.MONGODB_RPM_REPO,
+        _MONGODB_RPM_KEY,
+    )
+
+
 def apply_mongodb(
     options, platform, log_path, backup_dir,
     *, post_apply: Callable[[], None] | None = None,
 ) -> None:
-    _apply_with_post_validation(
-        _ORIGINAL_APPLY_MONGODB, 'validate_mongodb', post_apply,
-        options, platform, log_path, backup_dir,
-    )
+    repository_state: dict[
+        pathlib.Path, CapturedFile | LegacyCapturedFile | None
+    ] | None = None
+    if options.get('mongodb', 'off') == _IMPL.MONGODB_VERSION:
+        _IMPL.base.require_root()
+        repository_state = {
+            path: _capture(path) for path in _mongodb_repository_paths()
+        }
+    try:
+        _apply_with_post_validation(
+            _ORIGINAL_APPLY_MONGODB, 'validate_mongodb', post_apply,
+            options, platform, log_path, backup_dir,
+        )
+    except Exception as original_error:
+        if repository_state is None:
+            raise
+        errors: list[str] = []
+        for path, captured in repository_state.items():
+            try:
+                _restore(path, captured)
+            except Exception as exc:
+                errors.append(f'MongoDB repository restore {path}: {exc}')
+        if errors:
+            raise BuildError(
+                f'MongoDB build failed ({original_error}); repository rollback '
+                'also failed: ' + '; '.join(errors)
+            ) from original_error
+        raise
 
 
 def apply_varnish(
