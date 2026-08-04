@@ -14,6 +14,11 @@ IMPLEMENTATION_NAME = "harden_install_entry_impl.py"
 EXPECTED_IMPLEMENTATION_BLOB = "739a29690bd0e938eb291d7d1921af751bd68e1d"
 EXPECTED_DRIVER_BLOB = "19d29feb55969d6925c87ea5b8419a624d4cdb52"
 EXPECTED_UPDATE_INSTALLER_BLOB = "84e2c3bb65c2879eb706e35e37c73e23b7f39e92"
+RUNTIME_BLOB_OVERRIDES = {
+    "tools/hostpanel_build_web_transaction_adapter.py": (
+        "6b840081201e4d29a4adfd55b4a894cbcd71c030"
+    ),
+}
 
 HARDENER_SUPPORT_FILES = {
     f"tools/{IMPLEMENTATION_NAME}": (EXPECTED_IMPLEMENTATION_BLOB, 0o644),
@@ -181,6 +186,7 @@ def _load_implementation(path: pathlib.Path):
 
 
 IMPLEMENTATION = _load_implementation(_resolve_implementation())
+IMPLEMENTATION.CUSTOMBUILD_RUNTIME_BLOBS.update(RUNTIME_BLOB_OVERRIDES)
 for _name in dir(IMPLEMENTATION):
     if not _name.startswith("__") and _name not in globals():
         globals()[_name] = getattr(IMPLEMENTATION, _name)
