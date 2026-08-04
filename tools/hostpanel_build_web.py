@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import ctypes.util
 import importlib.util
+import os
 import pathlib
+import stat
 import sys
 import types
 
@@ -21,6 +25,7 @@ _SPEC.loader.exec_module(_IMPL)
 _PUBLIC_OVERRIDES = {
     'main', 'activate_openlitespeed', '_restore_service_state',
     '_service_enabled', '_service_enablement_state',
+    '_replace_atomic', '_apply_expected_selinux_context',
 }
 for _name in dir(_IMPL):
     if _name not in _PUBLIC_OVERRIDES and _name not in globals():
@@ -32,6 +37,112 @@ _DISABLED_STATES = {
     'disabled', 'static', 'indirect', 'generated', 'transient',
     'masked', 'masked-runtime', 'not-found',
 }
+
+
+def _apply_expected_selinux_context(
+    fd: int, path: pathlib.Path, mode: int
+) -> None:
+    """Apply the policy context for the final pathname to a new temporary inode."""
+    library_name = ctypes.util.find_library('selinux')
+    selinuxfs = pathlib.Path('/sys/fs/selinux/enforce')
+    if not library_name:
+        if selinuxfs.exists():
+            raise BuildError(
+                'SELinux is enabled but libselinux could not be loaded'
+            )
+        return
+    try:
+        library = ctypes.CDLL(library_name, use_errno=True)
+    except OSError as exc:
+        if selinuxfs.exists():
+            raise BuildError('could not load libselinux') from exc
+        return
+
+    library.is_selinux_enabled.argtypes = []
+    library.is_selinux_enabled.restype = ctypes.c_int
+    enabled = library.is_selinux_enabled()
+    if enabled < 0:
+        raise BuildError('could not determine whether SELinux is enabled')
+    if enabled == 0:
+        return
+
+    library.matchpathcon.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_uint,
+        ctypes.POINTER(ctypes.c_char_p),
+    ]
+    library.matchpathcon.restype = ctypes.c_int
+    library.fsetfilecon.argtypes = [ctypes.c_int, ctypes.c_char_p]
+    library.fsetfilecon.restype = ctypes.c_int
+    library.freecon.argtypes = [ctypes.c_void_p]
+    library.freecon.restype = None
+
+    context = ctypes.c_char_p()
+    expected_mode = stat.S_IFREG | stat.S_IMODE(mode)
+    if library.matchpathcon(
+        os.fsencode(path), expected_mode, ctypes.byref(context)
+    ) != 0:
+        error = ctypes.get_errno()
+        raise BuildError(
+            f'could not determine SELinux context for {path}: '
+            f'{os.strerror(error)}'
+        )
+    try:
+        if not context.value:
+            raise BuildError(f'empty SELinux context for {path}')
+        if library.fsetfilecon(fd, context) != 0:
+            error = ctypes.get_errno()
+            raise BuildError(
+                f'could not apply SELinux context for {path}: '
+                f'{os.strerror(error)}'
+            )
+    finally:
+        library.freecon(ctypes.cast(context, ctypes.c_void_p))
+
+
+def _replace_atomic(
+    path: pathlib.Path, text: str, mode: int, uid: int, gid: int,
+    xattrs: dict[str, bytes] | None,
+) -> None:
+    fd, temporary = _open_temporary(path, mode)
+    active_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
+    try:
+        view = memoryview(text.encode('utf-8'))
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise BuildError(f'could not write {temporary}')
+            view = view[written:]
+        os.fsync(fd)
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, mode)
+        if xattrs is not None:
+            _apply_xattrs(temporary, xattrs)
+        else:
+            _apply_expected_selinux_context(fd, path, mode)
+        os.fsync(fd)
+        descriptor, fd = fd, -1
+        os.close(descriptor)
+        os.replace(temporary, path)
+        _fsync_parent(path)
+    except BaseException as exc:
+        active_error = exc
+        raise
+    finally:
+        if fd >= 0:
+            descriptor, fd = fd, -1
+            try:
+                os.close(descriptor)
+            except BaseException as exc:
+                cleanup_error = exc
+        try:
+            temporary.unlink(missing_ok=True)
+        except BaseException as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if active_error is None and cleanup_error is not None:
+            raise cleanup_error
 
 
 def _service_enablement_state(name: str) -> str:
@@ -119,6 +230,8 @@ def activate_openlitespeed() -> None:
         raise
 
 
+_IMPL._replace_atomic = _replace_atomic
+_IMPL._apply_expected_selinux_context = _apply_expected_selinux_context
 _IMPL._service_enablement_state = _service_enablement_state
 _IMPL._service_enabled = _service_enabled
 _IMPL._restore_service_state = _restore_service_state
