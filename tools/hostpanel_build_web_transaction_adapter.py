@@ -192,10 +192,19 @@ def _trusted_directory(path: pathlib.Path, *, private: bool) -> None:
     if (
         not stat.S_ISDIR(metadata.st_mode)
         or stat.S_ISLNK(metadata.st_mode)
-        or metadata.st_uid != os.geteuid()
+        or metadata.st_uid not in {0, os.geteuid()}
         or stat.S_IMODE(metadata.st_mode) & disallowed
     ):
         raise BuildError(f'unsafe web transaction directory: {path}')
+
+
+def _trusted_directory_chain(path: pathlib.Path) -> None:
+    current = path
+    while True:
+        _trusted_directory(current, private=False)
+        if current.parent == current:
+            return
+        current = current.parent
 
 
 def _fsync_parent(path: pathlib.Path) -> None:
@@ -228,6 +237,7 @@ def _transaction_state_path(backup_dir: pathlib.Path) -> pathlib.Path:
 
 
 def _trusted_tool(path: pathlib.Path, *, executable: bool) -> None:
+    _trusted_directory_chain(path.parent)
     try:
         metadata = path.lstat()
     except OSError as exc:
@@ -235,12 +245,43 @@ def _trusted_tool(path: pathlib.Path, *, executable: bool) -> None:
     if (
         not stat.S_ISREG(metadata.st_mode)
         or stat.S_ISLNK(metadata.st_mode)
-        or metadata.st_uid != os.geteuid()
+        or metadata.st_uid not in {0, os.geteuid()}
         or metadata.st_nlink != 1
         or stat.S_IMODE(metadata.st_mode) & 0o022
         or (executable and not os.access(path, os.X_OK))
     ):
         raise BuildError(f'unsafe web transaction tool: {path}')
+
+
+def _trusted_executable(path: pathlib.Path) -> pathlib.Path:
+    _trusted_directory_chain(path.parent)
+    try:
+        link_metadata = path.lstat()
+    except OSError as exc:
+        raise BuildError(f'cannot inspect web transaction executable: {path}') from exc
+    if stat.S_ISLNK(link_metadata.st_mode):
+        if link_metadata.st_uid not in {0, os.geteuid()}:
+            raise BuildError(f'unsafe web transaction executable symlink: {path}')
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError as exc:
+            raise BuildError(
+                f'cannot resolve web transaction executable: {path}'
+            ) from exc
+        _trusted_directory_chain(resolved.parent)
+        metadata = resolved.lstat()
+    else:
+        resolved = path
+        metadata = link_metadata
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid not in {0, os.geteuid()}
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or not os.access(resolved, os.X_OK)
+    ):
+        raise BuildError(f'unsafe web transaction executable: {path}')
+    return resolved
 
 
 def _state_helper(web_helper: pathlib.Path) -> pathlib.Path:
@@ -312,7 +353,7 @@ def guarded_execute_build(
             python_path, doctor_path, roles, web_helper, mode_file,
         )
 
-    _trusted_tool(python_path, executable=True)
+    _trusted_executable(python_path)
     _trusted_tool(web_helper, executable=False)
     state_helper = _state_helper(web_helper)
     state_path = _transaction_state_path(backup_dir)
