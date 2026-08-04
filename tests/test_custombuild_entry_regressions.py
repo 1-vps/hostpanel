@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import pathlib
+import subprocess
 import sys
 import unittest
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 import hostpanel_build_cli as cli
+import hostpanel_build_entry as entry
 import hostpanel_build_extras_state as state
 from hostpanel_build_config import BuildError
 
@@ -44,6 +46,42 @@ class MongoDbInstalledHardenerTests(unittest.TestCase):
         finally:
             state._IMPL.harden_mongod_config = original_impl
             state._IMPL.base.harden_mongod_config = original_base
+
+
+class PowerDnsWatcherLifecycleTests(unittest.TestCase):
+    def test_path_watcher_is_pulled_in_by_every_powerdns_start(self) -> None:
+        operations = entry.powerdns_adapter.operations
+        original_install = operations.install_powerdns_units
+        writes: dict[pathlib.Path, str] = {}
+        commands: list[list[str]] = []
+        try:
+            with mock.patch.object(
+                operations.shutil, 'which', return_value='/usr/bin/pdns_control'
+            ), mock.patch.object(
+                operations, 'write_atomic_root',
+                side_effect=lambda path, text, mode=0o644: writes.__setitem__(
+                    path, text
+                ),
+            ), mock.patch.object(
+                operations, 'run_command',
+                side_effect=lambda command, **kwargs: commands.append(command)
+                or subprocess.CompletedProcess(command, 0, '', ''),
+            ):
+                entry.install_powerdns_watcher_lifecycle_guard()
+                operations.install_powerdns_units(
+                    pathlib.Path('/etc/bind/named.conf.local'),
+                    pathlib.Path('/etc/bind/zones'),
+                    'bind',
+                )
+        finally:
+            operations.install_powerdns_units = original_install
+
+        path_unit = writes[operations.PDNS_PATH_UNIT]
+        self.assertIn('BindsTo=pdns.service', path_unit)
+        self.assertIn('After=pdns.service', path_unit)
+        self.assertIn('WantedBy=pdns.service', path_unit)
+        self.assertNotIn('WantedBy=multi-user.target', path_unit)
+        self.assertIn(['systemctl', 'daemon-reload'], commands)
 
 
 class CliRegressionTests(unittest.TestCase):
