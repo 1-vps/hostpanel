@@ -7,6 +7,7 @@ from typing import Sequence
 
 import hostpanel_build_cli as cli
 import hostpanel_build_extras_state as state
+import hostpanel_build_operations_adapter as operations_adapter
 import hostpanel_build_powerdns_adapter as powerdns_adapter
 import hostpanel_build_mongodb_adapter as mongodb_adapter
 from hostpanel_build_config import DEFAULT_CONFIG, read_config
@@ -64,6 +65,7 @@ def guarded_optional_apply(function):
 
 
 def install_runtime_adapters(selected_config: pathlib.Path) -> None:
+    operations_adapter.install()
     powerdns_adapter.install()
     mongodb_adapter.install()
     state.install()
