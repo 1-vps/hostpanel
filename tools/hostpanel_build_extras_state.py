@@ -1,6 +1,7 @@
 """Hardened loader for optional-service runtime state and rollback."""
 from __future__ import annotations
 
+from collections.abc import Callable
 import importlib.util
 import os
 import pathlib
@@ -24,6 +25,8 @@ BuildError = _IMPL.BuildError
 run_command = _IMPL.run_command
 _ORIGINAL_ATTEMPT = _IMPL._attempt
 _ORIGINAL_FINISH_ROLLBACK = _IMPL._finish_rollback
+_ORIGINAL_APPLY_MONGODB = _IMPL.apply_mongodb
+_ORIGINAL_APPLY_VARNISH = _IMPL.apply_varnish
 _ROLLBACK_GUARDS: dict[int, bool] = {}
 
 LegacyCapturedFile = tuple[bytes, int, int, int]
@@ -119,10 +122,71 @@ def _finish_rollback(
         _ROLLBACK_GUARDS.pop(id(errors), None)
 
 
+def _apply_with_post_validation(
+    function,
+    validator_name: str,
+    post_apply: Callable[[], None] | None,
+    *args,
+) -> None:
+    if post_apply is None:
+        function(*args)
+        return
+    if not callable(post_apply):
+        raise BuildError('optional-component post-apply check is not callable')
+
+    original_validator = getattr(_IMPL, validator_name)
+    validation_completed = False
+
+    def validating(*validator_args, **validator_kwargs):
+        nonlocal validation_completed
+        result = original_validator(*validator_args, **validator_kwargs)
+        if validation_completed:
+            raise BuildError(
+                f'{validator_name} ran more than once in one component transaction'
+            )
+        validation_completed = True
+        post_apply()
+        return result
+
+    setattr(_IMPL, validator_name, validating)
+    try:
+        function(*args)
+    finally:
+        setattr(_IMPL, validator_name, original_validator)
+    if not validation_completed:
+        raise BuildError(
+            f'optional component completed without {validator_name}'
+        )
+
+
+def apply_mongodb(
+    options, platform, log_path, backup_dir,
+    *, post_apply: Callable[[], None] | None = None,
+) -> None:
+    _apply_with_post_validation(
+        _ORIGINAL_APPLY_MONGODB, 'validate_mongodb', post_apply,
+        options, platform, log_path, backup_dir,
+    )
+
+
+def apply_varnish(
+    options, platform, log_path, backup_dir,
+    *, post_apply: Callable[[], None] | None = None,
+) -> None:
+    _apply_with_post_validation(
+        _ORIGINAL_APPLY_VARNISH, 'validate_varnish', post_apply,
+        options, platform, log_path, backup_dir,
+    )
+
+
+apply_mongodb._hostpanel_transactional_post_apply = True  # type: ignore[attr-defined]
+apply_varnish._hostpanel_transactional_post_apply = True  # type: ignore[attr-defined]
+
+
 for _name in dir(_IMPL):
     if _name not in {
         '_service_active', '_service_enabled', '_capture', '_restore',
-        '_attempt', '_finish_rollback',
+        '_attempt', '_finish_rollback', 'apply_mongodb', 'apply_varnish',
     } and _name not in globals():
         globals()[_name] = getattr(_IMPL, _name)
 
@@ -133,8 +197,6 @@ _IMPL._restore = _restore
 _IMPL._attempt = _attempt
 _IMPL._finish_rollback = _finish_rollback
 
-apply_mongodb = _IMPL.apply_mongodb
-apply_varnish = _IMPL.apply_varnish
 validate_mongodb = _IMPL.validate_mongodb
 validate_varnish = _IMPL.validate_varnish
 ensure_safe_web_switch = _IMPL.ensure_safe_web_switch
@@ -144,6 +206,8 @@ install = _IMPL.install
 class _ForwardingModule(types.ModuleType):
     def __setattr__(self, name: str, value) -> None:
         super().__setattr__(name, value)
+        if name in {'apply_mongodb', 'apply_varnish'}:
+            return
         implementation = super().__getattribute__('_IMPL')
         if hasattr(implementation, name):
             setattr(implementation, name, value)
