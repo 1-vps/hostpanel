@@ -23,6 +23,7 @@ _SPEC.loader.exec_module(_IMPL)
 
 BuildError = _IMPL.BuildError
 operations = _IMPL.operations
+_BASE_INSTALL = _IMPL.install
 
 
 def applied_dns_mode() -> str:
@@ -127,23 +128,25 @@ def _open_temporary(path: pathlib.Path, mode: int) -> tuple[int, pathlib.Path]:
     raise BuildError(f'could not allocate temporary file for {path}')
 
 
-def write_atomic_preserving(path: pathlib.Path, text: str) -> None:
-    metadata = path.lstat()
-    mode = stat.S_IMODE(metadata.st_mode)
+def _write_payload(
+    path: pathlib.Path, text: str, mode: int, uid: int, gid: int,
+    *, preserve_xattrs: bool,
+) -> None:
     fd, temporary = _open_temporary(path, mode)
     active_error: BaseException | None = None
     cleanup_error: BaseException | None = None
     try:
-        payload = text.encode('utf-8')
-        view = memoryview(payload)
+        view = memoryview(text.encode('utf-8'))
         while view:
             written = os.write(fd, view)
             if written <= 0:
                 raise BuildError(f'could not write {temporary}')
             view = view[written:]
-        os.fchown(fd, metadata.st_uid, metadata.st_gid)
+        os.fsync(fd)
+        os.fchown(fd, uid, gid)
         os.fchmod(fd, mode)
-        _copy_xattrs(path, temporary)
+        if preserve_xattrs:
+            _copy_xattrs(path, temporary)
         os.fsync(fd)
         descriptor, fd = fd, -1
         os.close(descriptor)
@@ -167,10 +170,83 @@ def write_atomic_preserving(path: pathlib.Path, text: str) -> None:
             raise cleanup_error
 
 
+def write_atomic_preserving(path: pathlib.Path, text: str) -> None:
+    metadata = path.lstat()
+    _write_payload(
+        path, text, stat.S_IMODE(metadata.st_mode),
+        metadata.st_uid, metadata.st_gid, preserve_xattrs=True,
+    )
+
+
+def write_atomic_root(
+    path: pathlib.Path, text: str, mode: int = 0o644
+) -> None:
+    operations.require_root()
+    path.parent.mkdir(parents=True, mode=0o755, exist_ok=True)
+    parent = path.parent.lstat()
+    if (
+        not stat.S_ISDIR(parent.st_mode)
+        or stat.S_ISLNK(parent.st_mode)
+        or parent.st_uid != 0
+        or stat.S_IMODE(parent.st_mode) & 0o022
+    ):
+        raise BuildError(f'unsafe configuration directory: {path.parent}')
+    exists = os.path.lexists(path)
+    if exists:
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            raise BuildError(f'unsafe configuration file: {path}')
+    _write_payload(
+        path, text, mode, 0, 0, preserve_xattrs=exists
+    )
+
+
+def select_powerdns_backend_config(
+    native: pathlib.Path, include_dir: pathlib.Path, default: pathlib.Path
+) -> pathlib.Path:
+    trusted_root_file(native)
+    native_backends = launch_values(native.read_text(encoding='utf-8'))
+    if native_backends:
+        raise BuildError(
+            'PowerDNS native configuration has an unmanaged backend: '
+            + ', '.join(sorted(native_backends))
+        )
+    candidates: list[pathlib.Path] = []
+    for path in sorted(include_dir.glob('*.conf')):
+        trusted_root_file(path)
+        text = path.read_text(encoding='utf-8')
+        backends = launch_values(text)
+        if not backends:
+            continue
+        if backends != {'bind'}:
+            raise BuildError(
+                'PowerDNS has an unmanaged backend configuration: '
+                + ', '.join(sorted(backends))
+            )
+        if operations.PDNS_MANAGED_MARKER not in text:
+            keys = active_setting_keys(text)
+            if path.name != 'bind.conf' or not keys <= {'launch', 'bind-config'}:
+                raise BuildError(
+                    'PowerDNS BIND backend configuration is not a safe '
+                    f'package default: {path}'
+                )
+        candidates.append(path)
+    if len(candidates) > 1:
+        raise BuildError('PowerDNS has multiple BIND backend configurations')
+    return candidates[0] if candidates else default
+
+
 for _name in dir(_IMPL):
     if _name not in {
         'applied_dns_mode', 'service_active', 'service_enabled',
         '_copy_xattrs', 'write_atomic_preserving',
+        'select_powerdns_backend_config', 'install',
     } and _name not in globals():
         globals()[_name] = getattr(_IMPL, _name)
 
@@ -179,8 +255,15 @@ _IMPL.service_active = service_active
 _IMPL.service_enabled = service_enabled
 _IMPL._copy_xattrs = _copy_xattrs
 _IMPL.write_atomic_preserving = write_atomic_preserving
+_IMPL.select_powerdns_backend_config = select_powerdns_backend_config
 
-install = _IMPL.install
+
+def install() -> None:
+    _BASE_INSTALL()
+    operations.write_atomic_root = write_atomic_root
+    operations.select_powerdns_backend_config = select_powerdns_backend_config
+
+
 reconcile_dns_services = _IMPL.reconcile_dns_services
 guarded_apply_build = _IMPL.guarded_apply_build
 
