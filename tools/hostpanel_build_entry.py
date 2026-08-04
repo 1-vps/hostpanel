@@ -1,6 +1,7 @@
 """Runtime adapter for stateful optional CustomBuild components."""
 from __future__ import annotations
 
+import contextlib
 import pathlib
 import sys
 from typing import Sequence
@@ -137,15 +138,23 @@ def install_runtime_adapters(selected_config: pathlib.Path) -> None:
     cli.execute_build = guarded_execute_build
 
 
+@contextlib.contextmanager
+def _already_locked(_path: pathlib.Path):
+    yield
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     values = list(sys.argv[1:] if argv is None else argv)
     install_runtime_adapters(config_path(values))
+    original_acquire_lock = cli.acquire_lock
     try:
         parsed = cli.parse_args(values)
-        if parsed.command == 'set':
-            with cli.acquire_lock(pathlib.Path(parsed.lock_file)):
+        with original_acquire_lock(pathlib.Path(parsed.lock_file)):
+            cli.acquire_lock = _already_locked
+            try:
                 return cli.main(values)
-        return cli.main(values)
+            finally:
+                cli.acquire_lock = original_acquire_lock
     except (BuildError, OSError) as exc:
         print(f'hostpanel-build failed: {exc}', file=sys.stderr)
         return 1
