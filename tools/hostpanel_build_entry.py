@@ -17,6 +17,7 @@ from hostpanel_build_config import BuildError, DEFAULT_CONFIG, read_config
 
 _BASE_EXECUTE_BUILD = cli.execute_build
 _BASE_PRINT_PLAN = cli.print_plan
+_BASE_VALIDATE_COMPONENT = cli.validate_component
 _BASE_STATE_ATTEMPT = state._attempt
 _CANDIDATE_STOP_LABELS = {
     'candidate MongoDB stop',
@@ -114,6 +115,43 @@ def install_powerdns_watcher_lifecycle_guard() -> None:
     operations.install_powerdns_units = install_units
 
 
+def _validate_dns_unit_state(
+    unit: str, *, active: bool, enabled: bool
+) -> None:
+    observed_active = powerdns_adapter.service_active(unit)
+    if observed_active != active:
+        raise BuildError(
+            f'{unit} active state is {observed_active}; expected {active}'
+        )
+    observed_enabled = powerdns_adapter.service_enabled(unit)
+    if observed_enabled != enabled:
+        raise BuildError(
+            f'{unit} enabled state is {observed_enabled}; expected {enabled}'
+        )
+
+
+def validate_dns_runtime(options, platform) -> None:
+    configured = options.get('dns', 'bind')
+    if configured not in {'bind', 'powerdns'}:
+        raise BuildError('dns must be bind or powerdns')
+    applied = powerdns_adapter.applied_dns_mode()
+    if applied != configured:
+        raise BuildError('DNS runtime mode does not match build.conf')
+
+    _, _, _, bind_service = powerdns_adapter.operations.dns_layout(platform)
+    path_service = powerdns_adapter.operations.PDNS_PATH_UNIT.name
+    powerdns_selected = configured == 'powerdns'
+    _validate_dns_unit_state(
+        'pdns.service', active=powerdns_selected, enabled=powerdns_selected
+    )
+    _validate_dns_unit_state(
+        bind_service, active=not powerdns_selected, enabled=not powerdns_selected
+    )
+    _validate_dns_unit_state(
+        path_service, active=powerdns_selected, enabled=powerdns_selected
+    )
+
+
 def install_runtime_adapters(selected_config: pathlib.Path) -> None:
     operations_adapter.install()
     powerdns_adapter.install()
@@ -137,8 +175,19 @@ def install_runtime_adapters(selected_config: pathlib.Path) -> None:
             mongodb_adapter.mongodb_supported(platform)
         return _BASE_PRINT_PLAN(component, options, platform, roles)
 
+    def validating_component(
+        component, options, platform, log_path,
+    ):
+        result = _BASE_VALIDATE_COMPONENT(
+            component, options, platform, log_path
+        )
+        if component == 'dns':
+            validate_dns_runtime(options, platform)
+        return result
+
     cli.validate_mongodb = validate_mongodb
     cli.validate_varnish = state.validate_varnish
+    cli.validate_component = validating_component
     cli.print_plan = checked_print_plan
 
     def guarded_execute_build(
