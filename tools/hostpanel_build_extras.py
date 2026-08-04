@@ -104,7 +104,7 @@ def write_atomic_bytes(
     ):
         raise BuildError(f'unsafe configuration directory: {path.parent}')
 
-    xattrs: dict[str, bytes] = {}
+    xattrs: dict[str, bytes] | None = None
     if os.path.lexists(path):
         metadata = path.lstat()
         if (
@@ -112,6 +112,7 @@ def write_atomic_bytes(
             or stat.S_ISLNK(metadata.st_mode)
             or metadata.st_uid != 0
             or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) & 0o022
         ):
             raise BuildError(f'unsafe configuration file: {path}')
         xattrs = _capture_xattrs(path)
@@ -129,7 +130,9 @@ def write_atomic_bytes(
         os.fsync(fd)
         os.fchown(fd, uid, gid)
         os.fchmod(fd, mode)
-        _apply_xattrs(temporary, xattrs)
+        if xattrs is not None:
+            _apply_xattrs(temporary, xattrs)
+        os.fsync(fd)
         descriptor, fd = fd, -1
         os.close(descriptor)
         os.replace(temporary, path)
