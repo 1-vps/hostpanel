@@ -77,7 +77,7 @@ class WrapperFollowupTests(unittest.TestCase):
                      side_effect=lambda path, values: applied.append(
                          (path, dict(values))
                      ),
-                 ), mock.patch.object(EXTRAS.os, 'fsync'), \
+                 ), mock.patch.object(EXTRAS.os, 'fsync') as fsync, \
                  mock.patch.object(EXTRAS.os, 'fchown'):
                 EXTRAS.write_atomic_bytes(target, b'new', 0o640, 0, 0)
             self.assertEqual(target.read_bytes(), b'new')
@@ -86,6 +86,66 @@ class WrapperFollowupTests(unittest.TestCase):
             self.assertEqual(
                 applied[0][1], {'security.selinux': b'original'}
             )
+            self.assertEqual(fsync.call_count, 2)
+
+    def test_new_extras_file_keeps_filesystem_security_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            target = root / 'config'
+            real_lstat = pathlib.Path.lstat
+
+            def trusted_lstat(path: pathlib.Path):
+                if path == root:
+                    return types.SimpleNamespace(
+                        st_mode=stat.S_IFDIR | 0o755, st_uid=0
+                    )
+                return real_lstat(path)
+
+            with mock.patch.object(EXTRAS, 'require_root'), \
+                 mock.patch.object(
+                     EXTRAS.pathlib.Path, 'lstat', autospec=True,
+                     side_effect=trusted_lstat,
+                 ), mock.patch.object(
+                     EXTRAS, '_capture_xattrs'
+                 ) as capture, mock.patch.object(
+                     EXTRAS, '_apply_xattrs'
+                 ) as apply_xattrs, mock.patch.object(
+                     EXTRAS.os, 'fsync'
+                 ) as fsync, mock.patch.object(EXTRAS.os, 'fchown'):
+                EXTRAS.write_atomic_bytes(target, b'new', 0o640, 0, 0)
+            self.assertEqual(target.read_bytes(), b'new')
+            capture.assert_not_called()
+            apply_xattrs.assert_not_called()
+            self.assertEqual(fsync.call_count, 2)
+
+    def test_extras_atomic_writer_rejects_writable_existing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            target = root / 'config'
+            target.write_bytes(b'unsafe')
+            real_lstat = pathlib.Path.lstat
+
+            def trusted_lstat(path: pathlib.Path):
+                if path == root:
+                    return types.SimpleNamespace(
+                        st_mode=stat.S_IFDIR | 0o755, st_uid=0
+                    )
+                if path == target:
+                    return types.SimpleNamespace(
+                        st_mode=stat.S_IFREG | 0o666,
+                        st_uid=0, st_gid=0, st_nlink=1,
+                    )
+                return real_lstat(path)
+
+            with mock.patch.object(EXTRAS, 'require_root'), \
+                 mock.patch.object(
+                     EXTRAS.pathlib.Path, 'lstat', autospec=True,
+                     side_effect=trusted_lstat,
+                 ), mock.patch.object(EXTRAS, '_open_temporary') as opened:
+                with self.assertRaisesRegex(BuildError, 'unsafe configuration file'):
+                    EXTRAS.write_atomic_bytes(target, b'new', 0o640, 0, 0)
+            opened.assert_not_called()
+            self.assertEqual(target.read_bytes(), b'unsafe')
 
     def test_extras_atomic_failure_removes_random_temporary(self):
         with tempfile.TemporaryDirectory() as directory:
