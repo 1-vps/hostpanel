@@ -18,20 +18,54 @@ _IMPL = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = _IMPL
 _SPEC.loader.exec_module(_IMPL)
 
+_PUBLIC_OVERRIDES = {
+    'main', 'activate_openlitespeed', '_restore_service_state',
+    '_service_enabled', '_service_enablement_state',
+}
 for _name in dir(_IMPL):
-    if _name not in {'main', '_restore_service_state'} and _name not in globals():
+    if _name not in _PUBLIC_OVERRIDES and _name not in globals():
         globals()[_name] = getattr(_IMPL, _name)
 
 
+_ENABLED_STATES = {'enabled', 'enabled-runtime'}
+_DISABLED_STATES = {
+    'disabled', 'static', 'indirect', 'generated', 'transient',
+    'masked', 'masked-runtime', 'not-found',
+}
+
+
+def _service_enablement_state(name: str) -> str:
+    completed = run(['systemctl', 'is-enabled', name], check=False)
+    state = _command_text(completed.stdout).lower()
+    error = _command_text(completed.stderr)
+    if completed.returncode == 0 and state in _ENABLED_STATES and not error:
+        return state
+    if (
+        completed.returncode in {0, 1, 3, 4}
+        and state in _DISABLED_STATES
+        and not error
+    ):
+        return state
+    detail = error or state or str(completed.returncode)
+    raise BuildError(f'could not determine enabled state for {name}: {detail}')
+
+
+def _service_enabled(name: str) -> bool:
+    return _service_enablement_state(name) in _ENABLED_STATES
+
+
 def _restore_service_state(
-    name: str, was_active: bool, was_enabled: bool
+    name: str, was_active: bool, was_enabled: bool,
+    *, was_runtime_masked: bool = False,
 ) -> list[str]:
-    """Attempt both boot and runtime restoration phases after any operation error."""
+    """Attempt every boot, runtime, and mask restoration phase."""
     errors: list[str] = []
-    commands = (
+    commands = [
         ['systemctl', 'enable' if was_enabled else 'disable', name],
         ['systemctl', 'start' if was_active else 'stop', name],
-    )
+    ]
+    if was_runtime_masked:
+        commands.append(['systemctl', 'mask', '--runtime', name])
     for command in commands:
         try:
             run(command)
@@ -40,7 +74,55 @@ def _restore_service_state(
     return errors
 
 
+def activate_openlitespeed() -> None:
+    name = 'lsws.service'
+    initial_enablement = _service_enablement_state(name)
+    if initial_enablement == 'masked':
+        raise BuildError(
+            'OpenLiteSpeed is persistently masked; unmask it explicitly before activation'
+        )
+
+    was_runtime_masked = initial_enablement == 'masked-runtime'
+    was_active: bool | None = None
+    was_enabled: bool | None = None
+    try:
+        if was_runtime_masked:
+            run(['systemctl', 'unmask', '--runtime', name])
+        was_active = _service_active(name)
+        was_enabled = _service_enabled(name)
+        run(['systemctl', 'enable', '--now', name])
+        if not _service_active(name):
+            raise BuildError('OpenLiteSpeed did not become active')
+    except Exception as original_error:
+        rollback_errors: list[str] = []
+        if was_active is not None and was_enabled is not None:
+            rollback_errors.extend(
+                _restore_service_state(
+                    name,
+                    was_active,
+                    was_enabled,
+                    was_runtime_masked=was_runtime_masked,
+                )
+            )
+        elif was_runtime_masked:
+            try:
+                run(['systemctl', 'mask', '--runtime', name])
+            except Exception as exc:
+                rollback_errors.append(
+                    f'systemctl mask --runtime {name}: {exc}'
+                )
+        if rollback_errors:
+            raise BuildError(
+                'OpenLiteSpeed activation failed and service rollback also failed: '
+                + '; '.join(rollback_errors)
+            ) from original_error
+        raise
+
+
+_IMPL._service_enablement_state = _service_enablement_state
+_IMPL._service_enabled = _service_enabled
 _IMPL._restore_service_state = _restore_service_state
+_IMPL.activate_openlitespeed = activate_openlitespeed
 
 
 def _preparation_snapshots() -> list[tuple[pathlib.Path, tuple[object, ...]]]:
@@ -133,7 +215,7 @@ class _ForwardingModule(types.ModuleType):
 
     def __setattr__(self, name: str, value) -> None:
         super().__setattr__(name, value)
-        if name in {'main', '_restore_service_state'}:
+        if name in _PUBLIC_OVERRIDES:
             return
         implementation = super().__getattribute__('_IMPL')
         if hasattr(implementation, name):
