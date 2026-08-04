@@ -147,6 +147,48 @@ def render_config(options: dict[str, str]) -> str:
     return '\n'.join(lines) + '\n'
 
 
+def _capture_xattrs(path: pathlib.Path) -> dict[str, bytes]:
+    required = ('listxattr', 'getxattr', 'setxattr', 'removexattr')
+    if not all(hasattr(os, name) for name in required):
+        raise BuildError('extended-attribute support is unavailable')
+    try:
+        return {
+            name: os.getxattr(path, name, follow_symlinks=False)
+            for name in os.listxattr(path, follow_symlinks=False)
+        }
+    except OSError as exc:
+        raise BuildError(
+            f'could not capture build configuration metadata: {exc}'
+        ) from exc
+
+
+def _apply_xattrs(path: pathlib.Path, values: dict[str, bytes]) -> None:
+    try:
+        existing = set(os.listxattr(path, follow_symlinks=False))
+        desired = set(values)
+        for name in existing - desired:
+            os.removexattr(path, name, follow_symlinks=False)
+        for name, value in values.items():
+            os.setxattr(path, name, value, follow_symlinks=False)
+    except OSError as exc:
+        raise BuildError(
+            f'could not preserve build configuration metadata: {exc}'
+        ) from exc
+
+
+def _fsync_parent(path: pathlib.Path) -> None:
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, 'O_DIRECTORY'):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path.parent, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def write_config(path: pathlib.Path, options: dict[str, str]) -> None:
     uid, gid = owner_ids()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,12 +201,27 @@ def write_config(path: pathlib.Path, options: dict[str, str]) -> None:
         or stat.S_IMODE(parent.st_mode) & 0o022
     ):
         raise BuildError(f'unsafe configuration directory: {path.parent}')
+
+    xattrs: dict[str, bytes] | None = None
+    if os.path.lexists(path):
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != uid
+            or metadata.st_gid != gid
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) not in {0o600, 0o640}
+        ):
+            raise BuildError(f'unsafe build configuration: {path}')
+        xattrs = _capture_xattrs(path)
+
     payload = render_config(options).encode('utf-8')
     fd, temporary_name = tempfile.mkstemp(prefix='.build.conf.', dir=path.parent)
     temporary = pathlib.Path(temporary_name)
+    active_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
     try:
-        os.fchmod(fd, 0o600)
-        os.fchown(fd, uid, gid)
         view = memoryview(payload)
         while view:
             written = os.write(fd, view)
@@ -172,16 +229,32 @@ def write_config(path: pathlib.Path, options: dict[str, str]) -> None:
                 raise BuildError('could not write build configuration')
             view = view[written:]
         os.fsync(fd)
-        os.close(fd)
-        fd = -1
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, 0o600)
+        if xattrs is not None:
+            _apply_xattrs(temporary, xattrs)
+        os.fsync(fd)
+        descriptor, fd = fd, -1
+        os.close(descriptor)
         os.replace(temporary, path)
-        os.chmod(path, 0o600)
-        os.chown(path, uid, gid)
+        _fsync_parent(path)
+    except BaseException as exc:
+        active_error = exc
+        raise
     finally:
         if fd >= 0:
-            os.close(fd)
-        with contextlib.suppress(FileNotFoundError):
-            temporary.unlink()
+            descriptor, fd = fd, -1
+            try:
+                os.close(descriptor)
+            except BaseException as exc:
+                cleanup_error = exc
+        try:
+            temporary.unlink(missing_ok=True)
+        except BaseException as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if active_error is None and cleanup_error is not None:
+            raise cleanup_error
 
 
 def detect_platform(path: pathlib.Path = pathlib.Path('/etc/os-release')) -> Platform:
