@@ -7,6 +7,7 @@ import grp
 import os
 import pathlib
 import re
+import secrets
 import stat
 import subprocess
 import sys
@@ -117,43 +118,67 @@ def trusted_root_file(path: pathlib.Path) -> os.stat_result:
     return metadata
 
 
-def write_atomic(path: pathlib.Path, text: str) -> None:
-    metadata = trusted_root_file(path)
-    temporary = path.with_name(f'.{path.name}.hostpanel-build.{os.getpid()}')
+def _capture_xattrs(path: pathlib.Path) -> dict[str, bytes]:
+    required = ('listxattr', 'getxattr', 'setxattr', 'removexattr')
+    if not all(hasattr(os, name) for name in required):
+        raise BuildError('extended-attribute support is unavailable')
+    try:
+        return {
+            name: os.getxattr(path, name, follow_symlinks=False)
+            for name in os.listxattr(path, follow_symlinks=False)
+        }
+    except OSError as exc:
+        raise BuildError(f'could not capture extended metadata for {path}: {exc}') from exc
+
+
+def _apply_xattrs(path: pathlib.Path, values: dict[str, bytes]) -> None:
+    try:
+        existing = set(os.listxattr(path, follow_symlinks=False))
+        desired = set(values)
+        for name in existing - desired:
+            os.removexattr(path, name, follow_symlinks=False)
+        for name, value in values.items():
+            os.setxattr(path, name, value, follow_symlinks=False)
+    except OSError as exc:
+        raise BuildError(f'could not restore extended metadata for {path}: {exc}') from exc
+
+
+def _open_temporary(path: pathlib.Path, mode: int) -> tuple[int, pathlib.Path]:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
     if hasattr(os, 'O_NOFOLLOW'):
         flags |= os.O_NOFOLLOW
-    fd = os.open(temporary, flags, stat.S_IMODE(metadata.st_mode))
+    for _ in range(32):
+        temporary = path.with_name(
+            f'.{path.name}.hostpanel-build.{secrets.token_hex(12)}'
+        )
+        try:
+            return os.open(temporary, flags, mode), temporary
+        except FileExistsError:
+            continue
+    raise BuildError(f'could not allocate temporary file for {path}')
+
+
+def _fsync_parent(path: pathlib.Path) -> None:
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, 'O_DIRECTORY'):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    directory_fd = os.open(path.parent, flags)
     try:
-        os.fchown(fd, metadata.st_uid, metadata.st_gid)
-        payload = text.encode('utf-8')
-        view = memoryview(payload)
-        while view:
-            written = os.write(fd, view)
-            if written <= 0:
-                raise BuildError(f'could not write {temporary}')
-            view = view[written:]
-        os.fsync(fd)
+        os.fsync(directory_fd)
     finally:
-        os.close(fd)
-    os.replace(temporary, path)
+        os.close(directory_fd)
 
 
-def write_new_root_file(path: pathlib.Path, text: str, mode: int, gid: int = 0) -> None:
-    if os.path.lexists(path):
-        trusted_root_file(path)
-        write_atomic(path, text)
-        os.chmod(path, mode)
-        os.chown(path, 0, gid)
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f'.{path.name}.hostpanel-build.{os.getpid()}')
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
-    if hasattr(os, 'O_NOFOLLOW'):
-        flags |= os.O_NOFOLLOW
-    fd = os.open(temporary, flags, mode)
+def _replace_atomic(
+    path: pathlib.Path, text: str, mode: int, uid: int, gid: int,
+    xattrs: dict[str, bytes] | None,
+) -> None:
+    fd, temporary = _open_temporary(path, mode)
+    active_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
     try:
-        os.fchown(fd, 0, gid)
         view = memoryview(text.encode('utf-8'))
         while view:
             written = os.write(fd, view)
@@ -161,9 +186,73 @@ def write_new_root_file(path: pathlib.Path, text: str, mode: int, gid: int = 0) 
                 raise BuildError(f'could not write {temporary}')
             view = view[written:]
         os.fsync(fd)
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, mode)
+        if xattrs is not None:
+            _apply_xattrs(temporary, xattrs)
+        os.fsync(fd)
+        descriptor, fd = fd, -1
+        os.close(descriptor)
+        os.replace(temporary, path)
+        _fsync_parent(path)
+    except BaseException as exc:
+        active_error = exc
+        raise
     finally:
-        os.close(fd)
-    os.replace(temporary, path)
+        if fd >= 0:
+            descriptor, fd = fd, -1
+            try:
+                os.close(descriptor)
+            except BaseException as exc:
+                cleanup_error = exc
+        try:
+            temporary.unlink(missing_ok=True)
+        except BaseException as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if active_error is None and cleanup_error is not None:
+            raise cleanup_error
+
+
+def write_atomic(path: pathlib.Path, text: str) -> None:
+    metadata = trusted_root_file(path)
+    _replace_atomic(
+        path,
+        text,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_uid,
+        metadata.st_gid,
+        _capture_xattrs(path),
+    )
+
+
+def write_new_root_file(path: pathlib.Path, text: str, mode: int, gid: int = 0) -> None:
+    xattrs: dict[str, bytes] | None = None
+    if os.path.lexists(path):
+        trusted_root_file(path)
+        xattrs = _capture_xattrs(path)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    _replace_atomic(path, text, mode, 0, gid, xattrs)
+
+
+def _replace_symlink(path: pathlib.Path, target: pathlib.Path) -> None:
+    temporary = path.with_name(
+        f'.{path.name}.hostpanel-build.{secrets.token_hex(12)}'
+    )
+    try:
+        os.symlink(target, temporary)
+        os.replace(temporary, path)
+        _fsync_parent(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _unlink_durable(path: pathlib.Path) -> None:
+    if not os.path.lexists(path):
+        return
+    path.unlink()
+    _fsync_parent(path)
 
 
 def group_gid(name: str, *, required: bool = False) -> int:
@@ -200,12 +289,8 @@ def ensure_lsphp_runtimes(options: dict[str, str]) -> None:
     versions = validate_lsphp_runtimes(options)
     default_binary = OLS_ROOT / f"lsphp{versions[0].replace('.', '')}/bin/lsphp"
     fcgi_dir = OLS_ROOT / 'fcgi-bin'
-    fcgi_dir.mkdir(parents=True, exist_ok=True)
-    link = fcgi_dir / 'lsphp'
-    temporary = fcgi_dir / f'.lsphp.hostpanel-build.{os.getpid()}'
-    temporary.unlink(missing_ok=True)
-    os.symlink(default_binary, temporary)
-    os.replace(temporary, link)
+    ensure_root_directory(fcgi_dir, 0o755, 0)
+    _replace_symlink(fcgi_dir / 'lsphp', default_binary)
     write_new_root_file(LSPHP_STATE, '\n'.join(v.replace('.', '') for v in versions) + '\n', 0o644)
 
 
@@ -229,7 +314,7 @@ def prepare_openlitespeed(options: dict[str, str]) -> None:
 
     main_text = OLS_MAIN.read_text(encoding='utf-8')
     admin_text = OLS_ADMIN.read_text(encoding='utf-8')
-    registry_existed = OLS_REGISTRY.exists()
+    registry_existed = os.path.lexists(OLS_REGISTRY)
     registry_text = ''
     if registry_existed:
         trusted_root_file(OLS_REGISTRY)
@@ -259,15 +344,30 @@ def prepare_openlitespeed(options: dict[str, str]) -> None:
         run(['systemctl', 'unmask', '--runtime', 'lsws.service'], check=False)
         run(['systemctl', 'enable', '--now', 'lsws.service'])
         run(['systemctl', 'is-active', '--quiet', 'lsws.service'])
-    except Exception:
-        if updated_main != main_text:
-            write_atomic(OLS_MAIN, main_text)
-        if updated_admin != admin_text:
-            write_atomic(OLS_ADMIN, admin_text)
-        if registry_existed:
-            write_atomic(OLS_REGISTRY, registry_text)
-        else:
-            OLS_REGISTRY.unlink(missing_ok=True)
+    except Exception as original_error:
+        rollback_errors: list[str] = []
+        for path, original, changed in (
+            (OLS_MAIN, main_text, updated_main != main_text),
+            (OLS_ADMIN, admin_text, updated_admin != admin_text),
+        ):
+            if not changed:
+                continue
+            try:
+                write_atomic(path, original)
+            except Exception as exc:
+                rollback_errors.append(f'{path}: {exc}')
+        try:
+            if registry_existed:
+                write_atomic(OLS_REGISTRY, registry_text)
+            else:
+                _unlink_durable(OLS_REGISTRY)
+        except Exception as exc:
+            rollback_errors.append(f'{OLS_REGISTRY}: {exc}')
+        if rollback_errors:
+            raise BuildError(
+                'OpenLiteSpeed preparation failed and rollback also failed: '
+                + '; '.join(rollback_errors)
+            ) from original_error
         raise
 
 
