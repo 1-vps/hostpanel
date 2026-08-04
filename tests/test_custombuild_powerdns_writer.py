@@ -72,7 +72,7 @@ class PowerDnsWriterTests(unittest.TestCase):
         trusted_file.assert_called_once_with(native)
         glob.assert_not_called()
 
-    def test_root_writer_preserves_xattrs_and_fsyncs_metadata(self):
+    def test_root_writer_preserves_xattrs_and_fsyncs_inode_and_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             target = root / 'mode'
@@ -103,6 +103,8 @@ class PowerDnsWriterTests(unittest.TestCase):
                     (source, temporary)
                 ),
             ), mock.patch.object(
+                ADAPTER, '_apply_expected_selinux_context'
+            ) as expected_context, mock.patch.object(
                 ADAPTER.os, 'fsync'
             ) as fsync, mock.patch.object(ADAPTER.os, 'fchown'):
                 ADAPTER.write_atomic_root(target, 'new\n', 0o644)
@@ -110,9 +112,10 @@ class PowerDnsWriterTests(unittest.TestCase):
             self.assertEqual(len(copied), 1)
             self.assertEqual(copied[0][0], target)
             self.assertNotEqual(copied[0][1], target)
-            self.assertEqual(fsync.call_count, 2)
+            expected_context.assert_not_called()
+            self.assertEqual(fsync.call_count, 3)
 
-    def test_new_root_file_keeps_filesystem_security_context(self):
+    def test_new_root_file_uses_destination_selinux_context(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             target = root / 'new-mode'
@@ -133,12 +136,96 @@ class PowerDnsWriterTests(unittest.TestCase):
             ), mock.patch.object(
                 ADAPTER, '_copy_xattrs'
             ) as copy_xattrs, mock.patch.object(
+                ADAPTER, '_apply_expected_selinux_context'
+            ) as expected_context, mock.patch.object(
                 ADAPTER.os, 'fsync'
             ) as fsync, mock.patch.object(ADAPTER.os, 'fchown'):
                 ADAPTER.write_atomic_root(target, 'new\n', 0o644)
             self.assertEqual(target.read_text(encoding='utf-8'), 'new\n')
             copy_xattrs.assert_not_called()
-            self.assertEqual(fsync.call_count, 2)
+            self.assertEqual(expected_context.call_count, 1)
+            descriptor, context_path, context_mode = (
+                expected_context.call_args.args
+            )
+            self.assertIsInstance(descriptor, int)
+            self.assertEqual(context_path, target)
+            self.assertEqual(context_mode, 0o644)
+            self.assertEqual(fsync.call_count, 3)
+
+    def test_backend_mode_is_applied_before_xattrs_without_post_swap_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            managed = root / 'named.conf'
+            zone_dir = root / 'zones'
+            native = root / 'pdns.conf'
+            include = root / 'pdns.d'
+            target = include / 'hostpanel-bind.conf'
+            base_writer = mock.Mock()
+            platform = mock.Mock()
+            log_path = root / 'build.log'
+
+            def core_configure(_platform, _log_path):
+                ADAPTER.operations.write_atomic_root(
+                    target, 'launch=bind\n', 0o640
+                )
+
+            real_lstat = pathlib.Path.lstat
+
+            def trusted_lstat(path: pathlib.Path):
+                if path == include:
+                    return types.SimpleNamespace(
+                        st_mode=stat.S_IFDIR | 0o755, st_uid=0, st_gid=0
+                    )
+                if path == target:
+                    return types.SimpleNamespace(
+                        st_mode=stat.S_IFREG | 0o644,
+                        st_uid=0, st_gid=0, st_nlink=1,
+                    )
+                return real_lstat(path)
+
+            with mock.patch.object(
+                ADAPTER.operations, 'dns_layout',
+                return_value=(managed, zone_dir, 'bind', 'bind9.service'),
+            ), mock.patch.object(
+                ADAPTER.operations, 'native_powerdns_config',
+                return_value=native,
+            ), mock.patch.object(
+                ADAPTER.operations, 'powerdns_include_dir',
+                return_value=include,
+            ), mock.patch.object(
+                ADAPTER.operations, 'select_powerdns_backend_config',
+                return_value=target,
+            ), mock.patch.object(
+                ADAPTER.operations, 'write_atomic_root', base_writer
+            ), mock.patch.object(
+                ADAPTER, '_CORE_CONFIGURE_POWERDNS',
+                side_effect=core_configure,
+            ), mock.patch.object(
+                ADAPTER, 'trusted_root_file'
+            ) as trusted_file, mock.patch.object(
+                ADAPTER, 'trusted_managed_zone_directory'
+            ), mock.patch.object(
+                ADAPTER, 'trusted_root_directory_chain'
+            ), mock.patch.object(
+                ADAPTER.pathlib.Path, 'lstat', autospec=True,
+                side_effect=trusted_lstat,
+            ), mock.patch.object(
+                ADAPTER.os, 'chown'
+            ) as chown, mock.patch.object(
+                ADAPTER.os, 'chmod'
+            ) as chmod:
+                ADAPTER._configure_powerdns_readable(platform, log_path)
+
+            base_writer.assert_called_once_with(
+                target, 'launch=bind\n', 0o644
+            )
+            self.assertIs(ADAPTER.operations.write_atomic_root, base_writer)
+            chown.assert_not_called()
+            chmod.assert_not_called()
+            self.assertEqual(
+                trusted_file.call_args_list,
+                [mock.call(managed), mock.call(target)],
+            )
 
 
 if __name__ == '__main__':
