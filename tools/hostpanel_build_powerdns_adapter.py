@@ -50,6 +50,50 @@ def applied_dns_mode() -> str:
     return mode
 
 
+def service_active(name: str) -> bool:
+    completed = _IMPL.run_command(
+        ['systemctl', 'is-active', name], check=False, capture=True
+    )
+    state = _IMPL._stdout_state(completed)
+    error = _IMPL._query_error(completed)
+    if completed.returncode == 0 and state == 'active' and not error:
+        return True
+    if (
+        completed.returncode in {3, 4}
+        and state in {'inactive', 'failed', 'unknown', 'not-found'}
+        and not error
+    ):
+        return False
+    raise BuildError(
+        f'could not determine active state for {name}: '
+        f'{error or state or completed.returncode}'
+    )
+
+
+def service_enabled(name: str) -> bool:
+    completed = _IMPL.run_command(
+        ['systemctl', 'is-enabled', name], check=False, capture=True
+    )
+    state = _IMPL._stdout_state(completed)
+    error = _IMPL._query_error(completed)
+    if completed.returncode == 0 and state == 'enabled' and not error:
+        return True
+    disabled_states = {
+        'disabled', 'static', 'indirect', 'generated', 'transient',
+        'masked', 'masked-runtime', 'alias', 'not-found',
+    }
+    if (
+        state in disabled_states
+        and completed.returncode in {0, 1, 3, 4}
+        and not error
+    ):
+        return False
+    raise BuildError(
+        f'could not determine enabled state for {name}: '
+        f'{error or state or completed.returncode}'
+    )
+
+
 def _copy_xattrs(source: pathlib.Path, destination: pathlib.Path) -> None:
     required = ('listxattr', 'getxattr', 'setxattr', 'removexattr')
     if not all(hasattr(os, name) for name in required):
@@ -125,11 +169,14 @@ def write_atomic_preserving(path: pathlib.Path, text: str) -> None:
 
 for _name in dir(_IMPL):
     if _name not in {
-        'applied_dns_mode', '_copy_xattrs', 'write_atomic_preserving'
+        'applied_dns_mode', 'service_active', 'service_enabled',
+        '_copy_xattrs', 'write_atomic_preserving',
     } and _name not in globals():
         globals()[_name] = getattr(_IMPL, _name)
 
 _IMPL.applied_dns_mode = applied_dns_mode
+_IMPL.service_active = service_active
+_IMPL.service_enabled = service_enabled
 _IMPL._copy_xattrs = _copy_xattrs
 _IMPL.write_atomic_preserving = write_atomic_preserving
 
@@ -148,4 +195,6 @@ class _ForwardingModule(types.ModuleType):
             setattr(implementation, name, value)
 
 
-sys.modules[__name__].__class__ = _ForwardingModule
+_module = sys.modules.get(__name__)
+if _module is not None:
+    _module.__class__ = _ForwardingModule
