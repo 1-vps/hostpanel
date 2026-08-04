@@ -138,7 +138,11 @@ class DeepCustomBuildRegressionTests(unittest.TestCase):
                  mock.patch.object(
                      STATE, 'run_command',
                      side_effect=lambda command, **kwargs: commands.append(command)
-                     or subprocess.CompletedProcess(command, 0, '', ''),
+                     or subprocess.CompletedProcess(
+                         command, 0,
+                         'enabled\n' if command[:2] == ['systemctl', 'is-enabled'] else '',
+                         '',
+                     ),
                  ):
                 STATE.validate_mongodb(options, pathlib.Path('/tmp/log'))
         mongosh = next(command for command in commands if command[0] == 'mongosh')
