@@ -257,6 +257,19 @@ def _set_enabled(name: str, enabled: bool, log_path: pathlib.Path) -> None:
     )
 
 
+def _stop_unit(name: str, log_path: pathlib.Path) -> None:
+    completed = run_command(
+        ['systemctl', 'stop', name],
+        check=False, capture=True, log_path=log_path,
+    )
+    if completed.returncode == 0:
+        return
+    detail = _detail(completed)
+    if _unit_absent(detail):
+        return
+    raise BuildError(f'could not stop {name}: {detail or completed.returncode}')
+
+
 def _dns_service_states(platform: Platform) -> dict[str, tuple[bool, bool]]:
     _, _, _, bind_service = operations.dns_layout(platform)
     units = (
@@ -276,27 +289,33 @@ def _restore_service_states(
     log_path: pathlib.Path,
 ) -> None:
     errors: list[str] = []
+    stopped_safely = True
     for unit in states:
-        run_command(
-            ['systemctl', 'stop', unit], check=False, log_path=log_path
-        )
+        try:
+            _stop_unit(unit, log_path)
+        except Exception as exc:
+            stopped_safely = False
+            errors.append(f'{unit} stop: {exc}')
     for unit, (_was_active, was_enabled) in states.items():
         try:
             _unmask_runtime(unit, log_path)
             _set_enabled(unit, was_enabled, log_path)
         except Exception as exc:
             errors.append(f'{unit} enablement: {exc}')
-    for unit in start_order:
-        was_active, _was_enabled = states[unit]
-        if not was_active:
-            continue
-        try:
-            run_command(['systemctl', 'start', unit], log_path=log_path)
-            run_command(
-                ['systemctl', 'is-active', '--quiet', unit], log_path=log_path
-            )
-        except Exception as exc:
-            errors.append(f'{unit} activity: {exc}')
+    if stopped_safely:
+        for unit in start_order:
+            was_active, _was_enabled = states[unit]
+            if not was_active:
+                continue
+            try:
+                run_command(['systemctl', 'start', unit], log_path=log_path)
+                run_command(
+                    ['systemctl', 'is-active', '--quiet', unit], log_path=log_path
+                )
+            except Exception as exc:
+                errors.append(f'{unit} activity: {exc}')
+    elif any(was_active for was_active, _was_enabled in states.values()):
+        errors.append('previous active DNS units were not restarted after an unsafe stop')
     if errors:
         raise BuildError('; '.join(errors))
 
@@ -330,14 +349,8 @@ def reconcile_dns_services(
     states = _dns_service_states(platform)
 
     try:
-        run_command(
-            ['systemctl', 'stop', path_service],
-            check=states[path_service][0], log_path=log_path,
-        )
-        run_command(
-            ['systemctl', 'stop', other],
-            check=states[other][0], log_path=log_path,
-        )
+        _stop_unit(path_service, log_path)
+        _stop_unit(other, log_path)
         _unmask_runtime(target, log_path)
         _set_enabled(target, True, log_path)
         run_command(['systemctl', 'start', target], log_path=log_path)
@@ -356,16 +369,19 @@ def reconcile_dns_services(
         operations.persist_dns_mode(mode)
     except Exception as original_error:
         rollback_errors: list[str] = []
+        restored = False
         try:
             _restore_service_states(
                 states, (bind_service, pdns_service, path_service), log_path
             )
+            restored = True
         except Exception as exc:
             rollback_errors.append(str(exc))
-        try:
-            operations.persist_dns_mode(previous_mode)
-        except Exception as exc:
-            rollback_errors.append(f'mode state: {exc}')
+        if restored:
+            try:
+                operations.persist_dns_mode(previous_mode)
+            except Exception as exc:
+                rollback_errors.append(f'mode state: {exc}')
         if rollback_errors:
             raise BuildError(
                 'DNS handoff failed and rollback also failed: '
@@ -389,20 +405,32 @@ def guarded_apply_build(
     except Exception as original_error:
         rollback_errors: list[str] = []
         if requested and previous_mode is not None and previous_states is not None:
-            _, _, _, bind_service = operations.dns_layout(platform)
-            path_service = operations.PDNS_PATH_UNIT.name
+            needs_restore = True
             try:
-                _restore_service_states(
-                    previous_states,
-                    (bind_service, 'pdns.service', path_service),
-                    log_path,
+                needs_restore = (
+                    applied_dns_mode() != previous_mode
+                    or _dns_service_states(platform) != previous_states
                 )
-            except Exception as exc:
-                rollback_errors.append(str(exc))
-            try:
-                operations.persist_dns_mode(previous_mode)
-            except Exception as exc:
-                rollback_errors.append(f'mode state: {exc}')
+            except Exception:
+                needs_restore = True
+            if needs_restore:
+                _, _, _, bind_service = operations.dns_layout(platform)
+                path_service = operations.PDNS_PATH_UNIT.name
+                restored = False
+                try:
+                    _restore_service_states(
+                        previous_states,
+                        (bind_service, 'pdns.service', path_service),
+                        log_path,
+                    )
+                    restored = True
+                except Exception as exc:
+                    rollback_errors.append(str(exc))
+                if restored:
+                    try:
+                        operations.persist_dns_mode(previous_mode)
+                    except Exception as exc:
+                        rollback_errors.append(f'mode state: {exc}')
         if rollback_errors:
             raise BuildError(
                 'build failed and DNS rollback also failed: '
