@@ -15,17 +15,20 @@ EXPECTED_IMPLEMENTATION_BLOB = "739a29690bd0e938eb291d7d1921af751bd68e1d"
 EXPECTED_DRIVER_BLOB = "19d29feb55969d6925c87ea5b8419a624d4cdb52"
 EXPECTED_UPDATE_INSTALLER_BLOB = "cbd7e9761abb637458b8bffa246e7725523a3a8e"
 RUNTIME_BLOB_OVERRIDES = {
+    "tools/hostpanel_build_cli.py": (
+        "5b310214204d47ea5742e27864c543365473eb5b"
+    ),
     "tools/hostpanel_build_config.py": (
         "ed84d4a123b1e2ae519ddc09687b4cd91c045fa2"
     ),
     "tools/hostpanel_build_entry.py": (
-        "5b51f4c1f3bb5f21971ba0e698b9408faac7448a"
+        "5c4ea6a5e0742331174bab4fe5713dc38770ffc4"
     ),
     "tools/hostpanel_build_extras.py": (
         "69873098d3693cd6af3bbd5315e7d65fc829c986"
     ),
     "tools/hostpanel_build_extras_state.py": (
-        "14242922effe7009c1e18828a2833990a025efb2"
+        "c08c003ae65703f9a41d23b5ca5d74c26ad29eeb"
     ),
     "tools/hostpanel_build_powerdns_adapter.py": (
         "efecbd561691c3fd541c522d68fa39861cbe5a52"
