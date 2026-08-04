@@ -67,6 +67,7 @@ def write_atomic(
         os.fchown(fd, metadata.st_uid, metadata.st_gid)
         os.fchmod(fd, mode)
         copy_xattrs(path, temporary)
+        os.fsync(fd)
         descriptor, fd = fd, -1
         os.close(descriptor)
         os.replace(temporary, path)
@@ -90,9 +91,15 @@ def write_atomic(
 
 
 for _name in dir(_IMPL):
-    if _name not in {'write_atomic', 'copy_xattrs'} and _name not in globals():
+    if _name not in {'write_atomic', 'copy_xattrs', 'patch'} and _name not in globals():
         globals()[_name] = getattr(_IMPL, _name)
 _IMPL.write_atomic = write_atomic
+
+
+def patch(path: pathlib.Path = _IMPL.TARGET) -> None:
+    _IMPL.trusted_file = globals()['trusted_file']
+    _IMPL.write_atomic = write_atomic
+    _IMPL.patch(path)
 
 
 class _ForwardingModule(types.ModuleType):
