@@ -178,14 +178,32 @@ class CustomBuildWebAtomicityTests(unittest.TestCase):
                 list(root.glob('.*.hostpanel-build.*')), []
             )
 
-    def test_runtime_snapshot_rejects_regular_file_as_lsphp_link(self):
+    def test_runtime_snapshot_restores_legacy_regular_lsphp_wrapper(self):
         with tempfile.TemporaryDirectory() as directory:
-            link = pathlib.Path(directory) / 'lsphp'
-            link.write_text('not a symlink', encoding='utf-8')
-            with self.assertRaisesRegex(
-                BuildError, 'unsafe managed runtime path'
-            ):
-                WEB._snapshot_path(link, allow_symlink=True)
+            root = pathlib.Path(directory)
+            wrapper = root / 'lsphp'
+            wrapper.write_text('#!/bin/sh\nexec legacy-lsphp "$@"\n')
+            wrapper.chmod(0o755)
+            current = root / 'current-lsphp'
+            current.write_text('current', encoding='utf-8')
+
+            with mock.patch.object(
+                WEB, 'trusted_root_file', return_value=self.metadata(0o755)
+            ), mock.patch.object(
+                WEB, '_capture_xattrs', return_value={}
+            ), mock.patch.object(WEB.os, 'fchown'):
+                snapshot = WEB._snapshot_path(
+                    wrapper, allow_symlink=True
+                )
+                WEB._replace_symlink(wrapper, current)
+                WEB._restore_path(wrapper, snapshot)
+
+            self.assertFalse(wrapper.is_symlink())
+            self.assertEqual(
+                wrapper.read_text(encoding='utf-8'),
+                '#!/bin/sh\nexec legacy-lsphp "$@"\n',
+            )
+            self.assertEqual(stat.S_IMODE(wrapper.stat().st_mode), 0o755)
 
     def test_source_uses_random_temporaries_and_atomic_metadata(self):
         source = (TOOLS / 'hostpanel_build_web.py').read_text(
