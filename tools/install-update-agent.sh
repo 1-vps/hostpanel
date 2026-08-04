@@ -8,12 +8,13 @@ set -euo pipefail
 }
 
 SOURCE_ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-UPDATER="$SOURCE_ROOT/tools/hostpanel-update.py"
+UPDATER_ENTRY="$SOURCE_ROOT/tools/hostpanel-update-entry.py"
+UPDATER_IMPL="$SOURCE_ROOT/tools/hostpanel-update.py"
 SERVICE="$SOURCE_ROOT/packaging/systemd/hostpanel-update.service"
 TIMER="$SOURCE_ROOT/packaging/systemd/hostpanel-update.timer"
 KEYRING="$SOURCE_ROOT/releases/update-keyring.json"
 
-for path in "$UPDATER" "$SERVICE" "$TIMER" "$KEYRING"; do
+for path in "$UPDATER_ENTRY" "$UPDATER_IMPL" "$SERVICE" "$TIMER" "$KEYRING"; do
   [[ -f "$path" && ! -L "$path" ]] || {
     echo "Error: unsafe or missing update-agent input: $path" >&2
     exit 1
@@ -60,7 +61,10 @@ done
 
 install -d -o root -g root -m 755 /opt/hostpanel/tools
 install -d -o root -g root -m 700 /etc/hostpanel /var/lib/hostpanel
-install -o root -g root -m 755 "$UPDATER" /opt/hostpanel/tools/hostpanel-update
+install -o root -g root -m 644 \
+  "$UPDATER_IMPL" /opt/hostpanel/tools/hostpanel-update-impl.py
+install -o root -g root -m 755 \
+  "$UPDATER_ENTRY" /opt/hostpanel/tools/hostpanel-update
 for name in "${KEY_FILES[@]}"; do
   install -o root -g root -m 644 \
     "$SOURCE_ROOT/releases/$name" "/etc/hostpanel/$name"
