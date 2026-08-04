@@ -127,8 +127,8 @@ def _entry_wraps_complete_transaction_idempotently(self) -> None:
 
             result = second_wrapper(
                 'web',
-                dict(_IMPL.config.DEFAULT_OPTIONS),
-                _IMPL.config.Platform('debian', 'ubuntu', '24.04'),
+                dict(_IMPL.CONFIG.DEFAULT_OPTIONS),
+                _IMPL.CONFIG.Platform('debian', 'ubuntu', '24.04'),
                 pathlib.Path('/tmp/log'),
                 pathlib.Path('/tmp/backups'),
                 pathlib.Path('/python'),
