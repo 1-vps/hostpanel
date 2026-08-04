@@ -239,10 +239,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     try:
         options = read_config(pathlib.Path(args.config))
-        validate_option_compatibility(options)
-        if args.command == 'options':
-            print(render_config(options), end='')
-            return 0
         if args.command == 'set':
             require_root()
             if args.key not in DEFAULT_OPTIONS:
@@ -252,6 +248,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             validate_option_compatibility(updated)
             write_config(pathlib.Path(args.config), updated)
             print(f'{args.key}={updated[args.key]}')
+            return 0
+        validate_option_compatibility(options)
+        if args.command == 'options':
+            print(render_config(options), end='')
             return 0
         if args.command == 'ssl':
             if args.ssl_command == 'status':
@@ -327,8 +327,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             options, pathlib.Path(args.web_helper), python_path, log_path
                         )
                         validate_varnish(options, log_path)
-                    if args.component == 'all' and 'database' in roles \
-                            and options['mongodb'] == '8.0':
+                    if args.component == 'all' and 'database' in roles:
                         validate_mongodb(log_path)
                 run_doctor(log_path, python_path, doctor_path)
                 print(f'Validation completed. Log: {log_path}')
