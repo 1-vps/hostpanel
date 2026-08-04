@@ -15,6 +15,9 @@ EXPECTED_IMPLEMENTATION_BLOB = "739a29690bd0e938eb291d7d1921af751bd68e1d"
 EXPECTED_DRIVER_BLOB = "19d29feb55969d6925c87ea5b8419a624d4cdb52"
 EXPECTED_UPDATE_INSTALLER_BLOB = "84e2c3bb65c2879eb706e35e37c73e23b7f39e92"
 RUNTIME_BLOB_OVERRIDES = {
+    "tools/hostpanel_build_config.py": (
+        "6d26f559e8b5adaf757d31b5473125053d2325be"
+    ),
     "tools/hostpanel_build_entry.py": (
         "5b51f4c1f3bb5f21971ba0e698b9408faac7448a"
     ),
