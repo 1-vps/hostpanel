@@ -69,7 +69,7 @@ class OuterWebBuildTransactionTests(unittest.TestCase):
         self.assertEqual(result, 'ok')
         function.assert_called_once()
 
-    def test_capture_occurs_after_package_stage_and_before_reconcile(self) -> None:
+    def test_capture_occurs_before_package_stage_and_verify_precedes_reconcile(self) -> None:
         events: list[str] = []
         with tempfile.TemporaryDirectory() as directory:
             state_path = pathlib.Path(directory) / 'state.json'
@@ -111,7 +111,7 @@ class OuterWebBuildTransactionTests(unittest.TestCase):
             self.assertEqual(
                 events,
                 [
-                    'package-stage', '--capture', '--verify',
+                    '--capture', 'package-stage', '--verify',
                     'base-reconcile', 'late-stage', 'discard',
                 ],
             )
@@ -178,34 +178,51 @@ class OuterWebBuildTransactionTests(unittest.TestCase):
                 transaction.operations.reconcile_webserver, base_reconcile
             )
 
-    def test_failure_before_reconcile_restores_only_services(self) -> None:
+    def test_failure_before_reconcile_restores_prebuild_state_and_services(self) -> None:
         events: list[str] = []
         with tempfile.TemporaryDirectory() as directory:
             state_path = pathlib.Path(directory) / 'state.json'
 
+            def helper_command(
+                _python, _helper, action, path, _log, *, mode_file=None
+            ):
+                events.append(action)
+                if action == '--capture':
+                    path.write_text('{}\n', encoding='utf-8')
+                    path.chmod(0o600)
+
             def function(*_args):
+                events.append('package-stage')
                 raise OSError('package transaction failed')
 
             def restore_service(name, _state, _log):
-                events.append(name)
+                events.append(f'restore:{name}')
                 return []
 
             patches = self.common_patches(state_path)
             with patches[0], patches[1], patches[2], patches[3], patches[4], \
                  mock.patch.object(
-                     transaction, '_helper_command'
-                 ) as helper, mock.patch.object(
+                     transaction, '_helper_command', side_effect=helper_command
+                 ), mock.patch.object(
                      transaction, '_restore_service', side_effect=restore_service
-                 ), mock.patch.object(transaction, '_discard_state') as discard:
+                 ), mock.patch.object(
+                     transaction, '_discard_state',
+                     side_effect=lambda path: (
+                         events.append('discard'), path.unlink(missing_ok=True)
+                     ),
+                 ):
                 with self.assertRaisesRegex(OSError, 'package transaction failed'):
                     self.invoke(function)
 
-            helper.assert_not_called()
-            discard.assert_called_once_with(state_path)
             self.assertEqual(
                 events,
-                ['lsws.service', 'apache2.service', 'nginx.service'],
+                [
+                    '--capture', 'package-stage', '--restore',
+                    'restore:lsws.service', 'restore:apache2.service',
+                    'restore:nginx.service', 'discard',
+                ],
             )
+            self.assertFalse(state_path.exists())
 
     def test_rollback_errors_are_aggregated_and_state_is_retained(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
