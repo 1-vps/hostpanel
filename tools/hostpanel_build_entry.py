@@ -13,7 +13,9 @@ import hostpanel_build_optional_postcheck_adapter as optional_postcheck_adapter
 import hostpanel_build_powerdns_adapter as powerdns_adapter
 import hostpanel_build_mongodb_adapter as mongodb_adapter
 import hostpanel_build_web_transaction_adapter as web_transaction_adapter
-from hostpanel_build_config import BuildError, DEFAULT_CONFIG, read_config
+from hostpanel_build_config import (
+    BuildError, DEFAULT_CONFIG, read_config, read_roles,
+)
 
 _BASE_EXECUTE_BUILD = cli.execute_build
 _BASE_PRINT_PLAN = cli.print_plan
@@ -152,6 +154,47 @@ def validate_dns_runtime(options, platform) -> None:
     )
 
 
+def _validate_optional_unit_state(
+    unit: str, *, active: bool, enabled: bool
+) -> None:
+    observed_active = state._service_active(unit)
+    if observed_active != active:
+        raise BuildError(
+            f'{unit} active state is {observed_active}; expected {active}'
+        )
+    observed_enabled = state._service_enabled(unit)
+    if observed_enabled != enabled:
+        raise BuildError(
+            f'{unit} enabled state is {observed_enabled}; expected {enabled}'
+        )
+
+
+def validate_applied_runtime(parsed) -> None:
+    roles = read_roles(pathlib.Path(parsed.roles_file))
+    platform = cli.detect_platform(pathlib.Path(parsed.os_release))
+    if 'dns' in roles:
+        dns_mode = powerdns_adapter.applied_dns_mode()
+        validate_dns_runtime({'dns': dns_mode}, platform)
+    if 'database' in roles:
+        mongodb_mode = state._runtime_mode(
+            state.MONGODB_MODE_FILE, 'off'
+        )
+        if mongodb_mode not in {'off', state.MONGODB_VERSION}:
+            raise BuildError('invalid applied MongoDB mode')
+        enabled = mongodb_mode == state.MONGODB_VERSION
+        _validate_optional_unit_state(
+            'mongod.service', active=enabled, enabled=enabled
+        )
+    if 'web' in roles:
+        varnish_mode = state._runtime_mode(state.VARNISH_MODE_FILE, 'off')
+        if varnish_mode not in {'off', 'on'}:
+            raise BuildError('invalid applied Varnish mode')
+        enabled = varnish_mode == 'on'
+        _validate_optional_unit_state(
+            'varnish.service', active=enabled, enabled=enabled
+        )
+
+
 def install_runtime_adapters(selected_config: pathlib.Path) -> None:
     operations_adapter.install()
     powerdns_adapter.install()
@@ -252,6 +295,21 @@ def _requires_outer_lock(parsed) -> bool:
     return False
 
 
+@contextlib.contextmanager
+def _command_runtime_guard(parsed):
+    original_doctor = cli.run_doctor
+    if parsed.command == 'doctor':
+        def checked_doctor(log_path, python_path, doctor_path):
+            validate_applied_runtime(parsed)
+            return original_doctor(log_path, python_path, doctor_path)
+
+        cli.run_doctor = checked_doctor
+    try:
+        yield
+    finally:
+        cli.run_doctor = original_doctor
+
+
 def _run_prelocked(values: list[str], lock_file: str) -> int:
     original_acquire_lock = cli.acquire_lock
     with original_acquire_lock(pathlib.Path(lock_file)):
@@ -267,9 +325,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     install_runtime_adapters(config_path(values))
     try:
         parsed = cli.parse_args(values)
-        if _requires_outer_lock(parsed):
-            return _run_prelocked(values, parsed.lock_file)
-        return cli.main(values)
+        with _command_runtime_guard(parsed):
+            if _requires_outer_lock(parsed):
+                return _run_prelocked(values, parsed.lock_file)
+            return cli.main(values)
     except (BuildError, OSError) as exc:
         print(f'hostpanel-build failed: {exc}', file=sys.stderr)
         return 1
