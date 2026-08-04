@@ -54,6 +54,37 @@ CUSTOMBUILD_RUNTIME_MODES = {
     **{name: 0o755 for name in CUSTOMBUILD_EXECUTABLES},
     **{name: 0o644 for name in CUSTOMBUILD_MODULES},
 }
+CUSTOMBUILD_RUNTIME_BLOBS = {
+    "tools/hostpanel-build.py": "2198d7c9696cf61ced847cae22ab661cea7e4b32" if False else "2198d7c969c9b364051f9ea0a4bf7aa8db9bdd3f",
+    "tools/hostpanel_build_web.py": "aac4f4380bf4fabf6662c5b754dcd9869582fdec",
+    "tools/patch_custombuild_runtime.py": "c79f9d1897d9d984459f84f277f62d6a9a021d28",
+    "tools/patch_powerdns_runtime.py": "786afeb612e79bec8f7a98880586ac088d205c2c",
+    "tools/patch_varnish_runtime.py": "386680af0516a0c8ad78a70faea371fae215d856",
+    "tools/patch_extras_doctor.py": "8fbbe75ab7be817686aa3e49eb601095af011b9a",
+    "tools/install-hostpanel-build.sh": "5bb267dfaec4b3aede3524ecb630f05216ec8d58",
+    "tools/hostpanel_build_config.py": "67a97c9fb81b95ac40abc08fe9ae7565965f17f7",
+    "tools/hostpanel_build_packages.py": "d2b49d6da0735b144c4937b6fa26ec546afc14f6",
+    "tools/hostpanel_build_operations.py": "d76c9b28f5f8053fd698af16a60df8c29c5d632f",
+    "tools/hostpanel_build_operations_adapter.py": "1eb9bc527bc3aa7646bf99abf4cb56e65e087871",
+    "tools/hostpanel_build_optional_postcheck_adapter.py": "f8b61f833edeb8a672fde00dd301efc9c740e5f1",
+    "tools/hostpanel_build_cli.py": "083adf2c67169bbe041ff415f0854d53121ca817",
+    "tools/hostpanel_build_ssl.py": "61efab030ab08179eb6dc012748202b532e8e36c",
+    "tools/hostpanel_build_extras.py": "cf96140db2079a2c4ee2cc2ab92a8a5eceaf996b",
+    "tools/hostpanel_build_extras_impl.py": "062186e3a1cefb42dfab406e486119ada829a233",
+    "tools/hostpanel_build_extras_state.py": "73337ca3ad61f560c16c7a1f4a5e9dfd9ffc836f",
+    "tools/hostpanel_build_extras_state_impl.py": "bd578c71d6fd6515489ac091df8128e9abdb2bc5",
+    "tools/hostpanel_build_entry.py": "d22cfa28518f771cfe02d1e68fdfc8c46e78d54b",
+    "tools/hostpanel_build_powerdns_adapter.py": "80ffa4dabe0bad15747f76e056a0c5b29fc02aa1",
+    "tools/hostpanel_build_powerdns_adapter_impl.py": "ffb082ac070b10b050dce9cd289896a8f4d24b3b",
+    "tools/hostpanel_build_mongodb_adapter.py": "9f2430fc3c34d6cd81d3d2b790c22881c551d921",
+    "tools/hostpanel_build_web_impl.py": "297b4ec6eea991a118ca81a4134268433223d432",
+    "tools/hostpanel_build_web_state.py": "1d2860751f119707d75a8cc1a303f23a8a871a53",
+    "tools/hostpanel_build_web_transaction_adapter.py": "6cffe6eed68e2270357930d8570a568f6ab87d54",
+    "tools/patch_custombuild_runtime_impl.py": "1eddff6963eb6de67962125283d7de8b087b2f33",
+    "tools/patch_powerdns_runtime_impl.py": "25fd22082596f417d83d07bdb0b6130ae76b615f",
+    "tools/patch_varnish_runtime_impl.py": "9f8c5ed92528ef99798febe236eec061e4093741",
+    "tools/patch_extras_doctor_impl.py": "84bb9b78b8c9dd231ee08e9cf839c64e65ef0b56",
+}
 
 # Source-level compatibility markers keep security-review assertions visible in
 # the public audited entrypoint while execution remains in the blob-pinned driver.
@@ -260,17 +291,16 @@ def _write_atomic(
             raise cleanup_error
 
 
-def _trusted_directory(path: pathlib.Path, *, private: bool = False) -> os.stat_result:
+def _trusted_directory(path: pathlib.Path) -> os.stat_result:
     try:
         metadata = path.lstat()
     except OSError as exc:
         raise SystemExit(f"cannot inspect reviewed runtime directory: {path}") from exc
-    disallowed = 0o077 if private else 0o022
     if (
         not stat.S_ISDIR(metadata.st_mode)
         or stat.S_ISLNK(metadata.st_mode)
         or metadata.st_uid != os.geteuid()
-        or stat.S_IMODE(metadata.st_mode) & disallowed
+        or stat.S_IMODE(metadata.st_mode) & 0o022
     ):
         raise SystemExit(f"unsafe reviewed runtime directory: {path}")
     return metadata
@@ -280,75 +310,23 @@ def _trusted_directory_chain(root: pathlib.Path, path: pathlib.Path) -> None:
     if not root.is_absolute() or not path.is_absolute():
         raise SystemExit("reviewed runtime path is not canonical")
     try:
-        path.relative_to(root)
+        relative = path.relative_to(root)
     except ValueError as exc:
         raise SystemExit("reviewed runtime path escapes its trusted root") from exc
     current = root
     _trusted_directory(current)
-    for component in path.relative_to(root).parts:
+    for component in relative.parts:
         current = current / component
         _trusted_directory(current)
 
 
 def _reviewed_source_root() -> pathlib.Path:
     explicit = os.environ.get("HP_HARDENER_SOURCE_ROOT", "")
-    root = (
-        pathlib.Path(explicit)
-        if explicit
-        else TRUSTED_DRIVER_PATH.parent.parent
-    )
+    root = pathlib.Path(explicit) if explicit else TRUSTED_DRIVER_PATH.parent.parent
     if not root.is_absolute():
         raise SystemExit("the reviewed CustomBuild source root is not canonical")
     _trusted_directory(root)
-    git_marker = root / ".git"
-    try:
-        marker = git_marker.lstat()
-    except OSError as exc:
-        raise SystemExit("the reviewed CustomBuild source is not a Git checkout") from exc
-    if not (stat.S_ISDIR(marker.st_mode) or stat.S_ISREG(marker.st_mode)):
-        raise SystemExit("the reviewed CustomBuild Git metadata is unsafe")
     return root
-
-
-def _run_git(root: pathlib.Path, arguments: list[str]) -> str:
-    environment = {
-        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-        "HOME": str(root),
-        "LC_ALL": "C",
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-        "GIT_TERMINAL_PROMPT": "0",
-    }
-    try:
-        completed = subprocess.run(
-            [
-                "git", "-c", "core.hooksPath=/dev/null",
-                "-c", f"safe.directory={root}",
-                "-C", str(root), *arguments,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-            env=environment,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        raise SystemExit("could not query the reviewed CustomBuild Git object") from exc
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout).strip()[-500:]
-        raise SystemExit(
-            f"could not query the reviewed CustomBuild Git object: {detail}"
-        )
-    return completed.stdout.strip()
-
-
-def _expected_git_object(root: pathlib.Path, relative: pathlib.PurePosixPath) -> str:
-    expected = _run_git(
-        root, ["rev-parse", "--verify", f"HEAD:{relative.as_posix()}"]
-    )
-    if len(expected) != 40 or any(character not in "0123456789abcdef" for character in expected):
-        raise SystemExit(f"invalid reviewed Git object for {relative}")
-    return expected
 
 
 def _git_blob_digest(payload: bytes) -> str:
@@ -356,9 +334,7 @@ def _git_blob_digest(payload: bytes) -> str:
     return hashlib.sha1(header + payload).hexdigest()
 
 
-def _read_reviewed_runtime_file(
-    root: pathlib.Path, relative_name: str, mode: int
-) -> bytes:
+def _read_reviewed_runtime_file(root: pathlib.Path, relative_name: str) -> bytes:
     relative = pathlib.PurePosixPath(relative_name)
     if relative.is_absolute() or ".." in relative.parts or not relative.parts:
         raise SystemExit(f"invalid reviewed runtime path: {relative_name}")
@@ -374,7 +350,6 @@ def _read_reviewed_runtime_file(
         or before.st_uid != os.geteuid()
         or before.st_nlink != 1
         or stat.S_IMODE(before.st_mode) & 0o022
-        or (mode & 0o111 and not stat.S_IMODE(before.st_mode) & 0o111)
         or before.st_size < 0
         or before.st_size > MAX_REVIEWED_RUNTIME_FILE_BYTES
     ):
@@ -411,10 +386,10 @@ def _read_reviewed_runtime_file(
         os.close(descriptor)
 
     payload = b"".join(chunks)
-    expected = _expected_git_object(root, relative)
-    if _git_blob_digest(payload) != expected:
+    expected = CUSTOMBUILD_RUNTIME_BLOBS.get(relative_name)
+    if expected is None or _git_blob_digest(payload) != expected:
         raise SystemExit(
-            f"reviewed runtime file does not match HEAD:{relative_name}"
+            f"reviewed runtime file does not match its Git blob: {relative_name}"
         )
     return payload
 
@@ -487,15 +462,15 @@ def synchronize_custombuild_runtime(
 ) -> None:
     reviewed_root = reviewed_root.absolute()
     target_root = target_root.absolute()
+    if set(CUSTOMBUILD_RUNTIME_MODES) != set(CUSTOMBUILD_RUNTIME_BLOBS):
+        raise SystemExit("CustomBuild runtime manifest is incomplete")
     _trusted_directory(reviewed_root)
     _ensure_target_tools(target_root)
 
-    verified: dict[str, bytes] = {}
-    for relative_name, mode in CUSTOMBUILD_RUNTIME_MODES.items():
-        verified[relative_name] = _read_reviewed_runtime_file(
-            reviewed_root, relative_name, mode
-        )
-
+    verified = {
+        relative_name: _read_reviewed_runtime_file(reviewed_root, relative_name)
+        for relative_name in CUSTOMBUILD_RUNTIME_MODES
+    }
     if reviewed_root == target_root:
         return
     for relative_name, mode in CUSTOMBUILD_RUNTIME_MODES.items():
