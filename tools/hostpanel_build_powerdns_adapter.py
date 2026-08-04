@@ -7,6 +7,7 @@ import pathlib
 import secrets
 import stat
 import sys
+import types
 
 _IMPL_PATH = pathlib.Path(__file__).with_name(
     'hostpanel_build_powerdns_adapter_impl.py'
@@ -135,3 +136,16 @@ _IMPL.write_atomic_preserving = write_atomic_preserving
 install = _IMPL.install
 reconcile_dns_services = _IMPL.reconcile_dns_services
 guarded_apply_build = _IMPL.guarded_apply_build
+
+
+class _ForwardingModule(types.ModuleType):
+    """Keep test/runtime monkeypatches visible inside the preserved implementation."""
+
+    def __setattr__(self, name: str, value) -> None:
+        super().__setattr__(name, value)
+        implementation = super().__getattribute__('_IMPL')
+        if hasattr(implementation, name):
+            setattr(implementation, name, value)
+
+
+sys.modules[__name__].__class__ = _ForwardingModule
