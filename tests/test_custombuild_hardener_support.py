@@ -9,6 +9,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HARDENER_PATH = ROOT / 'tools/harden_install.py'
+WORKFLOW_PATH = ROOT / '.github/workflows/automatic-installer.yml'
 
 
 def load_hardener():
@@ -48,6 +49,12 @@ class HardenerSecondPassSupportTests(unittest.TestCase):
                 'tools/install-update-agent.sh'
             ],
             HARDENER.EXPECTED_UPDATE_INSTALLER_BLOB,
+        )
+
+    def test_driver_changes_trigger_custombuild_validation(self) -> None:
+        workflow = WORKFLOW_PATH.read_text(encoding='utf-8')
+        self.assertEqual(
+            workflow.count('      - tools/harden_install_driver.py\n'), 2
         )
 
     def test_first_pass_installs_support_for_no_git_second_pass(self) -> None:
