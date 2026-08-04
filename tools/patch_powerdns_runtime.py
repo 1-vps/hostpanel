@@ -92,7 +92,7 @@ def write_atomic(
 
 for _name in dir(_IMPL):
     if _name not in {
-        'write_atomic', 'copy_xattrs', 'patch_core', 'patch_root'
+        'write_atomic', 'copy_xattrs', 'patch_core', 'patch_root', 'main'
     } and _name not in globals():
         globals()[_name] = getattr(_IMPL, _name)
 _IMPL.write_atomic = write_atomic
@@ -113,6 +113,55 @@ def patch_root(path: pathlib.Path) -> None:
     _IMPL.patch_root(path)
 
 
+def _patched_core_text(text: str) -> str:
+    return _IMPL.replace_once(
+        text, _IMPL.CORE_OLD, _IMPL.CORE_NEW, 'core DNS service'
+    )
+
+
+def _patched_root_text(text: str) -> str:
+    text = _IMPL.replace_once(
+        text, _IMPL.ROOT_ANCHOR, _IMPL.ROOT_MODE, 'root DNS mode'
+    )
+    if _IMPL.ALLOW_NEW not in text:
+        if text.count(_IMPL.ALLOW_OLD) != 1:
+            raise SystemExit('unexpected service allowlist shape')
+        text = text.replace(_IMPL.ALLOW_OLD, _IMPL.ALLOW_NEW, 1)
+    return _IMPL.replace_once(
+        text, _IMPL.DNSSEC_OLD, _IMPL.DNSSEC_NEW,
+        'PowerDNS DNSSEC guard',
+    )
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        raise SystemExit('patch_powerdns_runtime.py must run as root')
+
+    core_path = APP_ROOT / 'core.py'
+    root_path = APP_ROOT / 'hostpanel-root'
+    core_metadata = trusted_file(core_path)
+    root_metadata = trusted_file(root_path)
+    core_original = core_path.read_text(encoding='utf-8')
+    root_original = root_path.read_text(encoding='utf-8')
+
+    core_updated = _patched_core_text(core_original)
+    root_updated = _patched_root_text(root_original)
+
+    write_atomic(core_path, core_updated, core_metadata)
+    try:
+        write_atomic(root_path, root_updated, root_metadata)
+    except BaseException as original_error:
+        try:
+            write_atomic(core_path, core_original, core_metadata)
+        except BaseException as rollback_error:
+            raise SystemExit(
+                'PowerDNS runtime patch failed and core rollback also failed: '
+                f'{rollback_error}'
+            ) from original_error
+        raise
+    return 0
+
+
 class _ForwardingModule(types.ModuleType):
     def __setattr__(self, name: str, value) -> None:
         super().__setattr__(name, value)
@@ -124,7 +173,6 @@ class _ForwardingModule(types.ModuleType):
 _module = sys.modules.get(__name__)
 if _module is not None:
     _module.__class__ = _ForwardingModule
-main = _IMPL.main
 
 if __name__ == '__main__':
     raise SystemExit(main())
