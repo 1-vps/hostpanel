@@ -297,6 +297,8 @@ def zerossl_certbot_config(
     _safe_root_directory(runtime_dir, 0o700)
     fd, name = tempfile.mkstemp(prefix='zerossl-', suffix='.ini', dir=runtime_dir)
     path = pathlib.Path(name)
+    active_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
     try:
         os.fchmod(fd, 0o600)
         os.fchown(fd, uid, gid)
@@ -312,14 +314,26 @@ def zerossl_certbot_config(
                 raise BuildError('could not write the temporary ZeroSSL configuration')
             view = view[written:]
         os.fsync(fd)
-        os.close(fd)
-        fd = -1
+        descriptor, fd = fd, -1
+        os.close(descriptor)
         yield path
+    except BaseException as exc:
+        active_error = exc
+        raise
     finally:
         if fd >= 0:
-            os.close(fd)
-        with contextlib.suppress(FileNotFoundError):
-            path.unlink()
+            descriptor, fd = fd, -1
+            try:
+                os.close(descriptor)
+            except BaseException as exc:
+                cleanup_error = exc
+        try:
+            path.unlink(missing_ok=True)
+        except BaseException as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if active_error is None and cleanup_error is not None:
+            raise cleanup_error
 
 
 def print_ssl_plan(
