@@ -68,23 +68,27 @@ def write_atomic_preserving(path: pathlib.Path, text: str) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
     if hasattr(os, 'O_NOFOLLOW'):
         flags |= os.O_NOFOLLOW
-    fd = os.open(temporary, flags, stat.S_IMODE(metadata.st_mode))
+    fd = -1
     try:
-        payload = text.encode('utf-8')
-        view = memoryview(payload)
-        while view:
-            written = os.write(fd, view)
-            if written <= 0:
-                raise BuildError(f'could not write {temporary}')
-            view = view[written:]
-        os.fsync(fd)
-        os.fchown(fd, metadata.st_uid, metadata.st_gid)
-        os.fchmod(fd, stat.S_IMODE(metadata.st_mode))
-    finally:
-        os.close(fd)
-    try:
+        fd = os.open(temporary, flags, stat.S_IMODE(metadata.st_mode))
+        try:
+            payload = text.encode('utf-8')
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise BuildError(f'could not write {temporary}')
+                view = view[written:]
+            os.fsync(fd)
+            os.fchown(fd, metadata.st_uid, metadata.st_gid)
+            os.fchmod(fd, stat.S_IMODE(metadata.st_mode))
+        finally:
+            os.close(fd)
+            fd = -1
         os.replace(temporary, path)
     finally:
+        if fd >= 0:
+            os.close(fd)
         with contextlib.suppress(FileNotFoundError):
             temporary.unlink()
 
@@ -211,7 +215,11 @@ def service_enabled(name: str) -> bool:
 
 
 def _detail(completed) -> str:
-    return str(completed.stderr or completed.stdout or '').strip()[-500:]
+    return str(
+        getattr(completed, 'stderr', '')
+        or getattr(completed, 'stdout', '')
+        or ''
+    ).strip()[-500:]
 
 
 def _unit_absent(detail: str) -> bool:
