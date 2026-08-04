@@ -2,6 +2,7 @@
 """Patch the installed HostPanel runtime to honour global service modes."""
 from __future__ import annotations
 
+import contextlib
 import os
 import pathlib
 import stat
@@ -205,24 +206,35 @@ def trusted_file(path: pathlib.Path) -> None:
 
 
 def write_atomic(path: pathlib.Path, text: str) -> None:
-    mode = stat.S_IMODE(path.stat().st_mode)
+    metadata = path.lstat()
+    mode = stat.S_IMODE(metadata.st_mode)
     temporary = path.with_name(f'.{path.name}.custombuild.{os.getpid()}')
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
-    fd = os.open(temporary, flags, mode)
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    fd = -1
     try:
-        payload = text.encode('utf-8')
-        view = memoryview(payload)
-        while view:
-            written = os.write(fd, view)
-            if written <= 0:
-                raise SystemExit(f'could not write {temporary}')
-            view = view[written:]
-        os.fsync(fd)
+        fd = os.open(temporary, flags, mode)
+        try:
+            payload = text.encode('utf-8')
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise SystemExit(f'could not write {temporary}')
+                view = view[written:]
+            os.fsync(fd)
+            os.fchown(fd, metadata.st_uid, metadata.st_gid)
+            os.fchmod(fd, mode)
+        finally:
+            os.close(fd)
+            fd = -1
+        os.replace(temporary, path)
     finally:
-        os.close(fd)
-    os.chown(temporary, 0, 0)
-    os.chmod(temporary, mode)
-    os.replace(temporary, path)
+        if fd >= 0:
+            os.close(fd)
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
 
 
 def patch_webserver(path: pathlib.Path) -> None:
