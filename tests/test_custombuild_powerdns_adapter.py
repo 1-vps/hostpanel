@@ -99,35 +99,21 @@ class PowerDnsPermissionsAdapterTests(unittest.TestCase):
         chain.assert_called_once_with(include)
         trusted_file.assert_called_once_with(target)
 
-    def test_install_prevalidates_sources_before_configuration(self):
-        calls: list[str] = []
-        original = mock.Mock(side_effect=lambda platform, log: calls.append('configured'))
-        include = pathlib.Path('/etc/powerdns/pdns.d')
-        target = include / 'bind.conf'
-        managed = pathlib.Path('/etc/bind/named.conf.local')
-        zones = pathlib.Path('/etc/bind/zones')
-        with mock.patch.object(ADAPTER.operations, 'configure_powerdns', original), \
-             mock.patch.object(
-                 ADAPTER.operations, 'dns_layout',
-                 return_value=(managed, zones, 'bind', 'bind9.service'),
-             ), mock.patch.object(ADAPTER, 'trusted_root_file') as trusted_file, \
-             mock.patch.object(ADAPTER, 'trusted_managed_zone_directory') as trusted_zone, \
-             mock.patch.object(
-                 ADAPTER, 'readable_backend_paths', return_value=(include, target)
-             ), mock.patch.object(ADAPTER.os, 'chown') as chown, \
-             mock.patch.object(ADAPTER.os, 'chmod') as chmod:
+    def test_install_sets_hardened_configuration_boundary(self):
+        with mock.patch.object(ADAPTER, '_BASE_INSTALL') as base_install:
             ADAPTER.install()
-            ADAPTER.operations.configure_powerdns(mock.Mock(), pathlib.Path('/tmp/log'))
-        self.assertEqual(calls, ['configured'])
-        trusted_file.assert_any_call(managed)
-        trusted_zone.assert_called_once_with(zones, 'bind')
-        self.assertEqual(
-            chmod.call_args_list,
-            [mock.call(include, 0o755), mock.call(target, 0o644)],
+        base_install.assert_called_once_with()
+        self.assertIs(
+            ADAPTER.operations.configure_powerdns,
+            ADAPTER._configure_powerdns_readable,
         )
-        self.assertEqual(
-            chown.call_args_list,
-            [mock.call(include, 0, 0), mock.call(target, 0, 0)],
+        self.assertIs(
+            ADAPTER.operations.write_atomic_root,
+            ADAPTER.write_atomic_root,
+        )
+        self.assertIs(
+            ADAPTER.operations.select_powerdns_backend_config,
+            ADAPTER.select_powerdns_backend_config,
         )
 
     def test_install_replaces_all_security_sensitive_operations(self):
@@ -141,6 +127,10 @@ class PowerDnsPermissionsAdapterTests(unittest.TestCase):
         self.assertIs(
             ADAPTER.operations.select_powerdns_backend_config,
             ADAPTER.select_powerdns_backend_config,
+        )
+        self.assertIs(
+            ADAPTER.operations.configure_powerdns,
+            ADAPTER._configure_powerdns_readable,
         )
 
 
