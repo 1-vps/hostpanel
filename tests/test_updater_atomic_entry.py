@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.machinery
 import importlib.util
 import json
 import os
@@ -22,7 +23,8 @@ def load_installed_entry(directory: pathlib.Path):
     shutil.copy2(TOOLS / 'hostpanel-update.py', implementation)
     name = 'installed_hostpanel_update_entry'
     sys.modules.pop(name, None)
-    spec = importlib.util.spec_from_file_location(name, entry)
+    loader = importlib.machinery.SourceFileLoader(name, str(entry))
+    spec = importlib.util.spec_from_loader(name, loader)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
