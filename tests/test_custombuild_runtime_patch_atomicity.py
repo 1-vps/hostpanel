@@ -42,6 +42,20 @@ class RuntimePatcherAtomicityTests(unittest.TestCase):
                 )
                 self.assertEqual(list(root.glob(pattern)), [])
 
+    def test_powerdns_runtime_write_fsyncs_parent_after_replace(self):
+        module = self.load('patch_powerdns_runtime.py')
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            target = root / 'runtime'
+            target.write_text('original\n', encoding='utf-8')
+            metadata = target.stat()
+            with mock.patch.object(module, '_fsync_parent') as fsync_parent:
+                module.write_atomic(target, 'replacement\n', metadata)
+            self.assertEqual(
+                target.read_text(encoding='utf-8'), 'replacement\n'
+            )
+            fsync_parent.assert_called_once_with(target)
+
     def test_failed_custombuild_patch_write_preserves_original_and_metadata(self):
         module = self.load('patch_custombuild_runtime.py')
         with tempfile.TemporaryDirectory() as directory:
