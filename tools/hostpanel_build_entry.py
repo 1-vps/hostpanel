@@ -12,7 +12,7 @@ import hostpanel_build_optional_postcheck_adapter as optional_postcheck_adapter
 import hostpanel_build_powerdns_adapter as powerdns_adapter
 import hostpanel_build_mongodb_adapter as mongodb_adapter
 import hostpanel_build_web_transaction_adapter as web_transaction_adapter
-from hostpanel_build_config import DEFAULT_CONFIG, read_config
+from hostpanel_build_config import BuildError, DEFAULT_CONFIG, read_config
 
 _BASE_EXECUTE_BUILD = cli.execute_build
 _BASE_PRINT_PLAN = cli.print_plan
@@ -146,6 +146,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             with cli.acquire_lock(pathlib.Path(parsed.lock_file)):
                 return cli.main(values)
         return cli.main(values)
-    except OSError as exc:
+    except (BuildError, OSError) as exc:
         print(f'hostpanel-build failed: {exc}', file=sys.stderr)
         return 1
