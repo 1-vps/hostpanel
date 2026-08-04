@@ -383,6 +383,7 @@ def guarded_execute_build(
     base_reconcile = operations.reconcile_webserver
     reconcile_called = False
     state_captured = False
+    build_started = False
 
     def transactional_reconcile(
         reconcile_options: dict[str, str], helper: pathlib.Path,
@@ -417,6 +418,7 @@ def guarded_execute_build(
                 log_path, mode_file=mode_file,
             )
             state_captured = True
+            build_started = True
             result = function(
                 component, options, platform, log_path, backup_dir,
                 python_path, doctor_path, roles, web_helper, mode_file,
@@ -427,10 +429,11 @@ def guarded_execute_build(
             rollback_errors = _restore_helper_state(
                 python_path, state_helper, state_path, log_path
             )
-            for unit in reversed(units):
-                rollback_errors.extend(
-                    _restore_service(unit, service_states[unit], log_path)
-                )
+            if build_started:
+                for unit in reversed(units):
+                    rollback_errors.extend(
+                        _restore_service(unit, service_states[unit], log_path)
+                    )
             if not rollback_errors:
                 try:
                     _discard_state(state_path)
