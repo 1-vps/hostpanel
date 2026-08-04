@@ -140,13 +140,12 @@ class UpdaterAtomicEntryTests(unittest.TestCase):
             self.assertEqual(victim.read_text(encoding='utf-8'), 'victim\n')
             self.assertTrue(status.is_symlink())
 
-    def test_installer_uses_entry_and_non_executable_implementation(self):
+    def test_installer_embeds_entry_and_non_executable_implementation(self):
         installer = (TOOLS / 'install-update-agent.sh').read_text(
             encoding='utf-8'
         )
-        self.assertIn(
-            'UPDATER_ENTRY="$SOURCE_ROOT/tools/hostpanel-update-entry.py"',
-            installer,
+        source = (TOOLS / 'hostpanel-update-entry.py').read_text(
+            encoding='utf-8'
         )
         self.assertIn(
             'UPDATER_IMPL="$SOURCE_ROOT/tools/hostpanel-update.py"',
@@ -157,11 +156,14 @@ class UpdaterAtomicEntryTests(unittest.TestCase):
             installer,
         )
         self.assertIn(
-            '"$UPDATER_ENTRY" /opt/hostpanel/tools/hostpanel-update',
+            "python3 - /opt/hostpanel/tools/hostpanel-update <<'PYENTRY'",
             installer,
         )
+        self.assertIn("ENTRY_PAYLOAD = r'''" + source + "'''", installer)
+        self.assertNotIn('UPDATER_ENTRY=', installer)
+        self.assertIn('os.replace(temporary, destination)', installer)
+        self.assertIn('os.fsync(directory_fd)', installer)
         self.assertIn('install -o root -g root -m 644', installer)
-        self.assertIn('install -o root -g root -m 755', installer)
 
     def test_entry_overrides_only_status_writer(self):
         source = (TOOLS / 'hostpanel-update-entry.py').read_text(
