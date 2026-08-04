@@ -272,10 +272,16 @@ class OuterWebBuildTransactionTests(unittest.TestCase):
 
     def test_entry_wraps_powerdns_with_the_outer_web_guard(self) -> None:
         source = (TOOLS / 'hostpanel_build_entry.py').read_text(encoding='utf-8')
-        outer = source.index('web_transaction_adapter.guarded_execute_build(')
-        inner = source.index('powerdns_adapter.guarded_apply_build(')
+        definition = source.index('def powerdns_guarded_execute(')
+        inner = source.index(
+            'powerdns_adapter.guarded_apply_build(', definition
+        )
+        outer = source.index(
+            'web_transaction_adapter.guarded_execute_build(', inner
+        )
+        self.assertLess(definition, inner)
         self.assertLess(inner, outer)
-        self.assertIn('powerdns_guarded_execute', source[inner:outer])
+        self.assertIn('powerdns_guarded_execute,', source[outer:])
 
     def test_source_files_are_installed_and_ci_tracked(self) -> None:
         installer = (TOOLS / 'install-hostpanel-build.sh').read_text(
