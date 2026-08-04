@@ -213,6 +213,7 @@ APPLIED_DNS_MODE="$(tr -d '[:space:]' <"$DNS_MODE_FILE")"
 APPLIED_MONGODB_MODE="$(tr -d '[:space:]' <"$MONGODB_MODE_FILE")"
 APPLIED_VARNISH_MODE="$(tr -d '[:space:]' <"$VARNISH_MODE_FILE")"
 printf '%s\n' 'HostPanel build tool installed as /usr/local/sbin/hostpanel-build.'
+printf '%s\n' 'Base mode: nginx_apache.'
 printf 'Selected web/DNS/MongoDB/Varnish: %s/%s/%s/%s. Applied: %s/%s/%s/%s. PHP branches: %s.\n' \
   "$WEB_MODE" "$DNS_MODE" "$MONGODB_MODE" "$VARNISH_MODE" \
   "$APPLIED_WEB_MODE" "$APPLIED_DNS_MODE" "$APPLIED_MONGODB_MODE" \
