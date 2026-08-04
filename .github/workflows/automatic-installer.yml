@@ -23,6 +23,7 @@ on:
       - tools/hostpanel_build_powerdns_adapter.py
       - tools/hostpanel_build_mongodb_adapter.py
       - tools/hostpanel_build_web.py
+      - 'tools/*_impl.py'
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
       - tools/patch_powerdns_runtime.py
@@ -33,6 +34,7 @@ on:
       - tests/test_one_line_install.py
       - tests/test_hostpanel_build.py
       - 'tests/test_custombuild*.py'
+      - 'tests/_custombuild*.py'
       - tests/test_custombuild_openlitespeed.py
       - tests/test_custombuild_ssl.py
       - tests/test_custombuild_review_fixes.py
@@ -68,6 +70,7 @@ on:
       - tools/hostpanel_build_powerdns_adapter.py
       - tools/hostpanel_build_mongodb_adapter.py
       - tools/hostpanel_build_web.py
+      - 'tools/*_impl.py'
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
       - tools/patch_powerdns_runtime.py
@@ -78,6 +81,7 @@ on:
       - tests/test_one_line_install.py
       - tests/test_hostpanel_build.py
       - 'tests/test_custombuild*.py'
+      - 'tests/_custombuild*.py'
       - tests/test_custombuild_openlitespeed.py
       - tests/test_custombuild_ssl.py
       - tests/test_custombuild_review_fixes.py
