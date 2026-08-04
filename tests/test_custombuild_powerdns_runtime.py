@@ -17,6 +17,16 @@ import hostpanel_build_powerdns_adapter as ADAPTER
 
 
 class PowerDnsRuntimeTests(unittest.TestCase):
+    @staticmethod
+    def _load_runtime_patcher():
+        spec = importlib.util.spec_from_file_location(
+            'patch_powerdns_runtime', TOOLS / 'patch_powerdns_runtime.py'
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
     def test_parser_accepts_whitespace_and_append_forms(self):
         text = """
 include-dir = /etc/powerdns/pdns.d
@@ -85,12 +95,7 @@ launch += gsqlite3
         )
 
     def test_runtime_patcher_routes_core_and_root_helper_idempotently(self):
-        spec = importlib.util.spec_from_file_location(
-            'patch_powerdns_runtime', TOOLS / 'patch_powerdns_runtime.py'
-        )
-        assert spec and spec.loader
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = self._load_runtime_patcher()
         core_source = module.CORE_OLD
         root_source = (
             'RHEL_FAMILY=no\nDNS_UNIT="named"\n'
@@ -120,6 +125,68 @@ launch += gsqlite3
             self.assertIn('named|pdns|postfix', first[1])
             self.assertIn('requires dns=bind', first[1])
             compile(first[0], str(core), 'exec')
+
+    def test_runtime_patcher_rolls_back_core_when_root_write_fails(self):
+        module = self._load_runtime_patcher()
+        core_source = module.CORE_OLD
+        root_source = (
+            'RHEL_FAMILY=no\nDNS_UNIT="named"\n'
+            + module.ROOT_ANCHOR
+            + 'case "$verb" in\n'
+            + module.ALLOW_OLD
+            + '\n'
+            + module.DNSSEC_OLD
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            app_root = pathlib.Path(directory)
+            core = app_root / 'core.py'
+            helper = app_root / 'hostpanel-root'
+            core.write_text(core_source, encoding='utf-8')
+            helper.write_text(root_source, encoding='utf-8')
+            core.chmod(0o644)
+            helper.chmod(0o755)
+            real_write = module.write_atomic
+
+            def fail_root(path, text, metadata):
+                if path == helper:
+                    raise OSError('root helper write failed')
+                return real_write(path, text, metadata)
+
+            with mock.patch.object(module, 'APP_ROOT', app_root), \
+                 mock.patch.object(module.os, 'geteuid', return_value=0), \
+                 mock.patch.object(
+                     module, 'trusted_file', side_effect=lambda item: item.stat()
+                 ), mock.patch.object(
+                     module, 'write_atomic', side_effect=fail_root
+                 ):
+                with self.assertRaisesRegex(
+                    OSError, 'root helper write failed'
+                ):
+                    module.main()
+            self.assertEqual(core.read_text(encoding='utf-8'), core_source)
+            self.assertEqual(helper.read_text(encoding='utf-8'), root_source)
+
+    def test_runtime_patcher_prevalidates_both_shapes_before_first_write(self):
+        module = self._load_runtime_patcher()
+        with tempfile.TemporaryDirectory() as directory:
+            app_root = pathlib.Path(directory)
+            core = app_root / 'core.py'
+            helper = app_root / 'hostpanel-root'
+            core.write_text(module.CORE_OLD, encoding='utf-8')
+            helper.write_text('unexpected root helper\n', encoding='utf-8')
+            core.chmod(0o644)
+            helper.chmod(0o755)
+            with mock.patch.object(module, 'APP_ROOT', app_root), \
+                 mock.patch.object(module.os, 'geteuid', return_value=0), \
+                 mock.patch.object(
+                     module, 'trusted_file', side_effect=lambda item: item.stat()
+                 ), mock.patch.object(module, 'write_atomic') as writer:
+                with self.assertRaisesRegex(
+                    SystemExit, 'unexpected root DNS mode shape'
+                ):
+                    module.main()
+            writer.assert_not_called()
+            self.assertEqual(core.read_text(encoding='utf-8'), module.CORE_OLD)
 
     def test_installer_preserves_applied_dns_mode(self):
         source = (TOOLS / 'install-hostpanel-build.sh').read_text(encoding='utf-8')
