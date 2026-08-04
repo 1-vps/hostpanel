@@ -6,6 +6,7 @@ import ipaddress
 import os
 import pathlib
 import re
+import secrets
 import shutil
 import stat
 import tempfile
@@ -132,10 +133,79 @@ def _safe_hook_parent(path: pathlib.Path) -> None:
     _safe_root_directory(path.parent, 0o755)
 
 
+def _capture_xattrs(path: pathlib.Path) -> dict[str, bytes]:
+    required = ('listxattr', 'getxattr', 'setxattr', 'removexattr')
+    if not all(hasattr(os, name) for name in required):
+        raise BuildError('extended-attribute support is unavailable')
+    try:
+        return {
+            name: os.getxattr(path, name, follow_symlinks=False)
+            for name in os.listxattr(path, follow_symlinks=False)
+        }
+    except OSError as exc:
+        raise BuildError(f'could not capture deploy-hook metadata: {exc}') from exc
+
+
+def _apply_xattrs(path: pathlib.Path, values: dict[str, bytes]) -> None:
+    try:
+        existing = set(os.listxattr(path, follow_symlinks=False))
+        desired = set(values)
+        for name in existing - desired:
+            os.removexattr(path, name, follow_symlinks=False)
+        for name, value in values.items():
+            os.setxattr(path, name, value, follow_symlinks=False)
+    except OSError as exc:
+        raise BuildError(f'could not restore deploy-hook metadata: {exc}') from exc
+
+
+def _open_hook_temporary(path: pathlib.Path) -> tuple[int, pathlib.Path]:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    for _ in range(32):
+        temporary = path.with_name(
+            f'.{path.name}.hostpanel-ssl.{secrets.token_hex(12)}'
+        )
+        try:
+            return os.open(temporary, flags, 0o755), temporary
+        except FileExistsError:
+            continue
+    raise BuildError(f'could not allocate Certbot hook temporary: {path}')
+
+
+def _fsync_parent(path: pathlib.Path) -> None:
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, 'O_DIRECTORY'):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    directory_fd = os.open(path.parent, flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _enforce_existing_hook_mode(path: pathlib.Path) -> None:
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise BuildError(f'unsafe existing Certbot deploy hook: {path}')
+        os.fchmod(fd, 0o755)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def install_deploy_hook(path: pathlib.Path = DEFAULT_HOOK) -> None:
     uid, gid = owner_ids()
     _safe_hook_parent(path)
-    if path.exists() or path.is_symlink():
+    existing_xattrs: dict[str, bytes] | None = None
+    if os.path.lexists(path):
         metadata = path.lstat()
         if (
             not stat.S_ISREG(metadata.st_mode)
@@ -147,27 +217,48 @@ def install_deploy_hook(path: pathlib.Path = DEFAULT_HOOK) -> None:
         ):
             raise BuildError(f'unsafe existing Certbot deploy hook: {path}')
         if path.read_text(encoding='utf-8') == HOOK_TEXT:
-            os.chmod(path, 0o755)
+            if stat.S_IMODE(metadata.st_mode) != 0o755:
+                _enforce_existing_hook_mode(path)
             return
-    temporary = path.with_name(f'.{path.name}.{os.getpid()}')
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
-    if hasattr(os, 'O_NOFOLLOW'):
-        flags |= os.O_NOFOLLOW
-    fd = os.open(temporary, flags, 0o755)
+        existing_xattrs = _capture_xattrs(path)
+
+    fd, temporary = _open_hook_temporary(path)
+    active_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
     try:
-        payload = HOOK_TEXT.encode('utf-8')
-        view = memoryview(payload)
+        view = memoryview(HOOK_TEXT.encode('utf-8'))
         while view:
             written = os.write(fd, view)
             if written <= 0:
                 raise BuildError('could not write Certbot deploy hook')
             view = view[written:]
         os.fsync(fd)
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, 0o755)
+        if existing_xattrs is not None:
+            _apply_xattrs(temporary, existing_xattrs)
+        os.fsync(fd)
+        descriptor, fd = fd, -1
+        os.close(descriptor)
+        os.replace(temporary, path)
+        _fsync_parent(path)
+    except BaseException as exc:
+        active_error = exc
+        raise
     finally:
-        os.close(fd)
-    os.chown(temporary, uid, gid)
-    os.chmod(temporary, 0o755)
-    os.replace(temporary, path)
+        if fd >= 0:
+            descriptor, fd = fd, -1
+            try:
+                os.close(descriptor)
+            except BaseException as exc:
+                cleanup_error = exc
+        try:
+            temporary.unlink(missing_ok=True)
+        except BaseException as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if active_error is None and cleanup_error is not None:
+            raise cleanup_error
 
 
 def read_eab_secret(path: pathlib.Path, label: str) -> str:
