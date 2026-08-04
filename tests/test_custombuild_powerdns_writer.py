@@ -215,11 +215,13 @@ class PowerDnsWriterTests(unittest.TestCase):
                 ADAPTER.os, 'chmod'
             ) as chmod:
                 ADAPTER._configure_powerdns_readable(platform, log_path)
+                self.assertIs(
+                    ADAPTER.operations.write_atomic_root, base_writer
+                )
 
             base_writer.assert_called_once_with(
                 target, 'launch=bind\n', 0o644
             )
-            self.assertIs(ADAPTER.operations.write_atomic_root, base_writer)
             chown.assert_not_called()
             chmod.assert_not_called()
             self.assertEqual(
