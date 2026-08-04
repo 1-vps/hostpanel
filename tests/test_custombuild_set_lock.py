@@ -64,7 +64,9 @@ class CustomBuildSetLockTests(unittest.TestCase):
             self.assertIs(entry.cli.acquire_lock, entry._already_locked)
             return 0
 
-        parsed = SimpleNamespace(command='build', lock_file='/run/custom.lock')
+        parsed = SimpleNamespace(
+            command='build', apply=True, lock_file='/run/custom.lock'
+        )
         with mock.patch.object(entry, 'install_runtime_adapters'), \
              mock.patch.object(entry.cli, 'parse_args', return_value=parsed), \
              mock.patch.object(entry.cli, 'acquire_lock', side_effect=lock), \
@@ -72,6 +74,16 @@ class CustomBuildSetLockTests(unittest.TestCase):
             self.assertEqual(entry.main(['build', 'dns', '--apply']), 0)
 
         self.assertEqual(events, ['lock-enter', 'cli-main', 'lock-exit'])
+
+    def test_read_only_options_preserves_non_root_installed_layout(self) -> None:
+        parsed = SimpleNamespace(command='options', lock_file='/run/custom.lock')
+        with mock.patch.object(entry, 'install_runtime_adapters'), \
+             mock.patch.object(entry.cli, 'parse_args', return_value=parsed), \
+             mock.patch.object(entry.cli, 'acquire_lock') as acquire, \
+             mock.patch.object(entry.cli, 'main', return_value=0) as cli_main:
+            self.assertEqual(entry.main(['--allow-non-root', 'options']), 0)
+        acquire.assert_not_called()
+        cli_main.assert_called_once()
 
     def test_lock_failure_is_reported_as_a_controlled_cli_error(self) -> None:
         parsed = SimpleNamespace(command='set', lock_file='/run/custom.lock')
@@ -92,7 +104,9 @@ class CustomBuildSetLockTests(unittest.TestCase):
         def lock(_path: pathlib.Path):
             yield
 
-        parsed = SimpleNamespace(command='build', lock_file='/run/custom.lock')
+        parsed = SimpleNamespace(
+            command='build', apply=True, lock_file='/run/custom.lock'
+        )
         with mock.patch.object(entry, 'install_runtime_adapters'), \
              mock.patch.object(entry.cli, 'parse_args', return_value=parsed), \
              mock.patch.object(entry.cli, 'acquire_lock', side_effect=lock):
@@ -102,6 +116,23 @@ class CustomBuildSetLockTests(unittest.TestCase):
             ):
                 self.assertEqual(entry.main(['build', 'dns', '--apply']), 1)
             self.assertIs(entry.cli.acquire_lock, patched_lock)
+
+    def test_lock_selection_covers_every_transactional_command(self) -> None:
+        cases = (
+            (SimpleNamespace(command='set'), True),
+            (SimpleNamespace(command='validate'), True),
+            (SimpleNamespace(command='doctor'), True),
+            (SimpleNamespace(command='build', apply=True), True),
+            (SimpleNamespace(command='build', apply=False), False),
+            (SimpleNamespace(command='update_versions', apply=True), True),
+            (SimpleNamespace(command='update_panel', apply=True), True),
+            (SimpleNamespace(command='ssl', ssl_command='issue', apply=True), True),
+            (SimpleNamespace(command='ssl', ssl_command='status'), False),
+            (SimpleNamespace(command='options'), False),
+        )
+        for parsed, expected in cases:
+            with self.subTest(parsed=parsed):
+                self.assertIs(entry._requires_outer_lock(parsed), expected)
 
 
 if __name__ == '__main__':
