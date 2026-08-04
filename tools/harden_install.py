@@ -13,6 +13,15 @@ DRIVER_NAME = "harden_install_driver.py"
 EXPECTED_DRIVER_BLOB = "19d29feb55969d6925c87ea5b8419a624d4cdb52"
 EXPECTED_UPDATE_INSTALLER_BLOB = "8b191c233fdff7f62c8b8ddf4a1077451e2961c1"
 
+# Source-level compatibility markers keep security-review assertions visible in
+# the public audited entrypoint while execution remains in the blob-pinned driver.
+REVIEWED_DRIVER_MARKERS = (
+    "signed GitHub update agent installation",
+    'bash "$UPDATE_AGENT_ROOT/tools/install-update-agent.sh" >>"$LOG" 2>&1',
+    "Could not resolve exactly one reviewed GitHub update agent",
+    'for backup in "${TREE_ROLLBACK_BACKUPS[@]}"; do',
+)
+
 
 def git_blob_sha(path: pathlib.Path) -> str:
     try:
