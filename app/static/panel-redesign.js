@@ -265,11 +265,33 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     }).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
   }
 
+  function hardenDashboardAnnouncements(){
+    const group=byId('dashboardState');
+    if(group){
+      group.removeAttribute('role');
+      group.removeAttribute('aria-live');
+      group.removeAttribute('aria-atomic');
+    }
+    const updated=byId('dashboardUpdated');
+    if(updated){
+      updated.setAttribute('role','status');
+      updated.setAttribute('aria-live','polite');
+      updated.setAttribute('aria-atomic','true');
+    }
+    const error=byId('dashboardError');
+    if(error){
+      error.setAttribute('role','alert');
+      error.setAttribute('aria-live','assertive');
+      error.setAttribute('aria-atomic','true');
+    }
+  }
+
   function boot(){
     if(document.body.dataset.hpRedesignBound==='true')return;
     document.body.dataset.hpRedesignBound='true';
     document.body.classList.add('hp-redesign');
     document.body.dataset.uiVersion='3.0.0';
+    hardenDashboardAnnouncements();
     setMeter('cpu','cpuMeter');
     setMeter('ram','ramMeter');
     setMeter('disk','diskMeter');
