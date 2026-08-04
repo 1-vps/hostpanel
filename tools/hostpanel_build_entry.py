@@ -22,6 +22,14 @@ _CANDIDATE_STOP_LABELS = {
     'candidate MongoDB stop',
     'candidate Varnish stop',
 }
+_PDNS_PATH_INSTALL_OLD = (
+    '[Install]\n'
+    'WantedBy=multi-user.target\n'
+)
+_PDNS_PATH_INSTALL_NEW = (
+    '[Install]\n'
+    'WantedBy=pdns.service\n'
+)
 
 
 def config_path(argv: Sequence[str]) -> pathlib.Path:
@@ -69,9 +77,47 @@ def guarded_optional_apply(function):
     return apply
 
 
+def install_powerdns_watcher_lifecycle_guard() -> None:
+    """Keep the path watcher coupled to every PowerDNS start/restart."""
+    operations = powerdns_adapter.operations
+    original = operations.install_powerdns_units
+    if getattr(original, '_hostpanel_pdns_watcher_lifecycle_guard', False):
+        return
+
+    def install_units(managed_conf, zone_dir, dns_group):
+        base_writer = operations.write_atomic_root
+        path_unit_written = False
+
+        def lifecycle_writer(path, text, mode=0o644):
+            nonlocal path_unit_written
+            if path == operations.PDNS_PATH_UNIT:
+                if text.count(_PDNS_PATH_INSTALL_OLD) != 1:
+                    raise BuildError(
+                        'unexpected PowerDNS path-unit install dependency shape'
+                    )
+                text = text.replace(
+                    _PDNS_PATH_INSTALL_OLD, _PDNS_PATH_INSTALL_NEW, 1
+                )
+                path_unit_written = True
+            return base_writer(path, text, mode)
+
+        operations.write_atomic_root = lifecycle_writer
+        try:
+            result = original(managed_conf, zone_dir, dns_group)
+        finally:
+            operations.write_atomic_root = base_writer
+        if not path_unit_written:
+            raise BuildError('PowerDNS path unit was not installed')
+        return result
+
+    install_units._hostpanel_pdns_watcher_lifecycle_guard = True  # type: ignore[attr-defined]
+    operations.install_powerdns_units = install_units
+
+
 def install_runtime_adapters(selected_config: pathlib.Path) -> None:
     operations_adapter.install()
     powerdns_adapter.install()
+    install_powerdns_watcher_lifecycle_guard()
     mongodb_adapter.install()
     state.install()
     cli.apply_mongodb = guarded_optional_apply(state.apply_mongodb)
