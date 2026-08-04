@@ -233,16 +233,54 @@ def _verify_all_overlay_inputs(
     }
 
 
+def _preflight_overlay_targets(target_root: pathlib.Path) -> None:
+    IMPLEMENTATION._trusted_directory(target_root)
+    target_tools = target_root / "tools"
+    if os.path.lexists(target_tools):
+        IMPLEMENTATION._trusted_directory(target_tools)
+
+    expected_uid = os.geteuid()
+    relative_names = tuple(CUSTOMBUILD_RUNTIME_MODES) + tuple(HARDENER_SUPPORT_FILES)
+    for relative_name in relative_names:
+        relative = pathlib.PurePosixPath(relative_name)
+        if (
+            relative.is_absolute()
+            or len(relative.parts) != 2
+            or relative.parts[0] != "tools"
+            or relative.parts[1] in {"", ".", ".."}
+        ):
+            raise SystemExit(f"invalid CustomBuild overlay target: {relative_name}")
+        destination = target_root.joinpath(*relative.parts)
+        if not os.path.lexists(destination):
+            continue
+        try:
+            existing = destination.lstat()
+        except OSError as exc:
+            raise SystemExit(
+                f"cannot inspect CustomBuild overlay target: {destination}"
+            ) from exc
+        if (
+            not stat.S_ISREG(existing.st_mode)
+            or stat.S_ISLNK(existing.st_mode)
+            or existing.st_uid != expected_uid
+            or existing.st_nlink != 1
+            or stat.S_IMODE(existing.st_mode) & 0o022
+        ):
+            raise SystemExit(f"unsafe CustomBuild overlay target: {destination}")
+
+
 def synchronize_custombuild_runtime(
     reviewed_root: pathlib.Path, target_root: pathlib.Path
 ) -> None:
     reviewed_root = reviewed_root.absolute()
     target_root = target_root.absolute()
     verified_support = _verify_all_overlay_inputs(reviewed_root)
+    _preflight_overlay_targets(target_root)
 
     # The preserved implementation re-verifies runtime files at its own
     # publication boundary. The preflight above guarantees that every runtime
-    # and support input is trusted before it can create or replace target files.
+    # and support input and destination is trusted before it can create or
+    # replace target files.
     IMPLEMENTATION.synchronize_custombuild_runtime(reviewed_root, target_root)
     if reviewed_root == target_root:
         return
