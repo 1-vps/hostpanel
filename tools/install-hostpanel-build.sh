@@ -18,6 +18,7 @@ MODULES=(
   hostpanel_build_config.py
   hostpanel_build_packages.py
   hostpanel_build_operations.py
+  hostpanel_build_operations_adapter.py
   hostpanel_build_cli.py
   hostpanel_build_ssl.py
   hostpanel_build_extras.py
