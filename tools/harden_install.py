@@ -46,8 +46,11 @@ def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
 
 def _trusted_regular(path: pathlib.Path, expected_blob: str) -> pathlib.Path:
     root = path.parent
-    root_before = root.lstat()
-    before = path.lstat()
+    try:
+        root_before = root.lstat()
+        before = path.lstat()
+    except OSError as exc:
+        raise SystemExit(f"cannot inspect hardener support file: {path}") from exc
     expected_uid = os.geteuid()
     if (
         not stat.S_ISDIR(root_before.st_mode)
@@ -66,13 +69,62 @@ def _trusted_regular(path: pathlib.Path, expected_blob: str) -> pathlib.Path:
         or before.st_size > 16 * 1024 * 1024
     ):
         raise SystemExit(f"unsafe hardener support file: {path}")
-    payload = path.read_bytes()
+
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise SystemExit(f"cannot open hardener support file: {path}") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not _same_file(before, opened):
+            raise SystemExit(
+                f"hardener support file changed before read: {path}"
+            )
+        chunks: list[bytes] = []
+        remaining = opened.st_size
+        while remaining:
+            try:
+                chunk = os.read(descriptor, min(remaining, 1024 * 1024))
+            except OSError as exc:
+                raise SystemExit(
+                    f"cannot read hardener support file: {path}"
+                ) from exc
+            if not chunk:
+                raise SystemExit(
+                    f"hardener support file ended unexpectedly: {path}"
+                )
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        try:
+            extra = os.read(descriptor, 1)
+            after = os.fstat(descriptor)
+            current = path.lstat()
+            root_after = root.lstat()
+        except OSError as exc:
+            raise SystemExit(
+                f"cannot recheck hardener support file: {path}"
+            ) from exc
+        if extra:
+            raise SystemExit(f"hardener support file grew during read: {path}")
+        if (
+            not _same_file(opened, after)
+            or not _same_file(after, current)
+            or not _same_file(root_before, root_after)
+        ):
+            raise SystemExit(
+                f"hardener support file changed during validation: {path}"
+            )
+    finally:
+        os.close(descriptor)
+
+    payload = b"".join(chunks)
     if _git_blob_digest(payload) != expected_blob:
-        raise SystemExit(f"hardener support file does not match its reviewed blob: {path}")
-    after = path.lstat()
-    root_after = root.lstat()
-    if not _same_file(before, after) or not _same_file(root_before, root_after):
-        raise SystemExit(f"hardener support file changed during validation: {path}")
+        raise SystemExit(
+            f"hardener support file does not match its reviewed blob: {path}"
+        )
     return path
 
 
