@@ -373,20 +373,17 @@ def guarded_execute_build(
         reconcile_python: pathlib.Path, reconcile_mode_file: pathlib.Path,
         reconcile_log: pathlib.Path,
     ) -> None:
-        nonlocal reconcile_called, state_captured
-        if reconcile_called or state_captured:
+        nonlocal reconcile_called
+        if reconcile_called:
             raise BuildError('webserver reconciliation ran more than once')
+        if not state_captured:
+            raise BuildError('web transaction state was not captured before reconciliation')
         if (
             helper != web_helper
             or reconcile_python != python_path
             or reconcile_mode_file != mode_file
         ):
             raise BuildError('webserver reconciliation inputs changed during transaction')
-        _helper_command(
-            python_path, state_helper, '--capture', state_path,
-            reconcile_log, mode_file=mode_file,
-        )
-        state_captured = True
         _helper_command(
             python_path, state_helper, '--verify', state_path, reconcile_log
         )
@@ -399,6 +396,11 @@ def guarded_execute_build(
     operations.reconcile_webserver = transactional_reconcile
     try:
         try:
+            _helper_command(
+                python_path, state_helper, '--capture', state_path,
+                log_path, mode_file=mode_file,
+            )
+            state_captured = True
             result = function(
                 component, options, platform, log_path, backup_dir,
                 python_path, doctor_path, roles, web_helper, mode_file,
