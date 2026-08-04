@@ -2,6 +2,7 @@
 """Patch HostPanel DNS runtime and root helper for selected DNS daemon."""
 from __future__ import annotations
 
+import contextlib
 import os
 import pathlib
 import stat
@@ -39,21 +40,29 @@ def write_atomic(path: pathlib.Path, text: str, metadata: os.stat_result) -> Non
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
     if hasattr(os, 'O_NOFOLLOW'):
         flags |= os.O_NOFOLLOW
-    fd = os.open(temporary, flags, stat.S_IMODE(metadata.st_mode))
+    fd = -1
     try:
-        payload = text.encode('utf-8')
-        view = memoryview(payload)
-        while view:
-            written = os.write(fd, view)
-            if written <= 0:
-                raise SystemExit(f'could not write {temporary}')
-            view = view[written:]
-        os.fsync(fd)
-        os.fchown(fd, metadata.st_uid, metadata.st_gid)
-        os.fchmod(fd, stat.S_IMODE(metadata.st_mode))
+        fd = os.open(temporary, flags, stat.S_IMODE(metadata.st_mode))
+        try:
+            payload = text.encode('utf-8')
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise SystemExit(f'could not write {temporary}')
+                view = view[written:]
+            os.fsync(fd)
+            os.fchown(fd, metadata.st_uid, metadata.st_gid)
+            os.fchmod(fd, stat.S_IMODE(metadata.st_mode))
+        finally:
+            os.close(fd)
+            fd = -1
+        os.replace(temporary, path)
     finally:
-        os.close(fd)
-    os.replace(temporary, path)
+        if fd >= 0:
+            os.close(fd)
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
