@@ -56,6 +56,47 @@ class DurabilityAuditTests(unittest.TestCase):
                 )
                 fsync_parent.assert_called_once_with(target)
 
+    def test_custombuild_runtime_main_rolls_back_first_file_when_second_fails(self):
+        module = self.load_patcher('patch_custombuild_runtime.py')
+        with tempfile.TemporaryDirectory() as directory:
+            app = pathlib.Path(directory)
+            (app / 'modules').mkdir()
+            webserver = app / 'modules/webserver.py'
+            main = app / 'main.py'
+            doctor = app / 'hostpanel-doctor'
+            originals = {
+                webserver: 'web-original\n',
+                main: 'main-original\n',
+                doctor: 'doctor-original\n',
+            }
+            for path, content in originals.items():
+                path.write_text(content, encoding='utf-8')
+
+            def patch_webserver(path: pathlib.Path) -> None:
+                path.write_text('web-mutated\n', encoding='utf-8')
+
+            def patch_main(_path: pathlib.Path) -> None:
+                raise BuildError('injected second-file failure')
+
+            with mock.patch.object(module, 'APP_ROOT', app), \
+                 mock.patch.object(module.os, 'geteuid', return_value=0), \
+                 mock.patch.object(module, 'trusted_file'), \
+                 mock.patch.object(
+                     module, 'patch_webserver', side_effect=patch_webserver
+                 ), mock.patch.object(
+                     module, 'patch_main', side_effect=patch_main
+                 ), mock.patch.object(module, 'patch_doctor') as patch_doctor, \
+                 mock.patch.object(module, 'copy_xattrs'), \
+                 mock.patch.object(module.os, 'fchown'):
+                with self.assertRaisesRegex(
+                    BuildError, 'injected second-file failure'
+                ):
+                    module.main()
+
+            patch_doctor.assert_not_called()
+            for path, content in originals.items():
+                self.assertEqual(path.read_text(encoding='utf-8'), content)
+
     def test_varnish_off_accepts_only_explicit_inactive_state(self):
         options = {'varnish': 'off', 'webserver': 'nginx_apache'}
         inactive = subprocess.CompletedProcess(
