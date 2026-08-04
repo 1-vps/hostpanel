@@ -84,6 +84,40 @@ class PowerDnsWatcherLifecycleTests(unittest.TestCase):
         self.assertIn(['systemctl', 'daemon-reload'], commands)
 
 
+class OptionalServiceEnablementValidationTests(unittest.TestCase):
+    def test_optional_runtime_modes_reject_boot_enablement_drift(self) -> None:
+        cases = (
+            (
+                state.validate_mongodb, '_ORIGINAL_VALIDATE_MONGODB',
+                {'mongodb': 'off'}, True,
+                'mongod.service is enabled while mongodb=off',
+            ),
+            (
+                state.validate_mongodb, '_ORIGINAL_VALIDATE_MONGODB',
+                {'mongodb': '8.0'}, False,
+                'mongod.service is disabled while mongodb=8.0',
+            ),
+            (
+                state.validate_varnish, '_ORIGINAL_VALIDATE_VARNISH',
+                {'varnish': 'off'}, True,
+                'varnish.service is enabled while varnish=off',
+            ),
+            (
+                state.validate_varnish, '_ORIGINAL_VALIDATE_VARNISH',
+                {'varnish': 'on'}, False,
+                'varnish.service is disabled while varnish=on',
+            ),
+        )
+        for validator, original_name, options, enabled, message in cases:
+            with self.subTest(options=options, enabled=enabled), \
+                 mock.patch.object(state, original_name), \
+                 mock.patch.object(
+                     state, '_service_enabled', return_value=enabled
+                 ):
+                with self.assertRaisesRegex(BuildError, message):
+                    validator(options, pathlib.Path('/tmp/log'))
+
+
 class CliRegressionTests(unittest.TestCase):
     def test_set_can_repair_existing_incompatible_configuration(self) -> None:
         current = {'webserver': 'nginx', 'varnish': 'on'}
