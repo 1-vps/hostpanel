@@ -165,7 +165,13 @@ def write_atomic_bytes(
 
 
 def write_atomic_text(path: pathlib.Path, text: str, mode: int = 0o644) -> None:
-    write_atomic_bytes(path, text.encode('utf-8'), mode)
+    uid = 0
+    gid = 0
+    if os.path.lexists(path):
+        metadata = path.lstat()
+        uid = metadata.st_uid
+        gid = metadata.st_gid
+    write_atomic_bytes(path, text.encode('utf-8'), mode, uid, gid)
 
 
 def validate_varnish(options: dict[str, str], log_path: pathlib.Path) -> None:
