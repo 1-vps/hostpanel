@@ -287,6 +287,22 @@ def _trusted_executable(path: pathlib.Path) -> pathlib.Path:
 def _state_helper(web_helper: pathlib.Path) -> pathlib.Path:
     helper = web_helper.with_name('hostpanel_build_web_state.py')
     _trusted_tool(helper, executable=False)
+
+    python_source = helper.with_name('hostpanel_build_web.py')
+    selected_source = (
+        python_source
+        if os.path.lexists(python_source)
+        else helper.with_name('hostpanel-build-web')
+    )
+    if selected_source != web_helper:
+        raise BuildError(
+            'web transaction state helper would load a different web runtime: '
+            f'{selected_source}'
+        )
+    _trusted_tool(
+        selected_source,
+        executable=selected_source.name == 'hostpanel-build-web',
+    )
     return helper
 
 
