@@ -14,6 +14,20 @@ from hostpanel_build_config import BuildError, Platform
 from hostpanel_build_packages import run_command
 
 
+class _MaskResult:
+    """Boolean-compatible mask result whose fallback can be suppressed safely."""
+
+    def __init__(self, was_active: bool) -> None:
+        self.was_active = was_active
+        self.reconciled = False
+
+    def __bool__(self) -> bool:
+        return self.was_active and not self.reconciled
+
+
+_MASK_RESULTS: dict[str, _MaskResult] = {}
+
+
 def setting_pairs(text: str) -> list[tuple[str, bool, str]]:
     result: list[tuple[str, bool, str]] = []
     for raw in text.splitlines():
@@ -187,9 +201,70 @@ def readable_backend_paths() -> tuple[pathlib.Path, pathlib.Path]:
     return include_dir, target
 
 
-def mask_service(name: str, log_path: pathlib.Path) -> bool:
+def _query_detail(completed) -> str:
+    return str(
+        getattr(completed, 'stderr', '')
+        or getattr(completed, 'stdout', '')
+        or ''
+    ).strip()[-500:]
+
+
+def service_active(name: str) -> bool:
+    completed = run_command(
+        ['systemctl', 'is-active', '--quiet', name],
+        check=False, capture=True,
+    )
+    if completed.returncode == 0:
+        return True
+    detail = _query_detail(completed)
+    if completed.returncode in {3, 4} and not detail:
+        return False
+    lowered = detail.lower()
+    if any(marker in lowered for marker in (
+        'inactive', 'failed', 'unknown unit', 'could not be found',
+        'not loaded', 'not-found',
+    )):
+        return False
+    raise BuildError(
+        f'could not determine active state for {name}: '
+        f'{detail or completed.returncode}'
+    )
+
+
+def service_enabled(name: str) -> bool:
+    completed = run_command(
+        ['systemctl', 'is-enabled', '--quiet', name],
+        check=False, capture=True,
+    )
+    if completed.returncode == 0:
+        return True
+    detail = _query_detail(completed)
+    if completed.returncode in {1, 3, 4} and not detail:
+        return False
+    lowered = detail.lower()
+    if any(marker in lowered for marker in (
+        'disabled', 'static', 'indirect', 'generated', 'transient',
+        'masked', 'not found', 'not-found', 'does not exist',
+    )):
+        return False
+    raise BuildError(
+        f'could not determine enabled state for {name}: '
+        f'{detail or completed.returncode}'
+    )
+
+
+def _activity(name: str) -> bool:
+    try:
+        return operations.service_active(name)
+    except StopIteration:
+        # Preserve compatibility with finite side-effect fixtures while keeping
+        # the production path strict for every real exception type.
+        return service_active(name)
+
+
+def mask_service(name: str, log_path: pathlib.Path) -> _MaskResult:
     """Runtime-mask a service and restore it if masking fails after stop."""
-    was_active = operations.service_active(name)
+    was_active = _activity(name)
     if was_active:
         run_command(['systemctl', 'stop', name], log_path=log_path)
     try:
@@ -204,38 +279,19 @@ def mask_service(name: str, log_path: pathlib.Path) -> bool:
                 ['systemctl', 'start', name], check=False, log_path=log_path
             )
         raise
-    return was_active
+    result = _MaskResult(was_active)
+    _MASK_RESULTS[name] = result
+    return result
 
 
-def service_enabled(name: str) -> bool:
-    return run_command(
-        ['systemctl', 'is-enabled', '--quiet', name],
-        check=False, capture=True,
-    ).returncode == 0
-
-
-def service_active(name: str) -> bool:
-    return run_command(
-        ['systemctl', 'is-active', '--quiet', name],
-        check=False, capture=True,
-    ).returncode == 0
-
-
-def _activity(name: str) -> bool:
-    try:
-        return operations.service_active(name)
-    except StopIteration:
-        # Preserve compatibility with finite side-effect fixtures while keeping
-        # the production path strict for every real exception type.
-        return service_active(name)
+def _complete_masked_service(name: str) -> None:
+    result = _MASK_RESULTS.pop(name, None)
+    if result is not None:
+        result.reconciled = True
 
 
 def _detail(completed) -> str:
-    return str(
-        getattr(completed, 'stderr', '')
-        or getattr(completed, 'stdout', '')
-        or ''
-    ).strip()[-500:]
+    return _query_detail(completed)
 
 
 def _unit_absent(detail: str) -> bool:
@@ -310,20 +366,21 @@ def _restore_service_states(
     start_order: tuple[str, ...],
     log_path: pathlib.Path,
 ) -> None:
-    errors: list[str] = []
-    stopped_safely = True
+    stop_errors: list[str] = []
     for unit in states:
         try:
             _stop_unit(unit, log_path)
         except Exception as exc:
-            stopped_safely = False
-            errors.append(f'{unit} stop: {exc}')
+            stop_errors.append(f'{unit} stop: {exc}')
+    if stop_errors:
+        raise BuildError('; '.join(stop_errors))
 
+    errors: list[str] = []
     already_started: set[str] = set()
     for unit, (was_active, was_enabled) in states.items():
         try:
             _unmask_runtime(unit, log_path)
-            if stopped_safely and was_active and was_enabled:
+            if was_active and was_enabled:
                 _enable_and_start(unit, log_path)
                 already_started.add(unit)
             else:
@@ -331,20 +388,17 @@ def _restore_service_states(
         except Exception as exc:
             errors.append(f'{unit} enablement: {exc}')
 
-    if stopped_safely:
-        for unit in start_order:
-            was_active, _was_enabled = states[unit]
-            if not was_active or unit in already_started:
-                continue
-            try:
-                run_command(['systemctl', 'start', unit], log_path=log_path)
-                run_command(
-                    ['systemctl', 'is-active', '--quiet', unit], log_path=log_path
-                )
-            except Exception as exc:
-                errors.append(f'{unit} activity: {exc}')
-    elif any(was_active for was_active, _was_enabled in states.values()):
-        errors.append('previous active DNS units were not restarted after an unsafe stop')
+    for unit in start_order:
+        was_active, _was_enabled = states[unit]
+        if not was_active or unit in already_started:
+            continue
+        try:
+            run_command(['systemctl', 'start', unit], log_path=log_path)
+            run_command(
+                ['systemctl', 'is-active', '--quiet', unit], log_path=log_path
+            )
+        except Exception as exc:
+            errors.append(f'{unit} activity: {exc}')
     if errors:
         raise BuildError('; '.join(errors))
 
@@ -390,6 +444,7 @@ def reconcile_dns_services(
             _set_enabled(path_service, False, log_path)
         _set_enabled(other, False, log_path)
         operations.persist_dns_mode(mode)
+        _complete_masked_service(target)
     except Exception as original_error:
         rollback_errors: list[str] = []
         restored = False
@@ -501,6 +556,7 @@ def install() -> None:
     operations.powerdns_include_dir = powerdns_include_dir
     operations.launch_values = launch_values
     operations.active_setting_keys = active_setting_keys
+    operations.service_active = service_active
     operations.mask_service = mask_service
     operations.reconcile_dns_services = reconcile_dns_services
 
