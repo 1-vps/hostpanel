@@ -11,11 +11,53 @@ TOOLS = ROOT / 'tools'
 sys.path.insert(0, str(TOOLS))
 
 import hostpanel_build_config as CONFIG
+import hostpanel_build_entry as ENTRY
 import hostpanel_build_extras_state as STATE
 import hostpanel_build_powerdns_adapter as POWERDNS
 
 
 class CustomBuildTransactionFailureTests(unittest.TestCase):
+    def test_candidate_stop_guard_blocks_all_later_rollback_mutations(self):
+        ENTRY.install_optional_rollback_guard()
+        for label, unit in (
+            ('candidate MongoDB stop', 'mongod.service'),
+            ('candidate Varnish stop', 'varnish.service'),
+        ):
+            with self.subTest(label=label):
+                errors: list[str] = []
+                stop = mock.Mock(
+                    side_effect=CONFIG.BuildError('candidate still active')
+                )
+                later = mock.Mock()
+                with mock.patch.object(STATE, '_disable_now', stop):
+                    self.assertFalse(STATE._attempt(
+                        errors, label, STATE._disable_now,
+                        unit, pathlib.Path('/tmp/log'),
+                    ))
+                stop.assert_called_once_with(
+                    unit, pathlib.Path('/tmp/log'), allow_absent=True
+                )
+                self.assertRegex(errors[0], '^' + label + ':')
+                self.assertFalse(STATE._attempt(
+                    errors, 'configuration restore', later,
+                    pathlib.Path('/tmp/config'), None,
+                ))
+                later.assert_not_called()
+
+    def test_candidate_stop_guard_tolerates_only_absent_units(self):
+        ENTRY.install_optional_rollback_guard()
+        stop = mock.Mock(return_value=None)
+        errors: list[str] = []
+        with mock.patch.object(STATE, '_disable_now', stop):
+            self.assertTrue(STATE._attempt(
+                errors, 'candidate MongoDB stop', STATE._disable_now,
+                'mongod.service', pathlib.Path('/tmp/log'),
+            ))
+        stop.assert_called_once_with(
+            'mongod.service', pathlib.Path('/tmp/log'), allow_absent=True
+        )
+        self.assertEqual(errors, [])
+
     def test_state_mask_failure_restarts_previously_active_service(self):
         commands: list[list[str]] = []
 
