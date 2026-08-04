@@ -42,6 +42,14 @@ class HardenerSecondPassSupportTests(unittest.TestCase):
                 HARDENER._git_blob_digest(path.read_bytes()), blob, relative
             )
 
+    def test_import_exposes_the_current_update_installer_pin(self) -> None:
+        self.assertEqual(
+            HARDENER.EXPECTED_UPDATE_AGENT_BLOBS[
+                'tools/install-update-agent.sh'
+            ],
+            HARDENER.EXPECTED_UPDATE_INSTALLER_BLOB,
+        )
+
     def test_first_pass_installs_support_for_no_git_second_pass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             target = pathlib.Path(directory) / 'source'
