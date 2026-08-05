@@ -471,3 +471,121 @@ def expand_component(
     if component in VALID_COMPONENTS:
         return [component]
     raise BuildError(f'unsupported component: {component}')
+
+
+_STABLE_READ_FIELDS = (
+    'st_dev', 'st_ino', 'st_mode', 'st_uid', 'st_gid', 'st_nlink',
+    'st_size', 'st_mtime_ns', 'st_ctime_ns',
+)
+
+
+def _same_stable_file(left: os.stat_result, right: os.stat_result) -> bool:
+    return all(
+        getattr(left, field) == getattr(right, field)
+        for field in _STABLE_READ_FIELDS
+    )
+
+
+def _read_stable_trusted_file(
+    path: pathlib.Path,
+    *,
+    label: str,
+    maximum: int,
+    valid_mode,
+) -> bytes:
+    try:
+        before = path.lstat()
+    except OSError as exc:
+        raise BuildError(f'cannot inspect {label}: {path}') from exc
+    uid, gid = owner_ids()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or stat.S_ISLNK(before.st_mode)
+        or before.st_uid != uid
+        or before.st_gid != gid
+        or before.st_nlink != 1
+        or not valid_mode(stat.S_IMODE(before.st_mode))
+        or before.st_size < 0
+        or before.st_size > maximum
+    ):
+        raise BuildError(f'unsafe {label}: {path}')
+
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise BuildError(f'cannot open {label}: {path}') from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not _same_stable_file(before, opened):
+            raise BuildError(f'{label} changed before read')
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(64 * 1024, maximum + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum:
+                raise BuildError(f'{label} is too large')
+        after = os.fstat(descriptor)
+        try:
+            current = path.lstat()
+        except OSError as exc:
+            raise BuildError(f'{label} changed during read') from exc
+        if (
+            not _same_stable_file(opened, after)
+            or not _same_stable_file(after, current)
+        ):
+            raise BuildError(f'{label} changed during read')
+        return b''.join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def read_config(path: pathlib.Path) -> dict[str, str]:
+    if not os.path.lexists(path):
+        return dict(DEFAULT_OPTIONS)
+    payload = _read_stable_trusted_file(
+        path,
+        label='build configuration',
+        maximum=MAX_CONFIG_BYTES,
+        valid_mode=lambda mode: mode in {0o600, 0o640},
+    )
+    try:
+        text = payload.decode('utf-8', errors='strict')
+    except UnicodeError as exc:
+        raise BuildError('build configuration is not UTF-8') from exc
+    return parse_config_text(text)
+
+
+def read_roles(path: pathlib.Path) -> set[str]:
+    if not os.path.lexists(path):
+        raise BuildError(f'HostPanel role configuration is missing: {path}')
+    payload = _read_stable_trusted_file(
+        path,
+        label='HostPanel role configuration',
+        maximum=MAX_CONFIG_BYTES,
+        valid_mode=lambda mode: not (mode & 0o022),
+    )
+    try:
+        text = payload.decode('utf-8', errors='strict')
+    except UnicodeError as exc:
+        raise BuildError('HostPanel role configuration is not UTF-8') from exc
+    lines = [
+        line.strip() for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith('#')
+    ]
+    if len(lines) != 1 or not lines[0].startswith('roles='):
+        raise BuildError('roles.conf must contain exactly one roles= line')
+    roles = {
+        item
+        for item in lines[0].split('=', 1)[1].replace(',', ' ').split()
+        if item
+    }
+    if not roles or not roles <= VALID_ROLES:
+        raise BuildError('roles.conf contains unsupported roles')
+    return roles
