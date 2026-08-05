@@ -1,10 +1,12 @@
 """Fail-closed runtime hardening for shared CustomBuild operations."""
 from __future__ import annotations
 
+import datetime as dt
 import os
 import pathlib
 import secrets
 import stat
+import tarfile
 
 import hostpanel_build_operations as operations
 from hostpanel_build_config import BuildError
@@ -155,6 +157,93 @@ def write_atomic_root(path: pathlib.Path, text: str, mode: int = 0o644) -> None:
             raise cleanup_error
 
 
+def _allocate_snapshot(
+    component: str, backup_dir: pathlib.Path
+) -> tuple[int, pathlib.Path]:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
+    for _ in range(32):
+        target = backup_dir / (
+            f'{component}-{stamp}-{secrets.token_hex(8)}.tar.gz'
+        )
+        try:
+            return os.open(target, flags, 0o600), target
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            raise BuildError(
+                f'could not allocate configuration snapshot: {exc}'
+            ) from exc
+    raise BuildError('could not allocate a unique configuration snapshot')
+
+
+def config_snapshot(
+    component: str, backup_dir: pathlib.Path
+) -> pathlib.Path | None:
+    paths = [
+        pathlib.Path(item)
+        for item in operations.CONFIG_PATHS.get(component, ())
+        if os.path.lexists(item)
+    ]
+    if not paths:
+        return None
+
+    backup_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    metadata = backup_dir.lstat()
+    uid, gid = operations.owner_ids()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != uid
+        or metadata.st_gid != gid
+        or stat.S_IMODE(metadata.st_mode) & 0o077
+    ):
+        raise BuildError(f'unsafe build backup directory: {backup_dir}')
+
+    fd, target = _allocate_snapshot(component, backup_dir)
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            raise BuildError(f'unsafe configuration snapshot: {target}')
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, 0o600)
+        descriptor, fd = fd, -1
+        with os.fdopen(descriptor, 'wb') as output:
+            with tarfile.open(fileobj=output, mode='w:gz') as archive:
+                for path in paths:
+                    archive.add(
+                        path, arcname=str(path).lstrip('/'), recursive=True
+                    )
+            output.flush()
+            os.fsync(output.fileno())
+        _fsync_parent(target)
+        return target
+    except BaseException as original_error:
+        cleanup_errors: list[str] = []
+        if fd >= 0:
+            descriptor, fd = fd, -1
+            try:
+                os.close(descriptor)
+            except BaseException as exc:
+                cleanup_errors.append(f'close: {exc}')
+        try:
+            target.unlink(missing_ok=True)
+        except BaseException as exc:
+            cleanup_errors.append(f'unlink: {exc}')
+        try:
+            _fsync_parent(target)
+        except BaseException as exc:
+            cleanup_errors.append(f'parent fsync: {exc}')
+        if cleanup_errors:
+            raise BuildError(
+                'configuration snapshot failed and cleanup also failed: '
+                + '; '.join(cleanup_errors)
+            ) from original_error
+        raise
+
+
 def mask_service(name: str, log_path: pathlib.Path) -> bool:
     was_active = service_active(name)
     if was_active:
@@ -183,7 +272,11 @@ def mask_service(name: str, log_path: pathlib.Path) -> bool:
 def install() -> None:
     operations.service_active = service_active
     operations.write_atomic_root = write_atomic_root
+    operations.config_snapshot = config_snapshot
     operations.mask_service = mask_service
 
 
-__all__ = ['install', 'mask_service', 'service_active', 'write_atomic_root']
+__all__ = [
+    'config_snapshot', 'install', 'mask_service', 'service_active',
+    'write_atomic_root',
+]
