@@ -13,7 +13,8 @@ DRIVER_NAME = "harden_install_driver.py"
 IMPLEMENTATION_NAME = "harden_install_entry_impl.py"
 EXPECTED_IMPLEMENTATION_BLOB = "739a29690bd0e938eb291d7d1921af751bd68e1d"
 EXPECTED_DRIVER_BLOB = "19d29feb55969d6925c87ea5b8419a624d4cdb52"
-EXPECTED_UPDATE_INSTALLER_BLOB = "86fbb83c83bbff7786e6098e5e853c50655cf4ce"
+EXPECTED_UPDATE_INSTALLER_BLOB = "4bec44fdbe0f7700c86dd99e7cf30061ee61fc61"
+EXPECTED_UPDATE_ENTRY_BLOB = "eff89be7c9d2f54ea95e63239a97441af3c8d6ff"
 RUNTIME_BLOB_OVERRIDES = {
     "tools/hostpanel_build_cli.py": (
         "5b310214204d47ea5742e27864c543365473eb5b"
@@ -219,6 +220,9 @@ DRIVER = IMPLEMENTATION.DRIVER
 DRIVER.EXPECTED_UPDATE_AGENT_BLOBS["tools/install-update-agent.sh"] = (
     EXPECTED_UPDATE_INSTALLER_BLOB
 )
+DRIVER.EXPECTED_UPDATE_AGENT_BLOBS["tools/hostpanel-update-entry.py"] = (
+    EXPECTED_UPDATE_ENTRY_BLOB
+)
 ORIGINAL_APPLY_POST_INSTALL_HEALTH_FIX = (
     IMPLEMENTATION.ORIGINAL_APPLY_POST_INSTALL_HEALTH_FIX
 )
@@ -330,6 +334,9 @@ def main() -> None:
 
     DRIVER.EXPECTED_UPDATE_AGENT_BLOBS["tools/install-update-agent.sh"] = (
         EXPECTED_UPDATE_INSTALLER_BLOB
+    )
+    DRIVER.EXPECTED_UPDATE_AGENT_BLOBS["tools/hostpanel-update-entry.py"] = (
+        EXPECTED_UPDATE_ENTRY_BLOB
     )
     previous = DRIVER.apply_post_install_health_fix
     DRIVER.apply_post_install_health_fix = apply_post_install_health_fix
