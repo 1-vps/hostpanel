@@ -22,6 +22,11 @@
       }
     ]
   },
+  "source_artifacts": {
+    "archive": "hostpanel-v3.4.0-hardened-r5-source.tar.gz",
+    "checksum_manifest": "SHA256SUMS",
+    "signature": "SHA256SUMS.sig"
+  },
   "platform": {
     "architectures": ["x86_64", "aarch64"],
     "operating_systems": [
