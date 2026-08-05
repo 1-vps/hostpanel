@@ -117,6 +117,22 @@ def install_powerdns_watcher_lifecycle_guard() -> None:
     operations.install_powerdns_units = install_units
 
 
+def install_powerdns_watcher_enablement_guard() -> None:
+    """Reset stale install symlinks before enabling the PowerDNS watcher."""
+    original = powerdns_adapter._enable_and_start
+    if getattr(original, '_hostpanel_pdns_watcher_reenable_guard', False):
+        return
+    path_service = powerdns_adapter.operations.PDNS_PATH_UNIT.name
+
+    def enable_and_start(name: str, log_path: pathlib.Path) -> None:
+        if name == path_service:
+            powerdns_adapter._set_enabled(name, False, log_path)
+        original(name, log_path)
+
+    enable_and_start._hostpanel_pdns_watcher_reenable_guard = True  # type: ignore[attr-defined]
+    powerdns_adapter._enable_and_start = enable_and_start
+
+
 def _validate_dns_unit_state(
     unit: str, *, active: bool, enabled: bool
 ) -> None:
@@ -203,6 +219,7 @@ def install_runtime_adapters(selected_config: pathlib.Path) -> None:
     operations_adapter.install()
     powerdns_adapter.install()
     install_powerdns_watcher_lifecycle_guard()
+    install_powerdns_watcher_enablement_guard()
     mongodb_adapter.install()
     state.install()
     cli.apply_mongodb = guarded_optional_apply(state.apply_mongodb)
