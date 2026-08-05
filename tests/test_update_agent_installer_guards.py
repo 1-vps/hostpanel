@@ -12,6 +12,18 @@ class UpdateAgentInstallerGuardTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.source = INSTALLER.read_text(encoding='utf-8')
 
+    def test_environment_is_sanitized_before_any_privileged_command(self) -> None:
+        root_check = '[[ ${EUID:-$(id -u)} -eq 0 ]]'
+        markers = (
+            'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+            'export PATH',
+            'umask 077',
+            'unset PYTHONPATH PYTHONHOME BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH',
+        )
+        for marker in markers:
+            self.assertIn(marker, self.source)
+            self.assertLess(self.source.index(marker), self.source.index(root_check))
+
     def test_configuration_links_and_hardlinks_are_rejected_before_write(self) -> None:
         symlink_guard = 'if [[ -L "$CONFIG" ]]; then'
         link_count_guard = (
