@@ -365,3 +365,46 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (BuildError, OSError) as exc:
         print(f'hostpanel-build failed: {exc}', file=sys.stderr)
         return 1
+
+
+_ORIGINAL_BASE_EXECUTE_BUILD = _BASE_EXECUTE_BUILD
+_BASE_PLANNED_COMPONENTS = cli.planned_components
+_ORIGINAL_INSTALL_RUNTIME_ADAPTERS = install_runtime_adapters
+
+
+def _all_role_components(
+    component: str, options: dict[str, str], roles: set[str] | None
+) -> list[str]:
+    components = _BASE_PLANNED_COMPONENTS(component, options, roles)
+    if component == 'all' and roles is not None:
+        if 'database' in roles:
+            components.append('mongodb')
+        if 'web' in roles:
+            components.append('varnish')
+    return list(dict.fromkeys(components))
+
+
+def _execute_all_optional_reconciliation(
+    component, options, platform, log_path, backup_dir,
+    python_path, doctor_path, roles, web_helper, mode_file,
+):
+    result = _ORIGINAL_BASE_EXECUTE_BUILD(
+        component, options, platform, log_path, backup_dir,
+        python_path, doctor_path, roles, web_helper, mode_file,
+    )
+    if (
+        component == 'all'
+        and 'database' in roles
+        and options.get('mongodb') == 'off'
+    ):
+        cli.apply_mongodb(options, platform, log_path, backup_dir)
+        cli.run_doctor(log_path, python_path, doctor_path)
+    return result
+
+
+_BASE_EXECUTE_BUILD = _execute_all_optional_reconciliation
+
+
+def install_runtime_adapters(selected_config: pathlib.Path) -> None:
+    _ORIGINAL_INSTALL_RUNTIME_ADAPTERS(selected_config)
+    cli.planned_components = _all_role_components
