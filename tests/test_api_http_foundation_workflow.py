@@ -36,6 +36,31 @@ class ApiHttpFoundationWorkflowTests(unittest.TestCase):
             ["actions/checkout@11d5960a326750d5838078e36cf38b85af677262"],
         )
 
+    def test_complete_prerequisite_chain_runs_before_http(self) -> None:
+        step = "Validate release, token, control-plane, and RBAC prerequisites"
+        self.assertIn(step, self.source)
+        for phrase in (
+            "tools/validate_release_manifest.py",
+            "tests.test_release_manifest",
+            "tools/hostpanel_api_tokens/*.py",
+            "tests.test_hostpanel_api_tokens",
+            "tests.test_hostpanel_api_token_snapshot",
+            "tools/hostpanel_api_control/*.py",
+            "tests.test_hostpanel_api_control_core",
+            "tests.test_hostpanel_api_control_outbox",
+            "tests.test_hostpanel_api_control_security",
+            "tests.test_hostpanel_api_control_concurrency",
+            "tools/hostpanel_api_rbac/*.py",
+            "tests.test_hostpanel_api_rbac_policy",
+            "tests.test_hostpanel_api_rbac_impersonation",
+            "tests.test_hostpanel_api_rbac_security",
+        ):
+            self.assertIn(phrase, self.source)
+        self.assertLess(
+            self.source.index(step),
+            self.source.index("Run API HTTP regressions"),
+        )
+
     def test_workflow_runs_complete_transport_contract(self) -> None:
         for phrase in (
             "tools/hostpanel_api_http/*.py",
@@ -63,6 +88,27 @@ class ApiHttpFoundationWorkflowTests(unittest.TestCase):
         for path in (
             ".github/workflows/api-http-foundation.yml",
             "API-HTTP-FOUNDATION.md",
+            "RELEASE-MANIFEST.json",
+            "RELEASE_VERSION",
+            "SHA256SUMS",
+            "SHA256SUMS.sig",
+            "'hostpanel-*-source.tar.gz'",
+            "tools/validate_release_manifest.py",
+            "tests/test_release_manifest.py",
+            "tools/hostpanel_api_tokens/**",
+            "tests/test_hostpanel_api_tokens.py",
+            "tests/test_hostpanel_api_token_snapshot.py",
+            "tools/hostpanel_api_control/**",
+            "tests/api_control_test_support.py",
+            "tests/test_hostpanel_api_control_core.py",
+            "tests/test_hostpanel_api_control_outbox.py",
+            "tests/test_hostpanel_api_control_security.py",
+            "tests/test_hostpanel_api_control_concurrency.py",
+            "tools/hostpanel_api_rbac/**",
+            "tests/rbac_test_support.py",
+            "tests/test_hostpanel_api_rbac_policy.py",
+            "tests/test_hostpanel_api_rbac_impersonation.py",
+            "tests/test_hostpanel_api_rbac_security.py",
             "tools/generate_hostpanel_openapi.py",
             "tools/hostpanel_api_http/**",
             "tests/http_test_support.py",
