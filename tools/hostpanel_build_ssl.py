@@ -89,18 +89,57 @@ def ensure_certbot() -> str:
     return certbot
 
 
+def _trusted_vhost_directory(path: pathlib.Path) -> None:
+    uid, gid = owner_ids()
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise BuildError(f'cannot inspect managed nginx directory: {path}') from exc
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != uid
+        or metadata.st_gid != gid
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise BuildError(f'unsafe managed nginx directory: {path}')
+
+
 def require_managed_vhost(
     domain: str,
     available_root: pathlib.Path = DEFAULT_NGINX_AVAILABLE,
     enabled_root: pathlib.Path = DEFAULT_NGINX_ENABLED,
 ) -> pathlib.Path:
     domain = validate_domain(domain)
+    _trusted_vhost_directory(available_root)
+    _trusted_vhost_directory(enabled_root)
+    uid, gid = owner_ids()
     available = available_root / domain
     enabled = enabled_root / domain
-    if not available.is_file():
-        raise BuildError(f'HostPanel nginx vhost is missing: {available}')
-    if not enabled.is_symlink():
-        raise BuildError(f'HostPanel nginx vhost is not enabled: {enabled}')
+    try:
+        available_metadata = available.lstat()
+    except OSError as exc:
+        raise BuildError(f'HostPanel nginx vhost is missing: {available}') from exc
+    if (
+        not stat.S_ISREG(available_metadata.st_mode)
+        or stat.S_ISLNK(available_metadata.st_mode)
+        or available_metadata.st_uid != uid
+        or available_metadata.st_gid != gid
+        or available_metadata.st_nlink != 1
+        or stat.S_IMODE(available_metadata.st_mode) & 0o022
+    ):
+        raise BuildError(f'unsafe HostPanel nginx vhost: {available}')
+    try:
+        enabled_metadata = enabled.lstat()
+    except OSError as exc:
+        raise BuildError(f'HostPanel nginx vhost is not enabled: {enabled}') from exc
+    if (
+        not stat.S_ISLNK(enabled_metadata.st_mode)
+        or enabled_metadata.st_uid != uid
+        or enabled_metadata.st_gid != gid
+        or enabled_metadata.st_nlink != 1
+    ):
+        raise BuildError(f'unsafe HostPanel nginx vhost link: {enabled}')
     try:
         enabled_target = enabled.resolve(strict=True)
         available_target = available.resolve(strict=True)
