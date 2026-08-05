@@ -10,22 +10,41 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-consistency-${{ github.ref }}
+  group: release-consistency-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   validate:
     name: Validate release metadata
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check out exact revision
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
           persist-credentials: false
 
-      - name: Compile validator
-        run: python3 -m py_compile tools/validate_release_manifest.py
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "$actual_sha" == "$EXPECTED_SHA" ]] || {
+            printf 'Release checkout mismatch: expected %s, got %s\n' \
+              "$EXPECTED_SHA" "$actual_sha" >&2
+            exit 1
+          }
+
+      - name: Compile and test validator
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/validate_release_manifest.py \
+            tests/test_release_manifest.py
+          python3 -m unittest -v tests.test_release_manifest
 
       - name: Validate maintained release state
         run: python3 tools/validate_release_manifest.py
