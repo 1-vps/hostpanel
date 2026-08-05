@@ -156,8 +156,12 @@ class PanelRedesignTests(unittest.TestCase):
         self.assertIn("control.hidden=!allowed", self.js)
         self.assertIn("if(!page||!pageLinkAllowed(navLink))", self.js)
         self.assertIn("const schedulePageLinkVisibility=scheduleFrame", self.js)
-        self.assertIn("attributeFilter:['hidden','aria-hidden']", self.js)
-        self.assertNotIn("attributeFilter:['hidden','aria-hidden','class','style']", self.js)
+        self.assertIn("window.getComputedStyle(navLink)", self.js)
+        self.assertIn(
+            "attributeFilter:['hidden','aria-hidden','class','style']",
+            self.js,
+        )
+        self.assertNotIn("attributeFilter:['hidden','aria-hidden']", self.js)
 
     def test_visual_system_covers_responsive_dark_and_accessibility_modes(self):
         for token in (
