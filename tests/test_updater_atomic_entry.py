@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import importlib.machinery
 import importlib.util
 import json
@@ -193,6 +194,114 @@ class UpdaterAtomicEntryTests(unittest.TestCase):
             self.assertEqual(victim.read_text(encoding='utf-8'), 'victim\n')
             self.assertTrue(status.is_symlink())
 
+    def test_updater_lock_symlink_is_rejected_without_touching_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            runtime = root / 'runtime'
+            runtime.mkdir(mode=0o700)
+            entry = load_installed_entry(runtime)
+            lock_dir = root / 'locks'
+            lock_dir.mkdir(mode=0o700)
+            victim = lock_dir / 'victim'
+            victim.write_text('victim\n', encoding='utf-8')
+            victim.chmod(0o600)
+            lock = lock_dir / 'hostpanel-update.lock'
+            lock.symlink_to(victim)
+
+            with mock.patch.object(
+                entry._IMPL, '_owner_ids',
+                return_value=(os.getuid(), os.getgid()),
+            ):
+                with self.assertRaisesRegex(
+                    entry.UpdateError, 'unsafe updater lock file'
+                ):
+                    with entry.safe_lock(lock):
+                        self.fail('unsafe symlink lock was acquired')
+
+            self.assertEqual(victim.read_text(encoding='utf-8'), 'victim\n')
+            self.assertTrue(lock.is_symlink())
+
+    def test_updater_lock_hardlink_and_wrong_mode_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            runtime = root / 'runtime'
+            runtime.mkdir(mode=0o700)
+            entry = load_installed_entry(runtime)
+            lock_dir = root / 'locks'
+            lock_dir.mkdir(mode=0o700)
+            victim = lock_dir / 'victim'
+            victim.write_text('victim\n', encoding='utf-8')
+            victim.chmod(0o600)
+            hardlink = lock_dir / 'hardlink.lock'
+            os.link(victim, hardlink)
+            wrong_mode = lock_dir / 'wrong-mode.lock'
+            wrong_mode.write_text('', encoding='utf-8')
+            wrong_mode.chmod(0o644)
+
+            with mock.patch.object(
+                entry._IMPL, '_owner_ids',
+                return_value=(os.getuid(), os.getgid()),
+            ):
+                for lock in (hardlink, wrong_mode):
+                    with self.subTest(lock=lock), self.assertRaisesRegex(
+                        entry.UpdateError, 'unsafe updater lock file'
+                    ):
+                        with entry.safe_lock(lock):
+                            self.fail('unsafe lock was acquired')
+
+    def test_competing_updater_lock_returns_temporary_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            runtime = root / 'runtime'
+            runtime.mkdir(mode=0o700)
+            entry = load_installed_entry(runtime)
+            lock_dir = root / 'locks'
+            lock_dir.mkdir(mode=0o700)
+            lock = lock_dir / 'hostpanel-update.lock'
+            lock.write_bytes(b'')
+            lock.chmod(0o600)
+            descriptor = os.open(lock, os.O_RDWR)
+            try:
+                fcntl.flock(
+                    descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB
+                )
+                with mock.patch.object(
+                    entry._IMPL, '_owner_ids',
+                    return_value=(os.getuid(), os.getgid()),
+                ), mock.patch.object(entry._IMPL, 'run') as run:
+                    result = entry.main([
+                        '--allow-non-root',
+                        '--lock-file', str(lock),
+                        '--status-file', str(root / 'status.json'),
+                    ])
+            finally:
+                os.close(descriptor)
+
+            self.assertEqual(result, 75)
+            run.assert_not_called()
+
+    def test_safe_lock_creates_private_single_link_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            runtime = root / 'runtime'
+            runtime.mkdir(mode=0o700)
+            entry = load_installed_entry(runtime)
+            lock_dir = root / 'locks'
+            lock_dir.mkdir(mode=0o700)
+            lock = lock_dir / 'hostpanel-update.lock'
+
+            with mock.patch.object(
+                entry._IMPL, '_owner_ids',
+                return_value=(os.getuid(), os.getgid()),
+            ):
+                with entry.safe_lock(lock):
+                    metadata = lock.lstat()
+                    self.assertTrue(stat.S_ISREG(metadata.st_mode))
+                    self.assertEqual(metadata.st_nlink, 1)
+                    self.assertEqual(
+                        stat.S_IMODE(metadata.st_mode), 0o600
+                    )
+
     def test_installer_embeds_entry_and_non_executable_implementation(self):
         installer = (TOOLS / 'install-update-agent.sh').read_text(
             encoding='utf-8'
@@ -224,11 +333,14 @@ class UpdaterAtomicEntryTests(unittest.TestCase):
         )
         self.assertIn("_IMPL.atomic_json = atomic_json", source)
         self.assertIn("_IMPL.os = _UPDATER_OS", source)
-        self.assertIn("return _IMPL.main(argv)", source)
+        self.assertIn("return _IMPL.run(args)", source)
         self.assertNotIn('os.getpid()', source)
         self.assertIn('secrets.token_hex(12)', source)
         self.assertIn('os.fchmod(fd, 0o600)', source)
         self.assertIn('_fsync_parent(path)', source)
+        self.assertIn('with safe_lock(pathlib.Path(args.lock_file))', source)
+        self.assertIn('os.O_NOFOLLOW', source)
+        self.assertNotIn('return _IMPL.main(argv)', source)
 
 
 if __name__ == '__main__':
