@@ -171,28 +171,32 @@ def _validate_optional_unit_state(
 
 def validate_applied_runtime(parsed) -> None:
     roles = read_roles(pathlib.Path(parsed.roles_file))
-    platform = cli.detect_platform(pathlib.Path(parsed.os_release))
     if 'dns' in roles:
+        platform = cli.detect_platform(pathlib.Path(parsed.os_release))
         dns_mode = powerdns_adapter.applied_dns_mode()
         validate_dns_runtime({'dns': dns_mode}, platform)
-    if 'database' in roles:
-        mongodb_mode = state._runtime_mode(
-            state.MONGODB_MODE_FILE, 'off'
-        )
-        if mongodb_mode not in {'off', state.MONGODB_VERSION}:
-            raise BuildError('invalid applied MongoDB mode')
-        enabled = mongodb_mode == state.MONGODB_VERSION
-        _validate_optional_unit_state(
-            'mongod.service', active=enabled, enabled=enabled
-        )
-    if 'web' in roles:
-        varnish_mode = state._runtime_mode(state.VARNISH_MODE_FILE, 'off')
-        if varnish_mode not in {'off', 'on'}:
-            raise BuildError('invalid applied Varnish mode')
-        enabled = varnish_mode == 'on'
-        _validate_optional_unit_state(
-            'varnish.service', active=enabled, enabled=enabled
-        )
+
+    mongodb_mode = state._runtime_mode(
+        state.MONGODB_MODE_FILE, 'off'
+    )
+    if mongodb_mode not in {'off', state.MONGODB_VERSION}:
+        raise BuildError('invalid applied MongoDB mode')
+    mongodb_enabled = mongodb_mode == state.MONGODB_VERSION
+    _validate_optional_unit_state(
+        'mongod.service',
+        active=mongodb_enabled,
+        enabled=mongodb_enabled,
+    )
+
+    varnish_mode = state._runtime_mode(state.VARNISH_MODE_FILE, 'off')
+    if varnish_mode not in {'off', 'on'}:
+        raise BuildError('invalid applied Varnish mode')
+    varnish_enabled = varnish_mode == 'on'
+    _validate_optional_unit_state(
+        'varnish.service',
+        active=varnish_enabled,
+        enabled=varnish_enabled,
+    )
 
 
 def install_runtime_adapters(selected_config: pathlib.Path) -> None:
@@ -297,17 +301,29 @@ def _requires_outer_lock(parsed) -> bool:
 
 @contextlib.contextmanager
 def _command_runtime_guard(parsed):
-    original_doctor = cli.run_doctor
-    if parsed.command == 'doctor':
-        def checked_doctor(log_path, python_path, doctor_path):
-            validate_applied_runtime(parsed)
-            return original_doctor(log_path, python_path, doctor_path)
+    operations = operations_adapter.operations
+    original_cli_doctor = cli.run_doctor
+    original_operations_doctor = operations.run_doctor
 
-        cli.run_doctor = checked_doctor
+    def checked_cli_doctor(log_path, python_path, doctor_path):
+        result = original_cli_doctor(log_path, python_path, doctor_path)
+        validate_applied_runtime(parsed)
+        return result
+
+    def checked_operations_doctor(log_path, python_path, doctor_path):
+        result = original_operations_doctor(
+            log_path, python_path, doctor_path
+        )
+        validate_applied_runtime(parsed)
+        return result
+
+    cli.run_doctor = checked_cli_doctor
+    operations.run_doctor = checked_operations_doctor
     try:
         yield
     finally:
-        cli.run_doctor = original_doctor
+        cli.run_doctor = original_cli_doctor
+        operations.run_doctor = original_operations_doctor
 
 
 def _run_prelocked(values: list[str], lock_file: str) -> int:
