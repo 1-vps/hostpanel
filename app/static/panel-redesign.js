@@ -162,9 +162,24 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
   }
 
   function pageLinkAllowed(navLink){
-    if(!navLink||navLink.hidden||navLink.getAttribute('aria-hidden')==='true')return false;
-    const style=window.getComputedStyle(navLink);
-    return style.display!=='none'&&style.visibility!=='hidden'&&style.visibility!=='collapse';
+    const nav=byId('nav');
+    if(!navLink||!nav||!nav.contains(navLink))return false;
+    const linkStyle=window.getComputedStyle(navLink);
+    if(
+      navLink.hidden||navLink.getAttribute('aria-hidden')==='true'||
+      linkStyle.display==='none'||linkStyle.visibility==='hidden'||
+      linkStyle.visibility==='collapse'
+    )return false;
+    for(let node=navLink.parentElement;node;node=node.parentElement){
+      const style=window.getComputedStyle(node);
+      if(
+        node.hidden||node.getAttribute('aria-hidden')==='true'||
+        style.display==='none'||style.visibility==='hidden'||
+        style.visibility==='collapse'
+      )return false;
+      if(node===nav)return true;
+    }
+    return false;
   }
 
   function syncPageLinkVisibility(){
