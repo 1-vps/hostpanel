@@ -78,6 +78,27 @@ class CustomBuildSslTests(unittest.TestCase):
             deploy.assert_called_once_with(hook)
             self.assertEqual(commands[-1], ['systemctl', 'reload', 'nginx.service'])
 
+    def test_hook_failure_prevents_certificate_issuance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            available, enabled, live, hook = self._certificate_tree(root)
+            with mock.patch.object(
+                SSL, 'ensure_certbot', return_value='/usr/bin/certbot'
+            ), mock.patch.object(
+                SSL, 'install_deploy_hook',
+                side_effect=SSL.BuildError('hook preflight failed'),
+            ), mock.patch.object(SSL, 'run_command') as run:
+                with self.assertRaisesRegex(
+                    SSL.BuildError, 'hook preflight failed'
+                ):
+                    SSL.issue_certificate(
+                        'example.com', 'admin@example.com', False,
+                        root / 'log', available_root=available,
+                        enabled_root=enabled, live_root=live,
+                        hook_path=hook,
+                    )
+            run.assert_not_called()
+
     def test_zerossl_issue_uses_private_config_not_secret_arguments(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
