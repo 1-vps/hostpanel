@@ -424,6 +424,14 @@ install -o root -g root -m 644 "$SERVICE" /etc/systemd/system/hostpanel-update.s
 install -o root -g root -m 644 "$TIMER" /etc/systemd/system/hostpanel-update.timer
 
 CONFIG=/etc/hostpanel/update-agent.conf
+if [[ -L "$CONFIG" ]]; then
+  echo "Error: unsafe update-agent configuration symlink: $CONFIG" >&2
+  exit 1
+fi
+if [[ -e "$CONFIG" && "$(stat -c %u:%g:%h -- "$CONFIG")" != 0:0:1 ]]; then
+  echo "Error: update-agent configuration has unsafe ownership or links: $CONFIG" >&2
+  exit 1
+fi
 if [[ ! -e "$CONFIG" ]]; then
   cat >"$CONFIG" <<'EOF'
 # HostPanel signed GitHub release updates.
@@ -450,6 +458,14 @@ else
 fi
 
 TOKEN_FILE=/etc/hostpanel/github-update.token
+if [[ -L "$TOKEN_FILE" ]]; then
+  echo "Error: unsafe GitHub update token symlink: $TOKEN_FILE" >&2
+  exit 1
+fi
+if [[ -e "$TOKEN_FILE" && "$(stat -c %u:%g:%h -- "$TOKEN_FILE")" != 0:0:1 ]]; then
+  echo "Error: GitHub update token has unsafe ownership or links: $TOKEN_FILE" >&2
+  exit 1
+fi
 if [[ -e "$TOKEN_FILE" ]]; then
   [[ -f "$TOKEN_FILE" && ! -L "$TOKEN_FILE" ]] || {
     echo "Error: unsafe GitHub update token file: $TOKEN_FILE" >&2
