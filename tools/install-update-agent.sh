@@ -75,8 +75,8 @@ if [[ -e "$CONFIG" ]]; then
     echo "Error: unsafe update-agent configuration: $CONFIG" >&2
     exit 1
   }
-  [[ "$(stat -c %u:%g:%h -- "$CONFIG")" == 0:0:1 ]] || {
-    echo "Error: update-agent configuration has unsafe ownership or links: $CONFIG" >&2
+  [[ "$(stat -c %u:%g:%h:%a -- "$CONFIG")" == 0:0:1:600 ]] || {
+    echo "Error: update-agent configuration has unsafe ownership, links, or mode: $CONFIG" >&2
     exit 1
   }
 fi
@@ -90,8 +90,8 @@ if [[ -e "$TOKEN_FILE" ]]; then
     echo "Error: unsafe GitHub update token file: $TOKEN_FILE" >&2
     exit 1
   }
-  [[ "$(stat -c %u:%g:%h -- "$TOKEN_FILE")" == 0:0:1 ]] || {
-    echo "Error: GitHub update token has unsafe ownership or links: $TOKEN_FILE" >&2
+  [[ "$(stat -c %u:%g:%h:%a -- "$TOKEN_FILE")" == 0:0:1:600 ]] || {
+    echo "Error: GitHub update token has unsafe ownership, links, or mode: $TOKEN_FILE" >&2
     exit 1
   }
 fi
@@ -254,10 +254,143 @@ EOF
   chown root:root "$CONFIG"
   chmod 600 "$CONFIG"
 else
-  chown root:root "$CONFIG"
-  chmod 600 "$CONFIG"
   if ! grep -q '^HP_UPDATE_KEYRING=' "$CONFIG"; then
-    printf '%s\n' 'HP_UPDATE_KEYRING=/etc/hostpanel/update-keyring.json' >>"$CONFIG"
+    python3 - "$CONFIG" <<'PYCONFIG'
+import os
+import pathlib
+import secrets
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+before = path.lstat()
+if (
+    not stat.S_ISREG(before.st_mode)
+    or stat.S_ISLNK(before.st_mode)
+    or before.st_uid != 0
+    or before.st_gid != 0
+    or before.st_nlink != 1
+    or stat.S_IMODE(before.st_mode) != 0o600
+    or before.st_size > 64 * 1024
+):
+    raise SystemExit(f'unsafe update-agent configuration: {path}')
+
+flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, 'O_NOFOLLOW', 0)
+fd = os.open(path, flags)
+try:
+    opened = os.fstat(fd)
+    stable = (
+        'st_dev', 'st_ino', 'st_mode', 'st_uid', 'st_gid',
+        'st_nlink', 'st_size', 'st_mtime_ns', 'st_ctime_ns',
+    )
+    if any(getattr(before, field) != getattr(opened, field) for field in stable):
+        raise SystemExit('update-agent configuration changed before read')
+    required_xattrs = ('listxattr', 'getxattr', 'setxattr', 'removexattr')
+    if not all(hasattr(os, name) for name in required_xattrs):
+        raise SystemExit('extended-attribute support is unavailable')
+    try:
+        xattrs = {
+            name: os.getxattr(fd, name)
+            for name in os.listxattr(fd)
+        }
+    except OSError as exc:
+        raise SystemExit(
+            f'could not capture update-agent configuration metadata: {exc}'
+        ) from exc
+    chunks = []
+    remaining = 64 * 1024 + 1
+    while remaining:
+        chunk = os.read(fd, min(remaining, 64 * 1024))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    if remaining == 0 and os.read(fd, 1):
+        raise SystemExit('update-agent configuration exceeds size limit')
+    after = os.fstat(fd)
+    current = path.lstat()
+    if (
+        any(getattr(opened, field) != getattr(after, field) for field in stable)
+        or any(getattr(after, field) != getattr(current, field) for field in stable)
+    ):
+        raise SystemExit('update-agent configuration changed during read')
+finally:
+    os.close(fd)
+
+payload = b''.join(chunks)
+if payload and not payload.endswith(b'\n'):
+    payload += b'\n'
+payload += b'HP_UPDATE_KEYRING=/etc/hostpanel/update-keyring.json\n'
+
+write_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+write_flags |= getattr(os, 'O_NOFOLLOW', 0)
+for _ in range(32):
+    temporary = path.with_name(
+        f'.{path.name}.migrate.{secrets.token_hex(12)}'
+    )
+    try:
+        out = os.open(temporary, write_flags, 0o600)
+        break
+    except FileExistsError:
+        continue
+else:
+    raise SystemExit('could not allocate update-agent configuration temporary')
+
+active_error = None
+cleanup_error = None
+try:
+    view = memoryview(payload)
+    while view:
+        written = os.write(out, view)
+        if written <= 0:
+            raise SystemExit('could not migrate update-agent configuration')
+        view = view[written:]
+    os.fsync(out)
+    os.fchown(out, 0, 0)
+    os.fchmod(out, 0o600)
+    try:
+        existing_xattrs = set(os.listxattr(out))
+        desired_xattrs = set(xattrs)
+        for name in existing_xattrs - desired_xattrs:
+            os.removexattr(out, name)
+        for name, value in xattrs.items():
+            os.setxattr(out, name, value)
+    except OSError as exc:
+        raise SystemExit(
+            f'could not preserve update-agent configuration metadata: {exc}'
+        ) from exc
+    os.fsync(out)
+    descriptor, out = out, -1
+    os.close(descriptor)
+    os.replace(temporary, path)
+    directory_fd = os.open(
+        path.parent,
+        os.O_RDONLY | os.O_CLOEXEC
+        | getattr(os, 'O_DIRECTORY', 0)
+        | getattr(os, 'O_NOFOLLOW', 0),
+    )
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+except BaseException as exc:
+    active_error = exc
+    raise
+finally:
+    if out >= 0:
+        descriptor, out = out, -1
+        try:
+            os.close(descriptor)
+        except BaseException as exc:
+            cleanup_error = exc
+    try:
+        temporary.unlink(missing_ok=True)
+    except BaseException as exc:
+        if cleanup_error is None:
+            cleanup_error = exc
+    if active_error is None and cleanup_error is not None:
+        raise cleanup_error
+PYCONFIG
   fi
 fi
 
