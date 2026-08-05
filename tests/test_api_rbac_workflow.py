@@ -36,6 +36,31 @@ class ApiRbacWorkflowTests(unittest.TestCase):
             ["actions/checkout@11d5960a326750d5838078e36cf38b85af677262"],
         )
 
+    def test_prerequisite_chain_runs_before_rbac(self) -> None:
+        self.assertIn(
+            "Validate release, token, and control-plane prerequisites",
+            self.source,
+        )
+        for token in (
+            "tools/validate_release_manifest.py",
+            "tests.test_release_manifest",
+            "tools/hostpanel_api_tokens/*.py",
+            "tests.test_hostpanel_api_tokens",
+            "tests.test_hostpanel_api_token_snapshot",
+            "tools/hostpanel_api_control/*.py",
+            "tests.test_hostpanel_api_control_core",
+            "tests.test_hostpanel_api_control_outbox",
+            "tests.test_hostpanel_api_control_security",
+            "tests.test_hostpanel_api_control_concurrency",
+        ):
+            self.assertIn(token, self.source)
+        self.assertLess(
+            self.source.index(
+                "Validate release, token, and control-plane prerequisites"
+            ),
+            self.source.index("Run RBAC regressions"),
+        )
+
     def test_workflow_runs_complete_rbac_contract(self) -> None:
         self.assertIn("tools/hostpanel_api_rbac/*.py", self.source)
         self.assertIn("tests.test_hostpanel_api_rbac_policy", self.source)
@@ -54,6 +79,22 @@ class ApiRbacWorkflowTests(unittest.TestCase):
         for path in (
             ".github/workflows/api-rbac-foundation.yml",
             "API-RBAC-FOUNDATION.md",
+            "RELEASE-MANIFEST.json",
+            "RELEASE_VERSION",
+            "SHA256SUMS",
+            "SHA256SUMS.sig",
+            "'hostpanel-*-source.tar.gz'",
+            "tools/validate_release_manifest.py",
+            "tests/test_release_manifest.py",
+            "tools/hostpanel_api_tokens/**",
+            "tests/test_hostpanel_api_tokens.py",
+            "tests/test_hostpanel_api_token_snapshot.py",
+            "tools/hostpanel_api_control/**",
+            "tests/api_control_test_support.py",
+            "tests/test_hostpanel_api_control_core.py",
+            "tests/test_hostpanel_api_control_outbox.py",
+            "tests/test_hostpanel_api_control_security.py",
+            "tests/test_hostpanel_api_control_concurrency.py",
             "tools/hostpanel_api_rbac/**",
             "tests/rbac_test_support.py",
             "tests/test_hostpanel_api_rbac_policy.py",
