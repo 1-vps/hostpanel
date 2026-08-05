@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Install or refresh the signed GitHub release update agent.
-set -euo pipefail
+set -Eeuo pipefail
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
+unset PYTHONPATH PYTHONHOME BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || {
   echo 'Error: install-update-agent.sh must run as root.' >&2
