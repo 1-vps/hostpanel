@@ -1,0 +1,159 @@
+name: API RBAC foundation
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/api-rbac-foundation.yml
+      - API-RBAC-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/hostpanel_api_tokens/**
+      - tests/test_hostpanel_api_tokens.py
+      - tests/test_hostpanel_api_token_snapshot.py
+      - tools/hostpanel_api_control/**
+      - tests/api_control_test_support.py
+      - tests/test_hostpanel_api_control_core.py
+      - tests/test_hostpanel_api_control_outbox.py
+      - tests/test_hostpanel_api_control_security.py
+      - tests/test_hostpanel_api_control_concurrency.py
+      - tools/hostpanel_api_rbac/**
+      - tests/rbac_test_support.py
+      - tests/test_hostpanel_api_rbac_policy.py
+      - tests/test_hostpanel_api_rbac_impersonation.py
+      - tests/test_hostpanel_api_rbac_security.py
+      - tests/test_api_rbac_workflow.py
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/api-rbac-foundation.yml
+      - API-RBAC-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/hostpanel_api_tokens/**
+      - tests/test_hostpanel_api_tokens.py
+      - tests/test_hostpanel_api_token_snapshot.py
+      - tools/hostpanel_api_control/**
+      - tests/api_control_test_support.py
+      - tests/test_hostpanel_api_control_core.py
+      - tests/test_hostpanel_api_control_outbox.py
+      - tests/test_hostpanel_api_control_security.py
+      - tests/test_hostpanel_api_control_concurrency.py
+      - tools/hostpanel_api_rbac/**
+      - tests/rbac_test_support.py
+      - tests/test_hostpanel_api_rbac_policy.py
+      - tests/test_hostpanel_api_rbac_impersonation.py
+      - tests/test_hostpanel_api_rbac_security.py
+      - tests/test_api_rbac_workflow.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-rbac-foundation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "$actual_sha" == "$EXPECTED_SHA" ]] || {
+            printf 'API RBAC checkout mismatch: expected %s, got %s\n' \
+              "$EXPECTED_SHA" "$actual_sha" >&2
+            exit 1
+          }
+
+      - name: Validate release, token, and control-plane prerequisites
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/validate_release_manifest.py \
+            tests/test_release_manifest.py \
+            tools/hostpanel_api_tokens/*.py \
+            tests/test_hostpanel_api_tokens.py \
+            tests/test_hostpanel_api_token_snapshot.py \
+            tools/hostpanel_api_control/*.py \
+            tests/api_control_test_support.py \
+            tests/test_hostpanel_api_control_core.py \
+            tests/test_hostpanel_api_control_outbox.py \
+            tests/test_hostpanel_api_control_security.py \
+            tests/test_hostpanel_api_control_concurrency.py
+          python3 -m unittest -v \
+            tests.test_release_manifest \
+            tests.test_hostpanel_api_tokens \
+            tests.test_hostpanel_api_token_snapshot \
+            tests.test_hostpanel_api_control_core \
+            tests.test_hostpanel_api_control_outbox \
+            tests.test_hostpanel_api_control_security \
+            tests.test_hostpanel_api_control_concurrency
+          python3 tools/validate_release_manifest.py
+
+      - name: Compile RBAC package and tests
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/hostpanel_api_rbac/*.py \
+            tests/rbac_test_support.py \
+            tests/test_hostpanel_api_rbac_policy.py \
+            tests/test_hostpanel_api_rbac_impersonation.py \
+            tests/test_hostpanel_api_rbac_security.py \
+            tests/test_api_rbac_workflow.py
+
+      - name: Run RBAC regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_hostpanel_api_rbac_policy \
+            tests.test_hostpanel_api_rbac_impersonation \
+            tests.test_hostpanel_api_rbac_security \
+            tests.test_api_rbac_workflow
+
+      - name: Verify SQLite security and concurrency prerequisites
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sqlite3
+          import tempfile
+          from pathlib import Path
+
+          with tempfile.TemporaryDirectory() as directory:
+              database = Path(directory) / "rbac.db"
+              first = sqlite3.connect(database, timeout=5)
+              second = sqlite3.connect(database, timeout=5)
+              for connection in (first, second):
+                  connection.execute("PRAGMA foreign_keys = ON")
+                  connection.execute("PRAGMA trusted_schema = OFF")
+                  if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+                      raise SystemExit("SQLite foreign keys are unavailable")
+                  trusted = connection.execute("PRAGMA trusted_schema").fetchone()
+                  if trusted is None or trusted[0] != 0:
+                      raise SystemExit("SQLite trusted_schema cannot be disabled")
+              first.execute("CREATE TABLE lock_probe(id INTEGER PRIMARY KEY)")
+              first.commit()
+              second.execute("SELECT count(*) FROM lock_probe").fetchone()
+              first.close()
+              second.close()
+          PY
