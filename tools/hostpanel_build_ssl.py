@@ -11,6 +11,7 @@ import stat
 import tempfile
 from collections.abc import Iterator
 
+import hostpanel_build_config as config
 from hostpanel_build_config import BuildError, owner_ids
 from hostpanel_build_operations import run_command
 
@@ -139,6 +140,12 @@ def _apply_xattrs(path: pathlib.Path, values: dict[str, bytes]) -> None:
         ) from exc
 
 
+def _apply_expected_selinux_context(
+    fd: int, path: pathlib.Path, mode: int
+) -> None:
+    config._apply_expected_selinux_context(fd, path, mode)
+
+
 def _fsync_parent(path: pathlib.Path) -> None:
     flags = os.O_RDONLY | os.O_CLOEXEC
     if hasattr(os, 'O_DIRECTORY'):
@@ -236,6 +243,8 @@ def install_deploy_hook(path: pathlib.Path = DEFAULT_HOOK) -> None:
         os.fchmod(fd, 0o755)
         if existing_xattrs is not None:
             _apply_xattrs(temporary, existing_xattrs)
+        else:
+            _apply_expected_selinux_context(fd, path, 0o755)
         os.fsync(fd)
         descriptor, fd = fd, -1
         os.close(descriptor)
@@ -263,23 +272,76 @@ def install_deploy_hook(path: pathlib.Path = DEFAULT_HOOK) -> None:
 def read_eab_secret(path: pathlib.Path, label: str) -> str:
     uid, gid = owner_ids()
     try:
-        metadata = path.lstat()
+        before = path.lstat()
     except OSError as exc:
         raise BuildError(f'{label} file is missing: {path}') from exc
     if (
-        not stat.S_ISREG(metadata.st_mode)
-        or stat.S_ISLNK(metadata.st_mode)
-        or metadata.st_uid != uid
-        or metadata.st_gid != gid
-        or metadata.st_nlink != 1
-        or stat.S_IMODE(metadata.st_mode) not in {0o400, 0o600}
-        or metadata.st_size < 8
-        or metadata.st_size > 2048
+        not stat.S_ISREG(before.st_mode)
+        or stat.S_ISLNK(before.st_mode)
+        or before.st_uid != uid
+        or before.st_gid != gid
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) not in {0o400, 0o600}
+        or before.st_size < 8
+        or before.st_size > 2048
     ):
         raise BuildError(f'unsafe {label} file: {path}')
+
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
     try:
-        value = path.read_bytes().decode('ascii', errors='strict').strip()
-    except (OSError, UnicodeError) as exc:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise BuildError(f'could not open {label} file safely: {path}') from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            opened.st_dev, opened.st_ino, opened.st_mode,
+            opened.st_uid, opened.st_gid, opened.st_nlink, opened.st_size,
+        ) != (
+            before.st_dev, before.st_ino, before.st_mode,
+            before.st_uid, before.st_gid, before.st_nlink, before.st_size,
+        ):
+            raise BuildError(f'{label} changed before read: {path}')
+        chunks: list[bytes] = []
+        remaining = opened.st_size
+        while remaining:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                raise BuildError(f'{label} ended unexpectedly: {path}')
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            raise BuildError(f'{label} grew during read: {path}')
+        after = os.fstat(descriptor)
+        current = path.lstat()
+        opened_identity = (
+            opened.st_dev, opened.st_ino, opened.st_mode,
+            opened.st_uid, opened.st_gid, opened.st_nlink,
+            opened.st_size, opened.st_mtime_ns,
+        )
+        after_identity = (
+            after.st_dev, after.st_ino, after.st_mode,
+            after.st_uid, after.st_gid, after.st_nlink,
+            after.st_size, after.st_mtime_ns,
+        )
+        current_identity = (
+            current.st_dev, current.st_ino, current.st_mode,
+            current.st_uid, current.st_gid, current.st_nlink,
+            current.st_size, current.st_mtime_ns,
+        )
+        if opened_identity != after_identity or after_identity != current_identity:
+            raise BuildError(f'{label} changed during read: {path}')
+        payload = b''.join(chunks)
+    except OSError as exc:
+        raise BuildError(f'could not read {label} file safely: {path}') from exc
+    finally:
+        os.close(descriptor)
+
+    try:
+        value = payload.decode('ascii', errors='strict').strip()
+    except UnicodeError as exc:
         raise BuildError(f'could not read {label} file safely: {path}') from exc
     if EAB_RE.fullmatch(value) is None:
         raise BuildError(f'{label} contains an invalid value')
@@ -397,9 +459,9 @@ def issue_certificate(
     install_deploy_hook(hook_path)
     run_command(['nginx', '-t'], log_path=log_path)
     if provider == 'zerossl':
-        with zerossl_certbot_config(eab_kid_file, eab_hmac_file, runtime_dir) as config:
+        with zerossl_certbot_config(eab_kid_file, eab_hmac_file, runtime_dir) as config_path:
             run_command(
-                _issue_command(certbot, domain, email, include_www, config),
+                _issue_command(certbot, domain, email, include_www, config_path),
                 log_path=log_path,
             )
     else:
