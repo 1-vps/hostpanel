@@ -96,6 +96,48 @@ if [[ -e "$TOKEN_FILE" ]]; then
   }
 fi
 
+preflight_directory(){
+  local path="$1" expected_mode="$2"
+  if [[ -e "$path" || -L "$path" ]]; then
+    [[ -d "$path" && ! -L "$path" ]] || {
+      echo "Error: unsafe update-agent destination directory: $path" >&2
+      exit 1
+    }
+    [[ "$(stat -c %u:%g:%a -- "$path")" == "0:0:$expected_mode" ]] || {
+      echo "Error: update-agent destination directory has unsafe metadata: $path" >&2
+      exit 1
+    }
+  fi
+}
+
+preflight_file(){
+  local path="$1" expected_mode="$2"
+  if [[ -e "$path" || -L "$path" ]]; then
+    [[ -f "$path" && ! -L "$path" ]] || {
+      echo "Error: unsafe update-agent destination file: $path" >&2
+      exit 1
+    }
+    [[ "$(stat -c %u:%g:%h:%a -- "$path")" == "0:0:1:$expected_mode" ]] || {
+      echo "Error: update-agent destination file has unsafe metadata: $path" >&2
+      exit 1
+    }
+  fi
+}
+
+preflight_directory /opt/hostpanel 755
+preflight_directory /opt/hostpanel/tools 755
+preflight_directory /etc/hostpanel 700
+preflight_directory /var/lib/hostpanel 700
+preflight_directory /etc/systemd/system 755
+preflight_file /opt/hostpanel/tools/hostpanel-update-impl.py 644
+preflight_file /opt/hostpanel/tools/hostpanel-update 755
+for name in "${KEY_FILES[@]}"; do
+  preflight_file "/etc/hostpanel/$name" 644
+done
+preflight_file /etc/hostpanel/update-keyring.json 600
+preflight_file /etc/systemd/system/hostpanel-update.service 644
+preflight_file /etc/systemd/system/hostpanel-update.timer 644
+
 install -d -o root -g root -m 755 /opt/hostpanel/tools
 install -d -o root -g root -m 700 /etc/hostpanel /var/lib/hostpanel
 install -o root -g root -m 644 \
