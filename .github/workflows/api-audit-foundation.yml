@@ -5,26 +5,68 @@ on:
     paths:
       - .github/workflows/api-audit-foundation.yml
       - API-AUDIT-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/hostpanel_api_tokens/**
+      - tools/hostpanel_api_control/**
+      - tools/hostpanel_api_rbac/**
+      - tools/hostpanel_api_http/**
+      - tools/generate_hostpanel_openapi.py
+      - tools/hostpanel_api_worker/**
+      - tools/hostpanel_api_webhooks/**
       - tools/hostpanel_api_audit/**
+      - tests/api_control_test_support.py
+      - tests/http_test_support.py
+      - tests/rbac_test_support.py
+      - tests/worker_test_support.py
+      - tests/webhook_test_support.py
       - tests/audit_test_support.py
-      - tests/test_hostpanel_api_audit_append.py
-      - tests/test_hostpanel_api_audit_query.py
-      - tests/test_hostpanel_api_audit_export.py
-      - tests/test_hostpanel_api_audit_security.py
-      - tests/test_hostpanel_api_audit_retention.py
+      - tests/test_hostpanel_api_token*.py
+      - tests/test_hostpanel_api_control_*.py
+      - tests/test_hostpanel_api_rbac_*.py
+      - tests/test_hostpanel_api_http_*.py
+      - tests/test_hostpanel_api_worker_*.py
+      - tests/test_hostpanel_api_webhook_*.py
+      - tests/test_hostpanel_api_audit_*.py
       - tests/test_api_audit_foundation_workflow.py
   push:
     branches: [main]
     paths:
       - .github/workflows/api-audit-foundation.yml
       - API-AUDIT-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/hostpanel_api_tokens/**
+      - tools/hostpanel_api_control/**
+      - tools/hostpanel_api_rbac/**
+      - tools/hostpanel_api_http/**
+      - tools/generate_hostpanel_openapi.py
+      - tools/hostpanel_api_worker/**
+      - tools/hostpanel_api_webhooks/**
       - tools/hostpanel_api_audit/**
+      - tests/api_control_test_support.py
+      - tests/http_test_support.py
+      - tests/rbac_test_support.py
+      - tests/worker_test_support.py
+      - tests/webhook_test_support.py
       - tests/audit_test_support.py
-      - tests/test_hostpanel_api_audit_append.py
-      - tests/test_hostpanel_api_audit_query.py
-      - tests/test_hostpanel_api_audit_export.py
-      - tests/test_hostpanel_api_audit_security.py
-      - tests/test_hostpanel_api_audit_retention.py
+      - tests/test_hostpanel_api_token*.py
+      - tests/test_hostpanel_api_control_*.py
+      - tests/test_hostpanel_api_rbac_*.py
+      - tests/test_hostpanel_api_http_*.py
+      - tests/test_hostpanel_api_worker_*.py
+      - tests/test_hostpanel_api_webhook_*.py
+      - tests/test_hostpanel_api_audit_*.py
       - tests/test_api_audit_foundation_workflow.py
   workflow_dispatch:
 
@@ -38,7 +80,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -53,9 +95,61 @@ jobs:
           set -euo pipefail
           actual_sha="$(git rev-parse HEAD)"
           [[ "$actual_sha" == "$EXPECTED_SHA" ]] || {
-            printf 'Audit checkout mismatch: expected %s, got %s\n' "$EXPECTED_SHA" "$actual_sha" >&2
+            printf 'Audit checkout mismatch: expected %s, got %s\n' \
+              "$EXPECTED_SHA" "$actual_sha" >&2
             exit 1
           }
+
+      - name: Validate complete release and API prerequisite chain
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/validate_release_manifest.py \
+            tests/test_release_manifest.py \
+            tools/hostpanel_api_tokens/*.py \
+            tools/hostpanel_api_control/*.py \
+            tools/hostpanel_api_rbac/*.py \
+            tools/hostpanel_api_http/*.py \
+            tools/generate_hostpanel_openapi.py \
+            tools/hostpanel_api_worker/*.py \
+            tools/hostpanel_api_webhooks/*.py
+          python3 -m unittest -v \
+            tests.test_release_manifest \
+            tests.test_hostpanel_api_tokens \
+            tests.test_hostpanel_api_token_snapshot \
+            tests.test_hostpanel_api_control_core \
+            tests.test_hostpanel_api_control_outbox \
+            tests.test_hostpanel_api_control_security \
+            tests.test_hostpanel_api_control_concurrency \
+            tests.test_hostpanel_api_rbac_policy \
+            tests.test_hostpanel_api_rbac_impersonation \
+            tests.test_hostpanel_api_rbac_security \
+            tests.test_hostpanel_api_http_routing \
+            tests.test_hostpanel_api_http_security \
+            tests.test_hostpanel_api_http_rate_limit \
+            tests.test_hostpanel_api_http_openapi \
+            tests.test_hostpanel_api_http_wsgi \
+            tests.test_hostpanel_api_worker_registry \
+            tests.test_hostpanel_api_worker_runner \
+            tests.test_hostpanel_api_worker_failures \
+            tests.test_hostpanel_api_worker_service \
+            tests.test_hostpanel_api_worker_compatibility \
+            tests.test_hostpanel_api_webhook_url_policy \
+            tests.test_hostpanel_api_webhook_store \
+            tests.test_hostpanel_api_webhook_delivery \
+            tests.test_hostpanel_api_webhook_security
+          python3 tools/validate_release_manifest.py
+
+      - name: Verify prerequisite OpenAPI is deterministic
+        run: |
+          set -euo pipefail
+          first="$(mktemp)"
+          second="$(mktemp)"
+          trap 'rm -f "$first" "$second"' EXIT
+          python3 tools/generate_hostpanel_openapi.py >"$first"
+          python3 tools/generate_hostpanel_openapi.py >"$second"
+          cmp "$first" "$second"
+          python3 -m json.tool "$first" >/dev/null
 
       - name: Compile audit package and regressions
         run: |
@@ -102,40 +196,67 @@ jobs:
           audit.migrate()
           events = (
               audit.append_event(
-                  tenant_id="tenant-a", actor_kind="service_account",
-                  actor_id="svc-deployer", action="token.revoked",
-                  outcome="succeeded", target_kind="api_token",
-                  target_id="token-a", request_id="request-0001",
+                  tenant_id="tenant-a",
+                  actor_kind="service_account",
+                  actor_id="svc-deployer",
+                  action="token.revoked",
+                  outcome="succeeded",
+                  target_kind="api_token",
+                  target_id="token-a",
+                  request_id="request-0001",
                   source_ip="93.184.216.34",
-                  metadata={"authorization": "Bearer never-store", "scope_count": 4},
-                  retention_class="security", occurred_at=2_000_000_000,
+                  metadata={
+                      "authorization": "Bearer never-store",
+                      "scope_count": 4,
+                  },
+                  retention_class="security",
+                  occurred_at=2_000_000_000,
               ),
               audit.append_event(
-                  tenant_id="tenant-a", actor_kind="support",
-                  actor_id="support-a", effective_principal_id="customer-a",
-                  action="impersonation.action_denied", outcome="denied",
-                  target_kind="site", target_id="site-a",
+                  tenant_id="tenant-a",
+                  actor_kind="support",
+                  actor_id="support-a",
+                  effective_principal_id="customer-a",
+                  action="impersonation.action_denied",
+                  outcome="denied",
+                  target_kind="site",
+                  target_id="site-a",
                   reason_code="target_capability_denied",
                   metadata={"capability": "site:update"},
-                  retention_class="compliance", occurred_at=2_000_000_001,
+                  retention_class="compliance",
+                  occurred_at=2_000_000_001,
               ),
               audit.append_event(
-                  tenant_id="tenant-a", actor_kind="system", actor_id="api-worker",
-                  action="job.failed", outcome="failed", target_kind="job",
-                  target_id="job-a", metadata={"error": "redacted handler failure"},
-                  retention_class="standard", occurred_at=2_000_000_002,
+                  tenant_id="tenant-a",
+                  actor_kind="system",
+                  actor_id="api-worker",
+                  action="job.failed",
+                  outcome="failed",
+                  target_kind="job",
+                  target_id="job-a",
+                  metadata={"error": "redacted handler failure"},
+                  retention_class="standard",
+                  occurred_at=2_000_000_002,
               ),
               audit.append_event(
-                  tenant_id="tenant-a", actor_kind="system", actor_id="webhook-delivery",
-                  action="webhook.delivered", outcome="succeeded",
-                  target_kind="webhook_destination", target_id="destination-a",
-                  metadata={"http_status": 204}, retention_class="standard",
+                  tenant_id="tenant-a",
+                  actor_kind="system",
+                  actor_id="webhook-delivery",
+                  action="webhook.delivered",
+                  outcome="succeeded",
+                  target_kind="webhook_destination",
+                  target_id="destination-a",
+                  metadata={"http_status": 204},
+                  retention_class="standard",
                   occurred_at=2_000_000_003,
               ),
           )
           if audit.verify_chain().event_count != 4:
               raise SystemExit("audit chain count mismatch")
-          found = audit.search_events(tenant_id="tenant-a", action="impersonation.action_denied")
+          found = audit.search_events(
+              tenant_id="tenant-a",
+              action="impersonation.action_denied",
+          )
           if len(found) != 1 or found[0].effective_principal_id != "customer-a":
               raise SystemExit("audit tenant/search contract mismatch")
           jsonl = audit.export_jsonl(events)
@@ -156,10 +277,20 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          source = "\n".join(path.read_text(encoding="utf-8") for path in Path("tools/hostpanel_api_audit").glob("*.py"))
+
+          source = "\n".join(
+              path.read_text(encoding="utf-8")
+              for path in Path("tools/hostpanel_api_audit").glob("*.py")
+          )
           forbidden = (
-              "subprocess", "socket.", "urllib", "requests", "importlib",
-              "os.system", "def delete_event", "def purge",
+              "subprocess",
+              "socket.",
+              "urllib",
+              "requests",
+              "importlib",
+              "os.system",
+              "def delete_event",
+              "def purge",
               "DELETE FROM hp_api_audit_events",
           )
           found = [value for value in forbidden if value in source]
