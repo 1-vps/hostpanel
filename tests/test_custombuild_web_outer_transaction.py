@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import pathlib
 import stat
@@ -117,6 +119,54 @@ class OuterWebBuildTransactionTests(unittest.TestCase):
             )
             restore.assert_not_called()
             self.assertFalse(state_path.exists())
+            self.assertIs(
+                transaction.operations.reconcile_webserver, base_reconcile
+            )
+
+    def test_successful_build_keeps_commit_when_state_cleanup_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = pathlib.Path(directory) / 'state.json'
+            stderr = io.StringIO()
+
+            def helper_command(
+                _python, _helper, action, path, _log, *, mode_file=None
+            ):
+                if action == '--capture':
+                    path.write_text('{}\n', encoding='utf-8')
+                    path.chmod(0o600)
+
+            def base_reconcile(*_args):
+                return None
+
+            def function(*args):
+                transaction.operations.reconcile_webserver(
+                    args[1], args[8], args[5], args[9], args[3]
+                )
+                return 'ok'
+
+            transaction.operations.reconcile_webserver = base_reconcile
+            patches = self.common_patches(state_path)
+            with patches[0], patches[1], patches[2], patches[3], patches[4], \
+                 mock.patch.object(
+                     transaction, '_helper_command', side_effect=helper_command
+                 ), mock.patch.object(
+                     transaction, '_discard_state',
+                     side_effect=BuildError('cleanup failed'),
+                 ), mock.patch.object(
+                     transaction, '_restore_helper_state'
+                 ) as restore_helper, mock.patch.object(
+                     transaction, '_restore_service'
+                 ) as restore_service, contextlib.redirect_stderr(stderr):
+                result = self.invoke(function)
+
+            self.assertEqual(result, 'ok')
+            warning = stderr.getvalue()
+            self.assertIn('web build completed', warning)
+            self.assertIn('cleanup failed', warning)
+            self.assertIn(str(state_path), warning)
+            self.assertTrue(state_path.exists())
+            restore_helper.assert_not_called()
+            restore_service.assert_not_called()
             self.assertIs(
                 transaction.operations.reconcile_webserver, base_reconcile
             )
