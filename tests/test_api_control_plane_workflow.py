@@ -37,6 +37,18 @@ class ApiControlPlaneWorkflowTests(unittest.TestCase):
             ["actions/checkout@11d5960a326750d5838078e36cf38b85af677262"],
         )
 
+    def test_release_and_token_prerequisites_run_first(self) -> None:
+        self.assertIn("Validate release and token prerequisites", self.source)
+        self.assertIn("tools/validate_release_manifest.py", self.source)
+        self.assertIn("tests.test_release_manifest", self.source)
+        self.assertIn("tools/hostpanel_api_tokens/*.py", self.source)
+        self.assertIn("tests.test_hostpanel_api_tokens", self.source)
+        self.assertIn("tests.test_hostpanel_api_token_snapshot", self.source)
+        self.assertLess(
+            self.source.index("Validate release and token prerequisites"),
+            self.source.index("Run control-plane regressions"),
+        )
+
     def test_workflow_runs_complete_control_plane_contract(self) -> None:
         self.assertIn("tools/hostpanel_api_control/*.py", self.source)
         self.assertIn("tests.test_hostpanel_api_control_core", self.source)
@@ -56,6 +68,19 @@ class ApiControlPlaneWorkflowTests(unittest.TestCase):
         for path in (
             ".github/workflows/api-control-plane-foundation.yml",
             "API-CONTROL-PLANE-FOUNDATION.md",
+            "RELEASE-MANIFEST.json",
+            "RELEASE_VERSION",
+            "README.md",
+            "CONFIGURATION.md",
+            "PRODUCTION_READINESS.md",
+            "SHA256SUMS",
+            "SHA256SUMS.sig",
+            "'hostpanel-*-source.tar.gz'",
+            "tools/validate_release_manifest.py",
+            "tests/test_release_manifest.py",
+            "tools/hostpanel_api_tokens/**",
+            "tests/test_hostpanel_api_tokens.py",
+            "tests/test_hostpanel_api_token_snapshot.py",
             "tools/hostpanel_api_control/**",
             "tests/api_control_test_support.py",
             "tests/test_hostpanel_api_control_core.py",
