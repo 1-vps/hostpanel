@@ -394,6 +394,7 @@ def issue_certificate(
     provider = validate_provider(provider)
     require_managed_vhost(domain, available_root, enabled_root)
     certbot = ensure_certbot()
+    install_deploy_hook(hook_path)
     run_command(['nginx', '-t'], log_path=log_path)
     if provider == 'zerossl':
         with zerossl_certbot_config(eab_kid_file, eab_hmac_file, runtime_dir) as config:
@@ -410,7 +411,6 @@ def issue_certificate(
     for name in ('fullchain.pem', 'privkey.pem'):
         if not (lineage / name).is_file():
             raise BuildError(f'Certbot did not install {lineage / name}')
-    install_deploy_hook(hook_path)
     run_command(['nginx', '-t'], log_path=log_path)
     run_command(['systemctl', 'reload', 'nginx.service'], log_path=log_path)
 
