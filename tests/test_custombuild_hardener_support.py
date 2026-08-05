@@ -44,12 +44,18 @@ class HardenerSecondPassSupportTests(unittest.TestCase):
                 HARDENER._git_blob_digest(path.read_bytes()), blob, relative
             )
 
-    def test_import_exposes_the_current_update_installer_pin(self) -> None:
+    def test_import_exposes_current_update_agent_pins(self) -> None:
         self.assertEqual(
             HARDENER.EXPECTED_UPDATE_AGENT_BLOBS[
                 'tools/install-update-agent.sh'
             ],
             HARDENER.EXPECTED_UPDATE_INSTALLER_BLOB,
+        )
+        self.assertEqual(
+            HARDENER.EXPECTED_UPDATE_AGENT_BLOBS[
+                'tools/hostpanel-update-entry.py'
+            ],
+            HARDENER.EXPECTED_UPDATE_ENTRY_BLOB,
         )
 
     def test_driver_changes_trigger_custombuild_validation(self) -> None:
