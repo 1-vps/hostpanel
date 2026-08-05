@@ -19,7 +19,7 @@ RUNTIME_BLOB_OVERRIDES = {
         "5b310214204d47ea5742e27864c543365473eb5b"
     ),
     "tools/hostpanel_build_config.py": (
-        "ed84d4a123b1e2ae519ddc09687b4cd91c045fa2"
+        "ed84d4a1ea156c239fcb49a9ec3379d0917d853c"
     ),
     "tools/hostpanel_build_entry.py": (
         "8c8dea5c91a7c47ca736032e4a97c1848b658fde"
