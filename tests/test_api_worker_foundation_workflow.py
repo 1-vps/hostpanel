@@ -19,11 +19,41 @@ class ApiWorkerFoundationWorkflowTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", self.workflow)
         self.assertNotIn("pull_request_target", self.workflow)
         self.assertNotIn("secrets.", self.workflow)
+        self.assertIn("persist-credentials: false", self.workflow)
         reviewed = "${{ github.event.pull_request.head.sha || github.sha }}"
         self.assertIn(f"ref: {reviewed}", self.workflow)
         self.assertIn(f"EXPECTED_SHA: {reviewed}", self.workflow)
         uses = re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s#]+)", self.workflow)
-        self.assertEqual(uses, ["actions/checkout@11d5960a326750d5838078e36cf38b85af677262"])
+        self.assertEqual(
+            uses,
+            ["actions/checkout@11d5960a326750d5838078e36cf38b85af677262"],
+        )
+
+    def test_complete_api_prerequisite_chain_runs_before_worker(self):
+        step = "Validate complete API prerequisite chain"
+        self.assertIn(step, self.workflow)
+        for phrase in (
+            "tools/validate_release_manifest.py",
+            "tests.test_release_manifest",
+            "tools/hostpanel_api_tokens/*.py",
+            "tests.test_hostpanel_api_tokens",
+            "tools/hostpanel_api_control/*.py",
+            "tests.test_hostpanel_api_control_core",
+            "tools/hostpanel_api_rbac/*.py",
+            "tests.test_hostpanel_api_rbac_policy",
+            "tools/hostpanel_api_http/*.py",
+            "tests.test_hostpanel_api_http_routing",
+            "tests.test_hostpanel_api_http_security",
+            "tests.test_hostpanel_api_http_rate_limit",
+            "tests.test_hostpanel_api_http_openapi",
+            "tests.test_hostpanel_api_http_wsgi",
+            "Verify prerequisite OpenAPI is deterministic",
+        ):
+            self.assertIn(phrase, self.workflow)
+        self.assertLess(
+            self.workflow.index(step),
+            self.workflow.index("Run worker regressions"),
+        )
 
     def test_workflow_runs_all_regressions_and_real_store_integration(self):
         for phrase in (
@@ -42,8 +72,15 @@ class ApiWorkerFoundationWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(phrase, self.workflow)
 
-    def test_path_filters_cover_every_input(self):
+    def test_path_filters_cover_every_layer(self):
         for path in (
+            "RELEASE-MANIFEST.json",
+            "tools/validate_release_manifest.py",
+            "tools/hostpanel_api_tokens/**",
+            "tools/hostpanel_api_control/**",
+            "tools/hostpanel_api_rbac/**",
+            "tools/hostpanel_api_http/**",
+            "tools/generate_hostpanel_openapi.py",
             ".github/workflows/api-worker-foundation.yml",
             "API-WORKER-FOUNDATION.md",
             "tools/hostpanel_api_worker/**",
