@@ -6,6 +6,7 @@ import os
 import pathlib
 import secrets
 import stat
+import sys
 
 import hostpanel_build_operations as operations
 from hostpanel_build_config import BuildError, Platform
@@ -453,10 +454,11 @@ def guarded_execute_build(
         try:
             _discard_state(state_path)
         except Exception as exc:
-            raise BuildError(
-                'web build completed, but transaction state cleanup failed: '
-                f'{exc}; remove {state_path} after inspection'
-            ) from exc
+            print(
+                'Warning: web build completed, but transaction state cleanup '
+                f'failed: {exc}; remove {state_path} after inspection',
+                file=sys.stderr,
+            )
         return result
     finally:
         operations.reconcile_webserver = base_reconcile
