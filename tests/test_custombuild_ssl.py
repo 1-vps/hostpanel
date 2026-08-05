@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import pathlib
 import subprocess
 import sys
@@ -56,6 +57,40 @@ class CustomBuildSslTests(unittest.TestCase):
         (lineage / 'fullchain.pem').write_text('certificate')
         (lineage / 'privkey.pem').write_text('key')
         return available, enabled, live, hook
+
+    def test_managed_vhost_rejects_source_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            available, enabled, _live, _hook = self._certificate_tree(root)
+            source = available / 'example.com'
+            victim = root / 'victim.conf'
+            victim.write_text('server { listen 443 ssl; }\n', encoding='utf-8')
+            source.unlink()
+            source.symlink_to(victim)
+
+            with self.assertRaisesRegex(
+                SSL.BuildError, 'unsafe HostPanel nginx vhost'
+            ):
+                SSL.require_managed_vhost(
+                    'example.com', available, enabled
+                )
+
+    def test_managed_vhost_rejects_hardlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            available, enabled, _live, _hook = self._certificate_tree(root)
+            source = available / 'example.com'
+            victim = root / 'victim.conf'
+            victim.write_text('server { listen 443 ssl; }\n', encoding='utf-8')
+            source.unlink()
+            os.link(victim, source)
+
+            with self.assertRaisesRegex(
+                SSL.BuildError, 'unsafe HostPanel nginx vhost'
+            ):
+                SSL.require_managed_vhost(
+                    'example.com', available, enabled
+                )
 
     def test_letsencrypt_issue_uses_nginx_plugin_and_installs_hook(self):
         with tempfile.TemporaryDirectory() as directory:
