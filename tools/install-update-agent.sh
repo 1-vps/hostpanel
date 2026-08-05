@@ -72,6 +72,8 @@ ENTRY_PAYLOAD = r'''#!/usr/bin/env python3
 """Hardened runtime entrypoint for the signed HostPanel updater."""
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import importlib.util
 import json
 import os
@@ -251,13 +253,99 @@ def atomic_json(path: pathlib.Path, payload: dict[str, object]) -> None:
             raise cleanup_error
 
 
+@contextlib.contextmanager
+def safe_lock(path: pathlib.Path):
+    owner_uid, owner_gid = _IMPL._owner_ids()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as exc:
+        raise UpdateError(
+            f'could not create updater lock directory: {path.parent}'
+        ) from exc
+    _IMPL._validate_direct_parent(path, owner_uid, owner_gid)
+
+    before = None
+    if os.path.lexists(path):
+        try:
+            before = path.lstat()
+        except OSError as exc:
+            raise UpdateError(f'could not inspect updater lock: {path}') from exc
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or stat.S_ISLNK(before.st_mode)
+            or before.st_uid != owner_uid
+            or before.st_gid != owner_gid
+            or before.st_nlink != 1
+            or stat.S_IMODE(before.st_mode) != 0o600
+        ):
+            raise UpdateError(f'unsafe updater lock file: {path}')
+
+    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise UpdateError(f'could not safely open updater lock: {path}') from exc
+    lock = None
+    try:
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != owner_uid
+            or opened.st_gid != owner_gid
+            or opened.st_nlink != 1
+        ):
+            raise UpdateError(f'unsafe updater lock file: {path}')
+        if before is not None and (
+            before.st_dev, before.st_ino
+        ) != (opened.st_dev, opened.st_ino):
+            raise UpdateError(f'updater lock changed before open: {path}')
+        os.fchmod(fd, 0o600)
+        try:
+            current = path.lstat()
+        except OSError as exc:
+            raise UpdateError(f'updater lock path changed: {path}') from exc
+        if (
+            current.st_dev, current.st_ino
+        ) != (opened.st_dev, opened.st_ino):
+            raise UpdateError(f'updater lock path changed: {path}')
+        lock = os.fdopen(fd, 'a+b')
+        fd = -1
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise
+        yield lock
+    finally:
+        if lock is not None:
+            lock.close()
+        elif fd >= 0:
+            os.close(fd)
+
+
 _IMPL.atomic_json = atomic_json
 
 
 def main(argv: list[str] | None = None) -> int:
     _IMPL.os = _UPDATER_OS
     _IMPL.atomic_json = atomic_json
-    return _IMPL.main(argv)
+    args = _IMPL.parse_args(sys.argv[1:] if argv is None else argv)
+    try:
+        with safe_lock(pathlib.Path(args.lock_file)):
+            return _IMPL.run(args)
+    except BlockingIOError:
+        print('Another HostPanel update is already running.', file=sys.stderr)
+        return 75
+    except UpdateError as exc:
+        with contextlib.suppress(Exception):
+            _IMPL.record_status(
+                pathlib.Path(args.status_file),
+                state='error',
+                message=str(exc),
+            )
+        print(f'HostPanel update failed: {exc}', file=sys.stderr)
+        return 1
 
 
 if __name__ == '__main__':
