@@ -1,102 +1,82 @@
 # HostPanel production readiness
 
-This checklist applies to the `3.4.0-hardened-r6` working release after the
-installer pipeline has passed. It does not replace validation on a real systemd
-VM using the intended kernel, firewall, storage, DNS, and mail environment.
+<!-- {{HOSTPANEL_RELEASE_VERSION}}=3.4.1 -->
+<!-- {{HOSTPANEL_SIGNED_BASE}}=3.4.0-hardened-r5 -->
+<!-- {{HOSTPANEL_RELEASE_STATUS}}=deployable-not-publishable -->
+<!-- {{HOSTPANEL_PUBLICATION_ALLOWED}}=false -->
 
-**Reviewed installer overlay:**
+This checklist applies to deployable HostPanel release **3.4.1**, derived from
+signed base **3.4.0-hardened-r5**. It does not itself authorize production
+publication. The authoritative state and current blockers are defined in
+[`RELEASE-MANIFEST.json`](RELEASE-MANIFEST.json).
 
-```text
-9c38d0095563ea33efd14124babfd29556c0da46
-```
+A release is not production-ready until every selected role and recovery path
+passes on the exact reviewed commit, operating system, and infrastructure intended
+for deployment, and all legal terms are approved.
 
-**Installed application version:**
+## Resolve the exact reviewed revision
 
-```text
-3.4.0
-```
-
-## Source and authentication prerequisites
-
-This repository is private. Do not use anonymous `raw.githubusercontent.com`
-commands and do not place a GitHub token in a URL or command-line argument.
-Follow [`SETUP.md`](SETUP.md) to:
-
-- prompt without echo for a short-lived Contents:Read token;
-- fetch bootstrap and validator through the GitHub Contents API from the exact
-  reviewed commit;
-- verify Git blob IDs before either file is executed as root;
-- provide transient Git authentication while the bootstrap fetches the reviewed
-  overlay;
-- remove local and remote authentication state on success and failure.
-
-Required reviewed Git blobs:
-
-```text
-bootstrap-install.sh                  639fae60ddd5bec36f5e3167dd21733a412a69fd
-tools/validate-production-vm.sh      2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9
-```
-
-## Prepare a disposable VM
-
-Use a fresh VM of the exact target operating system. Keep provider-console access
-available and create a provider-level snapshot before installation. Do not begin
-with a production server or a host containing customer data.
+Do not hard-code an old installer overlay from this document. Before each
+acceptance run, record the full 40-character commit SHA approved for that run and
+verify that [`SETUP.md`](SETUP.md) binds every root-executed file to reviewed Git
+objects.
 
 Record:
 
-- operating-system image and kernel;
-- public and private addresses;
-- SSH port and strict host-key fingerprint;
-- panel hostname and administrative CIDR;
-- customer-data filesystem;
-- selected HostPanel roles;
+- exact reviewed commit SHA and required Git blob IDs;
+- signed source archive checksum and signature verification result;
+- target operating-system image and kernel;
+- node roles and enabled services;
+- public/private addresses, panel hostname, SSH port, and administrative CIDR;
 - provider snapshot identifier;
-- reviewed Git commit and verified blob IDs.
+- customer-data filesystem and quota mechanism.
+
+## Prepare a disposable VM
+
+Use a fresh systemd VM of the exact target operating system. Keep provider-console
+access available and create a provider-level snapshot before installation. Do not
+start with a production server or a host containing customer data.
+
+Supported systems and resource minimums come from `RELEASE-MANIFEST.json` and are
+validated by `tools/validate_release_manifest.py`.
 
 ## Install from the pinned commit
 
-Run the authenticated driver from [`SETUP.md`](SETUP.md). It must complete both
-the non-mutating preflight and installation from:
+Follow [`SETUP.md`](SETUP.md) to perform authenticated, blob-verified downloads.
+Run the non-mutating preflight first, then the mutating installation using the
+same full commit SHA, roles, hostname, and network policy.
 
-```text
-HP_REPO_REF=9c38d0095563ea33efd14124babfd29556c0da46
-```
-
-Preserve `/var/log/hostpanel-install.log` and the snapshot path printed by the
-installer. Confirm:
+Preserve `/var/log/hostpanel-install.log` and the root-owned installer snapshot.
+Confirm:
 
 ```bash
-test "$(tr -d '[:space:]' < /opt/hostpanel/VERSION)" = 3.4.0
+test "$(tr -d '[:space:]' < /opt/hostpanel/VERSION)" = 3.4.1
 sudo /opt/hostpanel/venv/bin/python \
   /opt/hostpanel/app/hostpanel-doctor --quiet
 ```
 
 ## Initial validation
 
-The blob-verified validator is downloaded before installation by the setup
-driver. Run:
+Run the blob-verified production validator:
 
 ```bash
 sudo env \
-  HP_EXPECTED_VERSION=3.4.0 \
+  HP_EXPECTED_VERSION=3.4.1 \
   HP_PANEL_HOST=panel.example.com \
   HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
   bash /root/validate-production-vm.sh --check
 ```
 
 Resolve every failure before continuing. Warnings require explicit review even
-when they do not make the validator fail automatically. In particular, an
-installed OpenLiteSpeed binary or `lsws.service` must have an active and valid
-service state; it must not be accepted as an unexplained post-reboot warning.
+when they do not automatically fail validation.
 
 ## Verify reboot persistence
 
-Record the current boot ID only after the initial checks pass:
+Record the current boot ID only after initial checks pass:
 
 ```bash
 sudo env \
-  HP_EXPECTED_VERSION=3.4.0 \
+  HP_EXPECTED_VERSION=3.4.1 \
   HP_PANEL_HOST=panel.example.com \
   HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
   bash /root/validate-production-vm.sh --prepare-reboot
@@ -108,87 +88,91 @@ Reconnect over the configured SSH port and run:
 
 ```bash
 sudo env \
-  HP_EXPECTED_VERSION=3.4.0 \
+  HP_EXPECTED_VERSION=3.4.1 \
   HP_PANEL_HOST=panel.example.com \
   HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
   bash /root/validate-production-vm.sh --post-reboot
 ```
 
-The post-reboot mode requires a changed kernel boot ID before it accepts the
-reboot check.
+The post-reboot mode must verify a changed kernel boot ID and persistent service,
+listener, firewall, certificate, and storage state.
 
 ## End-to-end role tests
 
-The validator confirms local state. Production acceptance also requires tests
-from a separate network:
+The local validator is necessary but insufficient. From a separate network, test:
 
-- panel login and session handling over trusted TLS;
-- customer website creation, TLS issuance, PHP execution, and log access;
-- database creation, authentication, backup, and restore;
-- authoritative DNS delegation and external query resolution;
-- inbound and outbound mail, submission, IMAP, SPF, DKIM, DMARC, and reverse DNS;
+- panel login, session policy, and step-up behavior over trusted TLS;
+- customer site creation, PHP execution, static files, redirects, logs, and TLS;
+- database creation, least-privilege authentication, backup, and restore;
+- authoritative DNS delegation, DNSSEC where enabled, and external resolution;
+- inbound/outbound mail, submission, IMAP, SPF, DKIM, DMARC, reverse DNS, and queue diagnostics;
 - scheduled backup completion and restoration into a disposable account;
 - quota enforcement on the actual customer-data filesystem;
 - SSH reconnection after firewall reload and reboot;
-- public IPv4 and IPv6 behavior where applicable.
+- public IPv4 and IPv6 behavior where applicable;
+- tenant isolation for every enabled UI, CLI, and API workflow.
 
 Do not treat local port checks as proof of external DNS delegation, trusted TLS,
-or mail deliverability.
+mail deliverability, or tenant isolation.
 
-## Destructive recovery tests
+## Backup and destructive recovery
 
-Restore and failure-injection tests must use a disposable VM, a confirmed
-provider snapshot, and separately reviewed root-owned scripts. The validator
-will not invent shell commands or execute arbitrary command strings. Review its
-`--help` output for accepted hook paths and safety gates.
+On a disposable VM with a confirmed provider snapshot:
 
-The manual `vps-acceptance` workflow is suitable only when its protected GitHub
-environment is configured. Before storing any provider secret in that
-environment, configure all of the following controls:
+1. create application, database, mailbox, DNS, and certificate state;
+2. create and verify a backup;
+3. delete or corrupt the test state through reviewed failure-injection tooling;
+4. restore it and verify external behavior, ownership, permissions, and quotas;
+5. exercise installer rollback and provider-snapshot recovery;
+6. verify bounded, redacted evidence and absence of secret material.
 
-- allow deployments from the protected `main` branch only;
-- require at least one independent reviewer before environment secrets are
-  released to a job;
-- prevent the workflow author from approving their own protected deployment;
-- retain branch protection on `main`, including required checks and review;
-- periodically verify these settings because repository code cannot enforce or
-  inspect environment protection rules by itself.
+The validator must never invent shell commands or execute arbitrary command
+strings. Destructive hooks require separately reviewed root-owned scripts.
 
-Dispatch the workflow from `main` and enter the exact integrated 40-character
-commit SHA in `reviewed_commit_sha`. The selected commit—not a historical
-hard-coded release commit—must contain every installer, UI, localization, and
-validation change intended for release.
+## GitHub workflow acceptance
 
-The workflow must:
+Required exact-head workflows must actually execute successfully. Static workflow
+inspection or local test claims are not production evidence.
 
-- require the exact destructive confirmation phrase;
-- require snapshot confirmation;
-- reject dispatches whose workflow ref is not `refs/heads/main`;
-- check out and verify the operator-supplied reviewed commit rather than the
-  dispatch ref;
-- use strict SSH host verification;
-- expose the root password and known-host material only to the steps that need
-  them, never through job-wide `env`;
-- clean transient runner and remote Git authentication;
-- fail when external DNS, trusted HTTPS, or required public listeners do not
-  pass, rather than recording informational probe output;
-- upload only bounded non-sensitive evidence.
+For provider-backed acceptance, configure a protected GitHub environment that:
+
+- allows deployment only from the protected `main` branch;
+- requires an independent reviewer before secrets are released;
+- prevents self-approval by the workflow author;
+- retains branch protection and required checks;
+- limits provider secrets to the smallest required step scope.
+
+The manual workflow must verify the operator-supplied reviewed commit before any
+VPS connection and again before installation, use strict SSH host verification,
+remove transient authentication on every exit path, and upload only bounded
+non-sensitive evidence.
 
 ## Acceptance evidence
 
 Retain:
 
+- exact reviewed commit and root-executed Git blob IDs;
+- signed source archive checksum and signature result;
 - installer and validator logs with secrets redacted;
-- exact Git commit and root-executed blob IDs;
-- signed source archive checksum;
-- VM image, kernel, filesystem, and addresses;
+- VM image, kernel, filesystems, roles, and addresses;
 - pre- and post-reboot boot IDs;
-- doctor, service, listener, and firewall status;
-- external web, DNS, TLS, and mail results;
-- backup, restore, quota, and rollback evidence;
-- provider snapshot identifiers.
+- doctor, service, listener, firewall, and certificate state;
+- external web, DNS, TLS, mail, and API results;
+- tenant-isolation and authorization results;
+- backup, restore, quota, rollback, and provider-snapshot evidence;
+- successful exact-head workflow run identifiers;
+- approved legal and commercial terms.
 
-A release is not production-ready until every selected role and recovery path
-passes on the exact operating system and infrastructure intended for deployment.
+## Publication gate
 
-Current deployable overlay release: **3.4.1** (signed base source: `3.4.0`).
+Do not publish or market release `3.4.1` as production-ready while
+`RELEASE-MANIFEST.json` reports:
+
+```text
+status=deployable-not-publishable
+production_publish_allowed=false
+```
+
+A reviewed change must remove every blocker, update the status to
+`production-ready`, set publication permission to `true`, and pass the release
+consistency workflow plus all production acceptance gates.
