@@ -24,33 +24,49 @@ class UpdateAgentInstallerGuardTests(unittest.TestCase):
             self.assertIn(marker, self.source)
             self.assertLess(self.source.index(marker), self.source.index(root_check))
 
-    def test_configuration_links_and_hardlinks_are_rejected_before_publication(self) -> None:
-        symlink_guard = 'if [[ -L "$CONFIG" ]]; then'
-        link_count_guard = (
-            '[[ "$(stat -c %u:%g:%h -- "$CONFIG")" == 0:0:1 ]]'
+    def test_configuration_links_and_unsafe_modes_are_rejected_before_publication(self) -> None:
+        markers = (
+            'if [[ -L "$CONFIG" ]]; then',
+            '[[ "$(stat -c %u:%g:%h:%a -- "$CONFIG")" == 0:0:1:600 ]]',
         )
         first_mutation = (
             'install -d -o root -g root -m 755 /opt/hostpanel/tools'
         )
-        for marker in (symlink_guard, link_count_guard):
+        for marker in markers:
             self.assertIn(marker, self.source)
             self.assertLess(
                 self.source.index(marker), self.source.index(first_mutation)
             )
 
-    def test_token_links_and_hardlinks_are_rejected_before_publication(self) -> None:
-        symlink_guard = 'if [[ -L "$TOKEN_FILE" ]]; then'
-        link_count_guard = (
-            '[[ "$(stat -c %u:%g:%h -- "$TOKEN_FILE")" == 0:0:1 ]]'
+    def test_token_links_and_unsafe_modes_are_rejected_before_publication(self) -> None:
+        markers = (
+            'if [[ -L "$TOKEN_FILE" ]]; then',
+            '[[ "$(stat -c %u:%g:%h:%a -- "$TOKEN_FILE")" == 0:0:1:600 ]]',
         )
         first_mutation = (
             'install -d -o root -g root -m 755 /opt/hostpanel/tools'
         )
-        for marker in (symlink_guard, link_count_guard):
+        for marker in markers:
             self.assertIn(marker, self.source)
             self.assertLess(
                 self.source.index(marker), self.source.index(first_mutation)
             )
+
+    def test_configuration_migration_is_atomic_and_metadata_preserving(self) -> None:
+        for marker in (
+            "if payload and not payload.endswith(b'\\n'):",
+            "payload += b'HP_UPDATE_KEYRING=/etc/hostpanel/update-keyring.json\\n'",
+            "write_flags |= getattr(os, 'O_NOFOLLOW', 0)",
+            "os.replace(temporary, path)",
+            "os.fsync(directory_fd)",
+            "xattrs = {",
+            "os.setxattr(out, name, value)",
+        ):
+            self.assertIn(marker, self.source)
+        self.assertNotIn(
+            "printf '%s\\n' 'HP_UPDATE_KEYRING=/etc/hostpanel/update-keyring.json' >>\"$CONFIG\"",
+            self.source,
+        )
 
     def test_installer_publishes_separately_reviewed_entry_atomically(self) -> None:
         entry = (ROOT / 'tools' / 'hostpanel-update-entry.py').read_text(
