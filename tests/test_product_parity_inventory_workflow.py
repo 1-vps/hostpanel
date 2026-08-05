@@ -43,12 +43,23 @@ class ProductParityInventoryWorkflowTests(unittest.TestCase):
         self.assertIn('actual_sha="$(git rev-parse HEAD)"', self.source)
         self.assertLess(
             self.source.index("Verify exact checkout"),
-            self.source.index("Inventory the signed application source"),
+            self.source.index("Inventory the manifest-bound signed application source"),
         )
 
-    def test_workflow_runs_real_archive_scan_and_validates_evidence(self) -> None:
-        self.assertIn("python3 tools/audit_product_parity.py", self.source)
-        self.assertIn("--output artifacts/product-parity/inventory.json", self.source)
+    def test_inventory_is_bound_to_validated_release_manifest(self) -> None:
+        self.assertIn("python3 tools/validate_release_manifest.py", self.source)
+        self.assertIn('(root / "RELEASE-MANIFEST.json").read_text', self.source)
+        self.assertIn('manifest.get("source_artifacts")', self.source)
+        self.assertIn('archive_name = artifacts.get("archive")', self.source)
+        self.assertIn('checksum_name = artifacts.get("checksum_manifest")', self.source)
+        self.assertIn('"--archive",', self.source)
+        self.assertIn('"--sha256sums",', self.source)
+        self.assertIn("inventory archive name does not match the release manifest", self.source)
+        self.assertNotIn("archives = sorted(root.glob", self.source)
+        self.assertNotRegex(self.source, r"(?m)^\s*eval\s")
+
+    def test_workflow_runs_tests_and_seals_evidence(self) -> None:
+        self.assertIn("tests.test_release_manifest", self.source)
         self.assertIn("tests.test_product_parity_inventory", self.source)
         self.assertIn("tests.test_product_parity_inventory_workflow", self.source)
         self.assertIn("sha256sum --check inventory.sha256", self.source)
@@ -57,17 +68,20 @@ class ProductParityInventoryWorkflowTests(unittest.TestCase):
             "if find artifacts/product-parity -xdev -type l -print -quit | grep -q .; then",
             self.source,
         )
-        self.assertNotIn("inventory evidence contains a symlink' >&2; exit 1; } || true", self.source)
         self.assertIn("if-no-files-found: error", self.source)
         self.assertIn("retention-days: 14", self.source)
 
     def test_path_filters_cover_every_inventory_input(self) -> None:
         for path in (
             ".github/workflows/product-parity-inventory.yml",
+            "RELEASE-MANIFEST.json",
+            "tools/validate_release_manifest.py",
+            "tests/test_release_manifest.py",
             "tools/audit_product_parity.py",
             "tests/test_product_parity_inventory.py",
             "tests/test_product_parity_inventory_workflow.py",
             "SHA256SUMS",
+            "SHA256SUMS.sig",
             "'hostpanel-*-source.tar.gz'",
         ):
             self.assertGreaterEqual(self.source.count(f"- {path}"), 2, path)
