@@ -1,0 +1,205 @@
+name: API HTTP foundation
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/api-http-foundation.yml
+      - API-HTTP-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/hostpanel_api_tokens/**
+      - tests/test_hostpanel_api_tokens.py
+      - tests/test_hostpanel_api_token_snapshot.py
+      - tools/hostpanel_api_control/**
+      - tests/api_control_test_support.py
+      - tests/test_hostpanel_api_control_core.py
+      - tests/test_hostpanel_api_control_outbox.py
+      - tests/test_hostpanel_api_control_security.py
+      - tests/test_hostpanel_api_control_concurrency.py
+      - tools/hostpanel_api_rbac/**
+      - tests/rbac_test_support.py
+      - tests/test_hostpanel_api_rbac_policy.py
+      - tests/test_hostpanel_api_rbac_impersonation.py
+      - tests/test_hostpanel_api_rbac_security.py
+      - tools/generate_hostpanel_openapi.py
+      - tools/hostpanel_api_http/**
+      - tests/http_test_support.py
+      - tests/test_hostpanel_api_http_routing.py
+      - tests/test_hostpanel_api_http_security.py
+      - tests/test_hostpanel_api_http_security_requests.py
+      - tests/test_hostpanel_api_http_security_cursor.py
+      - tests/test_hostpanel_api_http_rate_limit.py
+      - tests/test_hostpanel_api_http_openapi.py
+      - tests/test_hostpanel_api_http_wsgi.py
+      - tests/test_api_http_foundation_workflow.py
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/api-http-foundation.yml
+      - API-HTTP-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/hostpanel_api_tokens/**
+      - tests/test_hostpanel_api_tokens.py
+      - tests/test_hostpanel_api_token_snapshot.py
+      - tools/hostpanel_api_control/**
+      - tests/api_control_test_support.py
+      - tests/test_hostpanel_api_control_core.py
+      - tests/test_hostpanel_api_control_outbox.py
+      - tests/test_hostpanel_api_control_security.py
+      - tests/test_hostpanel_api_control_concurrency.py
+      - tools/hostpanel_api_rbac/**
+      - tests/rbac_test_support.py
+      - tests/test_hostpanel_api_rbac_policy.py
+      - tests/test_hostpanel_api_rbac_impersonation.py
+      - tests/test_hostpanel_api_rbac_security.py
+      - tools/generate_hostpanel_openapi.py
+      - tools/hostpanel_api_http/**
+      - tests/http_test_support.py
+      - tests/test_hostpanel_api_http_routing.py
+      - tests/test_hostpanel_api_http_security.py
+      - tests/test_hostpanel_api_http_security_requests.py
+      - tests/test_hostpanel_api_http_security_cursor.py
+      - tests/test_hostpanel_api_http_rate_limit.py
+      - tests/test_hostpanel_api_http_openapi.py
+      - tests/test_hostpanel_api_http_wsgi.py
+      - tests/test_api_http_foundation_workflow.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-http-foundation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "$actual_sha" == "$EXPECTED_SHA" ]] || {
+            printf 'API HTTP checkout mismatch: expected %s, got %s\n' \
+              "$EXPECTED_SHA" "$actual_sha" >&2
+            exit 1
+          }
+
+      - name: Validate release, token, control-plane, and RBAC prerequisites
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/validate_release_manifest.py \
+            tests/test_release_manifest.py \
+            tools/hostpanel_api_tokens/*.py \
+            tests/test_hostpanel_api_tokens.py \
+            tests/test_hostpanel_api_token_snapshot.py \
+            tools/hostpanel_api_control/*.py \
+            tests/api_control_test_support.py \
+            tests/test_hostpanel_api_control_core.py \
+            tests/test_hostpanel_api_control_outbox.py \
+            tests/test_hostpanel_api_control_security.py \
+            tests/test_hostpanel_api_control_concurrency.py \
+            tools/hostpanel_api_rbac/*.py \
+            tests/rbac_test_support.py \
+            tests/test_hostpanel_api_rbac_policy.py \
+            tests/test_hostpanel_api_rbac_impersonation.py \
+            tests/test_hostpanel_api_rbac_security.py
+          python3 -m unittest -v \
+            tests.test_release_manifest \
+            tests.test_hostpanel_api_tokens \
+            tests.test_hostpanel_api_token_snapshot \
+            tests.test_hostpanel_api_control_core \
+            tests.test_hostpanel_api_control_outbox \
+            tests.test_hostpanel_api_control_security \
+            tests.test_hostpanel_api_control_concurrency \
+            tests.test_hostpanel_api_rbac_policy \
+            tests.test_hostpanel_api_rbac_impersonation \
+            tests.test_hostpanel_api_rbac_security
+          python3 tools/validate_release_manifest.py
+
+      - name: Compile API HTTP package and tests
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/hostpanel_api_http/*.py \
+            tools/generate_hostpanel_openapi.py \
+            tests/http_test_support.py \
+            tests/test_hostpanel_api_http_routing.py \
+            tests/test_hostpanel_api_http_security.py \
+            tests/test_hostpanel_api_http_security_requests.py \
+            tests/test_hostpanel_api_http_security_cursor.py \
+            tests/test_hostpanel_api_http_rate_limit.py \
+            tests/test_hostpanel_api_http_openapi.py \
+            tests/test_hostpanel_api_http_wsgi.py \
+            tests/test_api_http_foundation_workflow.py
+
+      - name: Run API HTTP regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_hostpanel_api_http_routing \
+            tests.test_hostpanel_api_http_security \
+            tests.test_hostpanel_api_http_rate_limit \
+            tests.test_hostpanel_api_http_openapi \
+            tests.test_hostpanel_api_http_wsgi \
+            tests.test_api_http_foundation_workflow
+
+      - name: Verify generated OpenAPI is deterministic
+        run: |
+          set -euo pipefail
+          first="$(mktemp)"
+          second="$(mktemp)"
+          trap 'rm -f "$first" "$second"' EXIT
+          python3 tools/generate_hostpanel_openapi.py >"$first"
+          python3 tools/generate_hostpanel_openapi.py >"$second"
+          cmp "$first" "$second"
+          python3 -m json.tool "$first" >/dev/null
+
+      - name: Verify SQLite security and concurrency prerequisites
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sqlite3
+          import tempfile
+          from pathlib import Path
+
+          with tempfile.TemporaryDirectory() as directory:
+              database = Path(directory) / "http-rate-limit.db"
+              first = sqlite3.connect(database, timeout=5)
+              second = sqlite3.connect(database, timeout=5)
+              for connection in (first, second):
+                  connection.execute("PRAGMA foreign_keys = ON")
+                  connection.execute("PRAGMA trusted_schema = OFF")
+                  if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+                      raise SystemExit("SQLite foreign keys are unavailable")
+                  trusted = connection.execute("PRAGMA trusted_schema").fetchone()
+                  if trusted is None or trusted[0] != 0:
+                      raise SystemExit("SQLite trusted_schema cannot be disabled")
+              first.execute("CREATE TABLE lock_probe(id INTEGER PRIMARY KEY)")
+              first.commit()
+              second.execute("SELECT count(*) FROM lock_probe").fetchone()
+              first.close()
+              second.close()
+          PY
