@@ -37,6 +37,15 @@ class ApiTokenFoundationWorkflowTests(unittest.TestCase):
             ["actions/checkout@11d5960a326750d5838078e36cf38b85af677262"],
         )
 
+    def test_release_prerequisite_runs_before_token_regressions(self) -> None:
+        self.assertIn("Validate release prerequisite", self.source)
+        self.assertIn("tools/validate_release_manifest.py", self.source)
+        self.assertIn("tests.test_release_manifest", self.source)
+        self.assertLess(
+            self.source.index("Validate release prerequisite"),
+            self.source.index("Run token policy regressions"),
+        )
+
     def test_workflow_runs_complete_package_contract(self) -> None:
         self.assertIn("tools/hostpanel_api_tokens/*.py", self.source)
         self.assertIn("tests.test_hostpanel_api_tokens", self.source)
@@ -53,6 +62,16 @@ class ApiTokenFoundationWorkflowTests(unittest.TestCase):
         for path in (
             ".github/workflows/api-token-foundation.yml",
             "API-TOKEN-FOUNDATION.md",
+            "RELEASE-MANIFEST.json",
+            "RELEASE_VERSION",
+            "README.md",
+            "CONFIGURATION.md",
+            "PRODUCTION_READINESS.md",
+            "SHA256SUMS",
+            "SHA256SUMS.sig",
+            "'hostpanel-*-source.tar.gz'",
+            "tools/validate_release_manifest.py",
+            "tests/test_release_manifest.py",
             "tools/hostpanel_api_tokens/**",
             "tests/test_hostpanel_api_tokens.py",
             "tests/test_hostpanel_api_token_snapshot.py",
