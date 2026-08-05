@@ -263,6 +263,7 @@ class RateLimitDecision:
 class RequestContext:
     request: Request
     request_id: str
+    now: int
     path_parameters: Mapping[str, str]
     query_parameters: Mapping[str, tuple[str, ...]]
     principal: PrincipalContext | None

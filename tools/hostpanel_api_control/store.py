@@ -19,3 +19,7 @@ class ApiControlStore(IdempotencyMixin, JobMixin, OutboxMixin):
 
     def migrate(self) -> None:
         migrate_schema(self.connection)
+
+    def get_job(self, job_id: str):
+        """Read one validated durable job through a public contract."""
+        return self._load_job(self._job_id(job_id))

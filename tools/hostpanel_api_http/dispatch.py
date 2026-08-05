@@ -118,6 +118,7 @@ class DispatchMixin(RouteSelectionMixin):
             context = RequestContext(
                 request=request,
                 request_id=request_id,
+                now=timestamp,
                 path_parameters=path_parameters,
                 query_parameters=query,
                 principal=principal,
