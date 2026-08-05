@@ -162,7 +162,9 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
   }
 
   function pageLinkAllowed(navLink){
-    return Boolean(navLink&&!navLink.hidden&&navLink.getAttribute('aria-hidden')!=='true');
+    if(!navLink||navLink.hidden||navLink.getAttribute('aria-hidden')==='true')return false;
+    const style=window.getComputedStyle(navLink);
+    return style.display!=='none'&&style.visibility!=='hidden'&&style.visibility!=='collapse';
   }
 
   function syncPageLinkVisibility(){
@@ -202,7 +204,7 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
         subtree:true,
         childList:true,
         attributes:true,
-        attributeFilter:['hidden','aria-hidden']
+        attributeFilter:['hidden','aria-hidden','class','style']
       });
     }
     syncPageLinkVisibility();
