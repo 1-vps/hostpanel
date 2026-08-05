@@ -9,6 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 ENTRY = ROOT / 'tools' / 'harden_install.py'
 DRIVER = ROOT / 'tools' / 'harden_install_driver.py'
 UPDATE_INSTALLER = ROOT / 'tools' / 'install-update-agent.sh'
+UPDATE_ENTRY = ROOT / 'tools' / 'hostpanel-update-entry.py'
 BOOTSTRAP = ROOT / 'bootstrap-install.sh'
 
 
@@ -41,13 +42,21 @@ class HardenerDriverPinTests(unittest.TestCase):
             git_blob_sha(DRIVER),
         )
 
-    def test_update_installer_pin_matches_exact_git_blob(self):
+    def test_update_installer_and_entry_pins_match_exact_git_blobs(self):
         self.assertEqual(
             constant(self.entry, 'EXPECTED_UPDATE_INSTALLER_BLOB'),
             git_blob_sha(UPDATE_INSTALLER),
         )
+        self.assertEqual(
+            constant(self.entry, 'EXPECTED_UPDATE_ENTRY_BLOB'),
+            git_blob_sha(UPDATE_ENTRY),
+        )
         self.assertIn(
             'DRIVER.EXPECTED_UPDATE_AGENT_BLOBS["tools/install-update-agent.sh"]',
+            self.entry,
+        )
+        self.assertIn(
+            'DRIVER.EXPECTED_UPDATE_AGENT_BLOBS["tools/hostpanel-update-entry.py"]',
             self.entry,
         )
 
