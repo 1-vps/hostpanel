@@ -1,6 +1,7 @@
 """Hardened loader for optional CustomBuild extras."""
 from __future__ import annotations
 
+import datetime as dt
 import importlib.util
 import os
 import pathlib
@@ -9,6 +10,7 @@ import secrets
 import shutil
 import stat
 import sys
+import tarfile
 import types
 
 _IMPL_PATH = pathlib.Path(__file__).with_name('hostpanel_build_extras_impl.py')
@@ -28,6 +30,7 @@ _ORIGINAL_HARDEN_MONGOD_CONFIG = _IMPL.harden_mongod_config
 _TOP_LEVEL_MONGOD_SECTION = re.compile(
     r"^(?P<quote>['\"]?)(?P<key>net|security)(?P=quote)\s*:(?P<tail>.*)$"
 )
+_SNAPSHOT_NAME = re.compile(r'^[a-z][a-z0-9_-]{0,31}$')
 
 
 def _trusted_varnish_mode(default: str = 'off') -> str:
@@ -193,6 +196,83 @@ def write_atomic_text(path: pathlib.Path, text: str, mode: int = 0o644) -> None:
     write_atomic_bytes(path, text.encode('utf-8'), mode, uid, gid)
 
 
+def _allocate_snapshot(name: str, backup_dir: pathlib.Path) -> tuple[int, pathlib.Path]:
+    if _SNAPSHOT_NAME.fullmatch(name) is None:
+        raise BuildError(f'invalid configuration snapshot name: {name}')
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
+    for _ in range(32):
+        target = backup_dir / f'{name}-{stamp}-{secrets.token_hex(8)}.tar.gz'
+        try:
+            return os.open(target, flags, 0o600), target
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            raise BuildError(
+                f'could not allocate configuration snapshot: {exc}'
+            ) from exc
+    raise BuildError('could not allocate a unique configuration snapshot')
+
+
+def snapshot_paths(name: str, paths, backup_dir: pathlib.Path) -> pathlib.Path | None:
+    existing = [pathlib.Path(path) for path in paths if os.path.lexists(path)]
+    if not existing:
+        return None
+    backup_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    metadata = backup_dir.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or stat.S_IMODE(metadata.st_mode) & 0o077
+    ):
+        raise BuildError(f'unsafe build backup directory: {backup_dir}')
+
+    fd, target = _allocate_snapshot(name, backup_dir)
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            raise BuildError(f'unsafe configuration snapshot: {target}')
+        os.fchown(fd, 0, 0)
+        os.fchmod(fd, 0o600)
+        descriptor, fd = fd, -1
+        with os.fdopen(descriptor, 'wb') as output:
+            with tarfile.open(fileobj=output, mode='w:gz') as archive:
+                for path in existing:
+                    archive.add(
+                        path, arcname=str(path).lstrip('/'), recursive=True
+                    )
+            output.flush()
+            os.fsync(output.fileno())
+        _fsync_parent(target)
+        return target
+    except BaseException as original_error:
+        cleanup_errors: list[str] = []
+        if fd >= 0:
+            descriptor, fd = fd, -1
+            try:
+                os.close(descriptor)
+            except BaseException as exc:
+                cleanup_errors.append(f'close: {exc}')
+        try:
+            target.unlink(missing_ok=True)
+        except BaseException as exc:
+            cleanup_errors.append(f'unlink: {exc}')
+        try:
+            _fsync_parent(target)
+        except BaseException as exc:
+            cleanup_errors.append(f'parent fsync: {exc}')
+        if cleanup_errors:
+            raise BuildError(
+                'configuration snapshot failed and cleanup also failed: '
+                + '; '.join(cleanup_errors)
+            ) from original_error
+        raise
+
+
 def _normalize_mongod_top_level_sections(text: str) -> str:
     lines = text.splitlines()
     indexes: dict[str, list[int]] = {'net': [], 'security': []}
@@ -296,12 +376,13 @@ def validate_varnish(options: dict[str, str], log_path: pathlib.Path) -> None:
 
 for _name in dir(_IMPL):
     if _name not in {
-        'harden_mongod_config', 'validate_varnish',
+        'harden_mongod_config', 'snapshot_paths', 'validate_varnish',
         'write_atomic_bytes', 'write_atomic_text'
     } and _name not in globals():
         globals()[_name] = getattr(_IMPL, _name)
 
 _IMPL.harden_mongod_config = harden_mongod_config
+_IMPL.snapshot_paths = snapshot_paths
 _IMPL.validate_varnish = validate_varnish
 _IMPL.write_atomic_bytes = write_atomic_bytes
 _IMPL.write_atomic_text = write_atomic_text
