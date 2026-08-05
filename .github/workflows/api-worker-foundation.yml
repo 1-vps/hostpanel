@@ -1,0 +1,157 @@
+name: API worker foundation
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/api-worker-foundation.yml
+      - API-WORKER-FOUNDATION.md
+      - tools/hostpanel_api_worker/**
+      - tests/worker_test_support.py
+      - tests/test_hostpanel_api_worker_registry.py
+      - tests/test_hostpanel_api_worker_runner.py
+      - tests/test_hostpanel_api_worker_failures.py
+      - tests/test_hostpanel_api_worker_service.py
+      - tests/test_hostpanel_api_worker_compatibility.py
+      - tests/test_api_worker_foundation_workflow.py
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/api-worker-foundation.yml
+      - API-WORKER-FOUNDATION.md
+      - tools/hostpanel_api_worker/**
+      - tests/worker_test_support.py
+      - tests/test_hostpanel_api_worker_registry.py
+      - tests/test_hostpanel_api_worker_runner.py
+      - tests/test_hostpanel_api_worker_failures.py
+      - tests/test_hostpanel_api_worker_service.py
+      - tests/test_hostpanel_api_worker_compatibility.py
+      - tests/test_api_worker_foundation_workflow.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-worker-foundation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "$actual_sha" == "$EXPECTED_SHA" ]] || {
+            printf 'API worker checkout mismatch: expected %s, got %s\n' \
+              "$EXPECTED_SHA" "$actual_sha" >&2
+            exit 1
+          }
+
+      - name: Compile worker package and regressions
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/hostpanel_api_worker/*.py \
+            tests/worker_test_support.py \
+            tests/test_hostpanel_api_worker_registry.py \
+            tests/test_hostpanel_api_worker_runner.py \
+            tests/test_hostpanel_api_worker_failures.py \
+            tests/test_hostpanel_api_worker_service.py \
+            tests/test_hostpanel_api_worker_compatibility.py \
+            tests/test_api_worker_foundation_workflow.py
+
+      - name: Run worker regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_hostpanel_api_worker_registry \
+            tests.test_hostpanel_api_worker_runner \
+            tests.test_hostpanel_api_worker_failures \
+            tests.test_hostpanel_api_worker_service \
+            tests.test_hostpanel_api_worker_compatibility \
+            tests.test_api_worker_foundation_workflow
+
+      - name: Verify ApiControlStore compatibility and SQLite execution
+        env:
+          PYTHONPATH: tools
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sqlite3
+
+          from hostpanel_api_control import ApiControlStore
+          from hostpanel_api_worker import (
+              HandlerRegistry,
+              REQUIRED_STORE_METHODS,
+              WorkerConfig,
+              WorkerRunner,
+          )
+
+          missing = [
+              name for name in REQUIRED_STORE_METHODS
+              if not callable(getattr(ApiControlStore, name, None))
+          ]
+          if missing:
+              raise SystemExit(f"ApiControlStore worker contract missing: {missing}")
+
+          connection = sqlite3.connect(":memory:")
+          store = ApiControlStore(connection)
+          store.migrate()
+          creation = store.create_job(
+              tenant_id="tenant-a",
+              job_type="test.echo",
+              payload={"value": "ok"},
+              now=2_000_000_000,
+          )
+          ticks = iter(range(2_000_000_000, 2_000_000_100))
+          runner = WorkerRunner(
+              store,
+              HandlerRegistry({
+                  "test.echo": lambda context, payload: {"value": payload["value"]}
+              }),
+              WorkerConfig("worker-ci", lease_seconds=30),
+              clock=lambda: next(ticks),
+          )
+          outcome = runner.run_once()
+          if outcome.status != "succeeded" or outcome.job_id != creation.job.job_id:
+              raise SystemExit(f"unexpected integration outcome: {outcome}")
+          persisted = store.list_jobs(tenant_id="tenant-a")
+          if len(persisted) != 1 or persisted[0].status != "succeeded":
+              raise SystemExit("worker result was not durably persisted")
+          connection.close()
+          PY
+
+      - name: Verify fixed-registry security boundary
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = "\n".join(
+              path.read_text(encoding="utf-8")
+              for path in Path("tools/hostpanel_api_worker").glob("*.py")
+          )
+          forbidden = (
+              "importlib",
+              "subprocess",
+              "os.system",
+              "eval(",
+              "exec(",
+              "serve_forever",
+              "systemctl",
+          )
+          found = [value for value in forbidden if value in source]
+          if found:
+              raise SystemExit(f"worker contains forbidden dynamic/runtime surface: {found}")
+          PY
