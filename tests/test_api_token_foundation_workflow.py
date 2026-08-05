@@ -40,6 +40,7 @@ class ApiTokenFoundationWorkflowTests(unittest.TestCase):
     def test_workflow_runs_complete_package_contract(self) -> None:
         self.assertIn("tools/hostpanel_api_tokens/*.py", self.source)
         self.assertIn("tests.test_hostpanel_api_tokens", self.source)
+        self.assertIn("tests.test_hostpanel_api_token_snapshot", self.source)
         self.assertIn("tests.test_api_token_foundation_workflow", self.source)
         self.assertIn('PRAGMA foreign_keys = ON', self.source)
         self.assertIn('PRAGMA trusted_schema = OFF', self.source)
@@ -54,6 +55,7 @@ class ApiTokenFoundationWorkflowTests(unittest.TestCase):
             "API-TOKEN-FOUNDATION.md",
             "tools/hostpanel_api_tokens/**",
             "tests/test_hostpanel_api_tokens.py",
+            "tests/test_hostpanel_api_token_snapshot.py",
             "tests/test_api_token_foundation_workflow.py",
         ):
             self.assertGreaterEqual(self.source.count(f"- {path}"), 2, path)

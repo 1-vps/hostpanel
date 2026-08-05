@@ -7,6 +7,7 @@ on:
       - API-TOKEN-FOUNDATION.md
       - tools/hostpanel_api_tokens/**
       - tests/test_hostpanel_api_tokens.py
+      - tests/test_hostpanel_api_token_snapshot.py
       - tests/test_api_token_foundation_workflow.py
   push:
     branches: [main]
@@ -15,6 +16,7 @@ on:
       - API-TOKEN-FOUNDATION.md
       - tools/hostpanel_api_tokens/**
       - tests/test_hostpanel_api_tokens.py
+      - tests/test_hostpanel_api_token_snapshot.py
       - tests/test_api_token_foundation_workflow.py
   workflow_dispatch:
 
@@ -54,6 +56,7 @@ jobs:
           python3 -m py_compile \
             tools/hostpanel_api_tokens/*.py \
             tests/test_hostpanel_api_tokens.py \
+            tests/test_hostpanel_api_token_snapshot.py \
             tests/test_api_token_foundation_workflow.py
 
       - name: Run token policy regressions
@@ -61,6 +64,7 @@ jobs:
           set -euo pipefail
           python3 -m unittest -v \
             tests.test_hostpanel_api_tokens \
+            tests.test_hostpanel_api_token_snapshot \
             tests.test_api_token_foundation_workflow
 
       - name: Verify SQLite security prerequisites
