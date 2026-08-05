@@ -5,6 +5,27 @@ on:
     paths:
       - .github/workflows/api-http-foundation.yml
       - API-HTTP-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/hostpanel_api_tokens/**
+      - tests/test_hostpanel_api_tokens.py
+      - tests/test_hostpanel_api_token_snapshot.py
+      - tools/hostpanel_api_control/**
+      - tests/api_control_test_support.py
+      - tests/test_hostpanel_api_control_core.py
+      - tests/test_hostpanel_api_control_outbox.py
+      - tests/test_hostpanel_api_control_security.py
+      - tests/test_hostpanel_api_control_concurrency.py
+      - tools/hostpanel_api_rbac/**
+      - tests/rbac_test_support.py
+      - tests/test_hostpanel_api_rbac_policy.py
+      - tests/test_hostpanel_api_rbac_impersonation.py
+      - tests/test_hostpanel_api_rbac_security.py
       - tools/generate_hostpanel_openapi.py
       - tools/hostpanel_api_http/**
       - tests/http_test_support.py
@@ -21,6 +42,27 @@ on:
     paths:
       - .github/workflows/api-http-foundation.yml
       - API-HTTP-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/hostpanel_api_tokens/**
+      - tests/test_hostpanel_api_tokens.py
+      - tests/test_hostpanel_api_token_snapshot.py
+      - tools/hostpanel_api_control/**
+      - tests/api_control_test_support.py
+      - tests/test_hostpanel_api_control_core.py
+      - tests/test_hostpanel_api_control_outbox.py
+      - tests/test_hostpanel_api_control_security.py
+      - tests/test_hostpanel_api_control_concurrency.py
+      - tools/hostpanel_api_rbac/**
+      - tests/rbac_test_support.py
+      - tests/test_hostpanel_api_rbac_policy.py
+      - tests/test_hostpanel_api_rbac_impersonation.py
+      - tests/test_hostpanel_api_rbac_security.py
       - tools/generate_hostpanel_openapi.py
       - tools/hostpanel_api_http/**
       - tests/http_test_support.py
@@ -44,7 +86,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -63,6 +105,39 @@ jobs:
               "$EXPECTED_SHA" "$actual_sha" >&2
             exit 1
           }
+
+      - name: Validate release, token, control-plane, and RBAC prerequisites
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/validate_release_manifest.py \
+            tests/test_release_manifest.py \
+            tools/hostpanel_api_tokens/*.py \
+            tests/test_hostpanel_api_tokens.py \
+            tests/test_hostpanel_api_token_snapshot.py \
+            tools/hostpanel_api_control/*.py \
+            tests/api_control_test_support.py \
+            tests/test_hostpanel_api_control_core.py \
+            tests/test_hostpanel_api_control_outbox.py \
+            tests/test_hostpanel_api_control_security.py \
+            tests/test_hostpanel_api_control_concurrency.py \
+            tools/hostpanel_api_rbac/*.py \
+            tests/rbac_test_support.py \
+            tests/test_hostpanel_api_rbac_policy.py \
+            tests/test_hostpanel_api_rbac_impersonation.py \
+            tests/test_hostpanel_api_rbac_security.py
+          python3 -m unittest -v \
+            tests.test_release_manifest \
+            tests.test_hostpanel_api_tokens \
+            tests.test_hostpanel_api_token_snapshot \
+            tests.test_hostpanel_api_control_core \
+            tests.test_hostpanel_api_control_outbox \
+            tests.test_hostpanel_api_control_security \
+            tests.test_hostpanel_api_control_concurrency \
+            tests.test_hostpanel_api_rbac_policy \
+            tests.test_hostpanel_api_rbac_impersonation \
+            tests.test_hostpanel_api_rbac_security
+          python3 tools/validate_release_manifest.py
 
       - name: Compile API HTTP package and tests
         run: |
