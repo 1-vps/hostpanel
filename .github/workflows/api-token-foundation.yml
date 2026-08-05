@@ -1,0 +1,84 @@
+name: API token foundation
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/api-token-foundation.yml
+      - API-TOKEN-FOUNDATION.md
+      - tools/hostpanel_api_tokens/**
+      - tests/test_hostpanel_api_tokens.py
+      - tests/test_hostpanel_api_token_snapshot.py
+      - tests/test_api_token_foundation_workflow.py
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/api-token-foundation.yml
+      - API-TOKEN-FOUNDATION.md
+      - tools/hostpanel_api_tokens/**
+      - tests/test_hostpanel_api_tokens.py
+      - tests/test_hostpanel_api_token_snapshot.py
+      - tests/test_api_token_foundation_workflow.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-token-foundation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "$actual_sha" == "$EXPECTED_SHA" ]] || {
+            printf 'API token checkout mismatch: expected %s, got %s\n' \
+              "$EXPECTED_SHA" "$actual_sha" >&2
+            exit 1
+          }
+
+      - name: Compile token package and tests
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/hostpanel_api_tokens/*.py \
+            tests/test_hostpanel_api_tokens.py \
+            tests/test_hostpanel_api_token_snapshot.py \
+            tests/test_api_token_foundation_workflow.py
+
+      - name: Run token policy regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v \
+            tests.test_hostpanel_api_tokens \
+            tests.test_hostpanel_api_token_snapshot \
+            tests.test_api_token_foundation_workflow
+
+      - name: Verify SQLite security prerequisites
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sqlite3
+
+          connection = sqlite3.connect(":memory:")
+          connection.execute("PRAGMA foreign_keys = ON")
+          connection.execute("PRAGMA trusted_schema = OFF")
+          if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+              raise SystemExit("SQLite foreign keys are unavailable")
+          trusted = connection.execute("PRAGMA trusted_schema").fetchone()
+          if trusted is None or trusted[0] != 0:
+              raise SystemExit("SQLite trusted_schema cannot be disabled")
+          PY
