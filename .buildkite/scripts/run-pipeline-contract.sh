@@ -57,4 +57,5 @@ python3 -m unittest -v \
   tests.test_buildkite_agent_token \
   tests.test_buildkite_agent_token_operator \
   tests.test_buildkite_agent_token_revoke \
-  tests.test_buildkite_agent_token_ambiguous_create
+  tests.test_buildkite_agent_token_ambiguous_create \
+  tests.test_buildkite_agent_token_secrets
