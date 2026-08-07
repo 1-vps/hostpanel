@@ -47,4 +47,5 @@ python3 -m unittest -v \
   tests.test_buildkite_private_checkout \
   tests.test_buildkite_ephemeral_service \
   tests.test_buildkite_provisioning_source \
-  tests.test_buildkite_agent_token
+  tests.test_buildkite_agent_token \
+  tests.test_buildkite_agent_token_operator
