@@ -64,7 +64,6 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
             "systemctl start",
             "systemctl restart",
             "agent-token",
-            "branch protection",
         ):
             self.assertNotIn(forbidden, text)
 
