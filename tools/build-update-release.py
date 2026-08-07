@@ -8,6 +8,7 @@ import pathlib
 import runpy
 import sys
 
+from build_update_release_impl import deployable_release_version
 from release_legal import validate_repository
 
 PUBLISH_WORKFLOW_NAME = "Publish signed HostPanel release"

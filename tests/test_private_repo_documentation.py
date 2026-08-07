@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import pathlib
+import re
 import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-REVIEWED_COMMIT = "9c38d0095563ea33efd14124babfd29556c0da46"
-BOOTSTRAP_BLOB = "639fae60ddd5bec36f5e3167dd21733a412a69fd"
-VALIDATOR_BLOB = "2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9"
+AUTO_COMMIT = "1a86d380e7ebab287c767d183013b599cb116f7f"
+AUTO_BLOB = "db23963e101b9194994da2ff8077b40a6b1cb99c"
+PRODUCT_COMMIT = "755dcd5e47b7c82404b267e8df4dec27626fe341"
 DOC_PATHS = (
     ROOT / "README.md",
     ROOT / "SETUP.md",
@@ -18,60 +19,60 @@ DOC_PATHS = (
 class PrivateRepositoryDocumentationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.docs = {
-            path.name: path.read_text(encoding="utf-8")
-            for path in DOC_PATHS
-        }
+        cls.docs = {path.name: path.read_text(encoding="utf-8") for path in DOC_PATHS}
 
     def test_private_docs_do_not_use_anonymous_raw_downloads(self) -> None:
         for name, text in self.docs.items():
             with self.subTest(document=name):
-                self.assertNotIn(
-                    "raw.githubusercontent.com/1-vps/hostpanel",
-                    text,
-                )
-                self.assertNotIn("secretless QEMU", text)
-                self.assertNotIn("no GitHub secrets", text)
+                self.assertNotIn("raw.githubusercontent.com/1-vps/hostpanel", text)
+                self.assertNotIn("?ref=main", text)
 
-    def test_all_docs_use_current_release_identifiers(self) -> None:
+    def test_all_docs_reference_current_deployable_version(self) -> None:
         for name, text in self.docs.items():
             with self.subTest(document=name):
-                self.assertIn(REVIEWED_COMMIT, text)
                 self.assertIn("3.4.1", text)
 
-    def test_setup_fetches_exact_private_objects(self) -> None:
+    def test_setup_documents_exact_automatic_installer(self) -> None:
         setup = self.docs["SETUP.md"]
-        self.assertIn("https://api.github.com/repos/1-vps/hostpanel", setup)
-        self.assertIn("application/vnd.github.raw+json", setup)
-        self.assertIn("GitHub Contents:Read token", setup)
-        self.assertIn(BOOTSTRAP_BLOB, setup)
-        self.assertIn(VALIDATOR_BLOB, setup)
-        self.assertIn("git hash-object /root/bootstrap-install.sh", setup)
-        self.assertIn("git hash-object /root/validate-production-vm.sh", setup)
+        self.assertIn("`auto-install.sh` is the only documented HostPanel installation entry point", setup)
+        self.assertIn(AUTO_COMMIT, setup)
+        self.assertIn(AUTO_BLOB, setup)
+        self.assertIn("authenticated checkout or", setup)
+        self.assertIn("reviewed file transfer", setup)
+        self.assertIn("Do not execute a moving `main` branch as root", setup)
+        self.assertNotIn("quick-install.sh", setup)
+        self.assertNotIn("install-one-line.sh", setup)
 
-    def test_setup_uses_transient_git_authentication(self) -> None:
+    def test_setup_documents_bounded_private_authentication(self) -> None:
         setup = self.docs["SETUP.md"]
-        self.assertIn("export GIT_CONFIG_COUNT=1", setup)
-        self.assertIn("http.https://github.com/.extraheader", setup)
-        self.assertIn("export GIT_TERMINAL_PROMPT=0", setup)
-        self.assertIn("trap cleanup_auth EXIT", setup)
-        self.assertIn("unset GH_READ_TOKEN GIT_AUTH_HEADER", setup)
-        self.assertIn(
-            "unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT",
-            setup,
-        )
+        self.assertIn("Contents: Read-only", setup)
+        self.assertIn("HP_GITHUB_TOKEN_FILE", setup)
+        self.assertIn("HP_GITHUB_TOKEN_FD=3", setup)
+        self.assertIn("root-owned", setup)
+        self.assertRegex(setup, re.compile(r"mode `0400` or\s+`0600`"))
+        self.assertIn("not placed in", setup)
+        self.assertIn("URL", setup)
+        self.assertIn("normal command argument", setup)
 
-    def test_configuration_treats_encoded_header_as_secret(self) -> None:
+    def test_configuration_matches_current_immutable_chain(self) -> None:
         configuration = self.docs["CONFIGURATION.md"]
-        self.assertIn("Treat `GIT_CONFIG_VALUE_0` as a secret", configuration)
+        self.assertIn(AUTO_COMMIT, configuration)
+        self.assertIn(AUTO_BLOB, configuration)
+        self.assertIn(PRODUCT_COMMIT, configuration)
         self.assertIn("Contents: Read-only", configuration)
-        self.assertIn("HP_EXPECTED_VERSION=3.4.1", configuration)
+        self.assertIn("Operators do not select a moving `HP_REPO_REF`", configuration)
+        self.assertNotIn("9c38d0095563ea33efd14124babfd29556c0da46", configuration)
+        self.assertNotIn("3.4.0-hardened-r6", configuration)
 
-    def test_production_guide_requires_blob_evidence(self) -> None:
+    def test_production_guide_matches_current_immutable_chain(self) -> None:
         production = self.docs["PRODUCTION_READINESS.md"]
-        self.assertIn(BOOTSTRAP_BLOB, production)
-        self.assertIn(VALIDATOR_BLOB, production)
+        self.assertIn(AUTO_COMMIT, production)
+        self.assertIn(AUTO_BLOB, production)
+        self.assertIn(PRODUCT_COMMIT, production)
+        self.assertIn("HP_EXPECTED_VERSION=3.4.1", production)
         self.assertIn("exact Git commit and root-executed blob IDs", production)
+        self.assertNotIn("9c38d0095563ea33efd14124babfd29556c0da46", production)
+        self.assertNotIn("HP_EXPECTED_VERSION=3.4.0", production)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+/.buildkite/ @1-vps
+/BUILDKITE.md @1-vps
+/tests/test_buildkite_pipeline.py @1-vps
+/tests/test_buildkite_prebootstrap_policy.py @1-vps
+/tests/test_buildkite_ephemeral_service.py @1-vps
+/tests/test_buildkite_checkout_policy.py @1-vps
+/tests/test_buildkite_private_checkout.py @1-vps
+/tests/test_buildkite_provisioning_source.py @1-vps
+/tests/test_buildkite_agent_token.py @1-vps
