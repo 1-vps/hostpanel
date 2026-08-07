@@ -18,6 +18,7 @@ EXPECTED_SIGNED_FIELDS = frozenset(
     {"command", "env", "matrix", "plugins", "repository_url"}
 )
 WEBHOOK_PATH_RE = re.compile(r"^/deliver/[A-Za-z0-9._~-]+$")
+BASE64URL_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 REQUIRED_PIPELINE_STATE_FIELDS = frozenset(
     {
         "id",
@@ -79,17 +80,30 @@ def verify_webhook_url(value: object) -> None:
         raise VerificationError("Buildkite webhook URL path is unexpected")
 
 
+def decode_base64url_segment(value: str, label: str) -> bytes:
+    if BASE64URL_SEGMENT_RE.fullmatch(value) is None:
+        raise VerificationError(f"{label} contains invalid base64url characters")
+    padded = value + "=" * (-len(value) % 4)
+    try:
+        return base64.b64decode(padded, altchars=b"-_", validate=True)
+    except (ValueError, TypeError, base64.binascii.Error) as exc:
+        raise VerificationError(f"{label} is invalid base64url") from exc
+
+
 def decode_jws_header(value: str) -> dict:
     parts = value.split(".")
     if len(parts) != 3 or parts[1] != "" or not parts[0] or not parts[2]:
         raise VerificationError("static bootstrap signature is not detached compact JWS")
-    encoded = parts[0] + "=" * (-len(parts[0]) % 4)
+    header_bytes = decode_base64url_segment(parts[0], "static bootstrap JWS header")
+    decode_base64url_segment(parts[2], "static bootstrap JWS signature")
     try:
-        header = json.loads(base64.urlsafe_b64decode(encoded).decode("utf-8"))
-    except Exception as exc:
-        raise VerificationError("static bootstrap JWS header is invalid") from exc
+        header = json.loads(header_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise VerificationError("static bootstrap JWS header is invalid JSON") from exc
     if not isinstance(header, dict):
         raise VerificationError("static bootstrap JWS header is not an object")
+    if set(header) != {"alg", "kid"}:
+        raise VerificationError("static bootstrap JWS header contains unreviewed parameters")
     return header
 
 
