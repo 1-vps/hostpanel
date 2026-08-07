@@ -106,6 +106,9 @@ def verify_persisted_core(
     provider = payload.get("provider")
     if not isinstance(provider, dict):
         raise base.OperatorError("pipeline provider is unavailable")
+    settings = provider.get("settings")
+    if not isinstance(settings, dict) or settings.get("repository") != base.GITHUB_REPOSITORY:
+        raise base.OperatorError("GitHub provider repository is not 1-vps/hostpanel")
     state = base.load_state_verifier()
     webhook = provider.get("webhook_url")
     if require_webhook or webhook not in (None, ""):
