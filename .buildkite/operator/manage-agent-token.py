@@ -19,12 +19,16 @@ REQUIRED_SCOPES = frozenset({"read_clusters", "write_clusters"})
 WORKER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 ORG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 DESCRIPTION_PREFIX = "hostpanel-worker:"
-MIN_TTL_MINUTES = 5
+MIN_TTL_MINUTES = 15
 MAX_TTL_MINUTES = 60
 
 
 class OperatorError(RuntimeError):
     pass
+
+
+def fail(message: str) -> "NoReturn":
+    raise OperatorError(message)
 
 
 def canonical_uuid(value: str, label: str) -> str:
@@ -132,11 +136,17 @@ def token_endpoint(cluster_id: str, token_id: str | None = None) -> str:
 
 
 def list_tokens(cluster_id: str) -> list[dict]:
-    payload = parse_json(run_bk(["api", token_endpoint(cluster_id)]), "agent token list")
+    endpoint = token_endpoint(cluster_id) + "?per_page=100"
+    payload = parse_json(run_bk(["api", endpoint]), "agent token list")
     if not isinstance(payload, list):
         raise OperatorError("agent token list returned an unexpected JSON shape")
     if not all(isinstance(item, dict) for item in payload):
         raise OperatorError("agent token list contains a non-object item")
+    if len(payload) >= 100:
+        raise OperatorError(
+            "agent token inventory reached the 100-item pagination bound; "
+            "cannot prove inventory completeness"
+        )
     return payload
 
 
@@ -211,8 +221,14 @@ def validate_create_response(
     if abs((actual_expiry - expires_at).total_seconds()) > 1:
         raise OperatorError("created token expiry mismatch")
     token = payload.get("token")
-    if not isinstance(token, str) or not token.startswith("bkct_") or token.strip() != token or len(token) <= 5:
-        raise OperatorError("created token value has an unexpected format")
+    if (
+        not isinstance(token, str)
+        or token.strip() != token
+        or not token.isascii()
+        or any(ch.isspace() for ch in token)
+        or not (20 <= len(token) <= 512)
+    ):
+        raise OperatorError("created token value has an unexpected opaque format")
     return token_id, token
 
 
@@ -300,7 +316,11 @@ def create_token(args: argparse.Namespace) -> int:
                 raise OperatorError(
                     f"token create follow-up failed and automatic revocation/absence verification also failed; revoke token id {token_id} manually"
                 ) from exc
-        raise
+            raise
+        raise OperatorError(
+            "token create returned success but its token id could not be safely recovered; "
+            f"inspect cluster tokens for description {description!r} and revoke any match before provisioning"
+        ) from exc
 
     print("Created short-lived Buildkite agent token without printing its value.")
     print(f"token_id={token_id}")
