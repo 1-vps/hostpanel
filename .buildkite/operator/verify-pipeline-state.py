@@ -18,6 +18,27 @@ EXPECTED_SIGNED_FIELDS = frozenset(
     {"command", "env", "matrix", "plugins", "repository_url"}
 )
 WEBHOOK_PATH_RE = re.compile(r"^/deliver/[A-Za-z0-9._~-]+$")
+REQUIRED_PIPELINE_STATE_FIELDS = frozenset(
+    {
+        "name",
+        "slug",
+        "repository",
+        "cluster_id",
+        "visibility",
+        "env",
+        "branch_configuration",
+        "default_branch",
+        "allow_rebuilds",
+        "archived_at",
+        "pipeline_template_uuid",
+        "skip_queued_branch_builds",
+        "skip_queued_branch_builds_filter",
+        "cancel_running_branch_builds",
+        "cancel_running_branch_builds_filter",
+        "provider",
+        "configuration",
+    }
+)
 
 
 class VerificationError(RuntimeError):
@@ -32,8 +53,8 @@ def canonical_uuid(value: object, label: str) -> str:
     except ValueError as exc:
         raise VerificationError(f"{label} is not a UUID") from exc
     canonical = str(parsed)
-    if value.lower() != canonical:
-        raise VerificationError(f"{label} is not in canonical UUID form")
+    if value != canonical:
+        raise VerificationError(f"{label} is not in canonical lowercase UUID form")
     return canonical
 
 
@@ -111,52 +132,58 @@ def verify_pipeline_state(
 ) -> None:
     if not isinstance(pipeline, dict):
         raise VerificationError("pipeline response is not a JSON object")
-    if pipeline.get("name") != EXPECTED_NAME or pipeline.get("slug") != EXPECTED_SLUG:
+    missing = sorted(REQUIRED_PIPELINE_STATE_FIELDS.difference(pipeline))
+    if missing:
+        raise VerificationError("pipeline response is missing required state fields: " + ", ".join(missing))
+    expected_cluster_id = canonical_uuid(expected_cluster_id, "expected cluster id")
+    if pipeline["name"] != EXPECTED_NAME or pipeline["slug"] != EXPECTED_SLUG:
         raise VerificationError("pipeline name or slug mismatch")
-    if pipeline.get("repository") != EXPECTED_REPOSITORY:
+    if pipeline["repository"] != EXPECTED_REPOSITORY:
         raise VerificationError("pipeline repository mismatch")
-    actual_cluster_id = canonical_uuid(pipeline.get("cluster_id"), "pipeline cluster id")
+    actual_cluster_id = canonical_uuid(pipeline["cluster_id"], "pipeline cluster id")
     if actual_cluster_id != expected_cluster_id:
         raise VerificationError("pipeline cluster id mismatch")
-    if pipeline.get("visibility") != "private":
+    if pipeline["visibility"] != "private":
         raise VerificationError("pipeline visibility must remain private")
-    if pipeline.get("env") not in ({}, None):
+    if pipeline["env"] not in ({}, None):
         raise VerificationError("pipeline-level environment must be empty")
-    if pipeline.get("branch_configuration") != "main":
+    if pipeline["branch_configuration"] != "main":
         raise VerificationError("pipeline branch configuration must be main")
-    if pipeline.get("default_branch") != "main":
+    if pipeline["default_branch"] != "main":
         raise VerificationError("pipeline default branch must be main")
-    if pipeline.get("allow_rebuilds") is not False:
+    if pipeline["allow_rebuilds"] is not False:
         raise VerificationError("pipeline rebuilds must be disabled")
-    if pipeline.get("archived_at") is not None:
+    if pipeline["archived_at"] is not None:
         raise VerificationError("pipeline must not be archived")
-    if pipeline.get("pipeline_template_uuid") is not None:
+    if pipeline["pipeline_template_uuid"] is not None:
         raise VerificationError("signed HostPanel pipeline must not use a pipeline template")
-    if pipeline.get("skip_queued_branch_builds") is not False:
+    if pipeline["skip_queued_branch_builds"] is not False:
         raise VerificationError("skip_queued_branch_builds must be false")
-    if pipeline.get("skip_queued_branch_builds_filter") is not None:
+    if pipeline["skip_queued_branch_builds_filter"] is not None:
         raise VerificationError("skip_queued_branch_builds_filter must be null")
-    if pipeline.get("cancel_running_branch_builds") is not False:
+    if pipeline["cancel_running_branch_builds"] is not False:
         raise VerificationError("cancel_running_branch_builds must be false")
-    if pipeline.get("cancel_running_branch_builds_filter") is not None:
+    if pipeline["cancel_running_branch_builds_filter"] is not None:
         raise VerificationError("cancel_running_branch_builds_filter must be null")
 
-    provider = pipeline.get("provider")
+    provider = pipeline["provider"]
     if not isinstance(provider, dict) or provider.get("id") != "github":
         raise VerificationError("pipeline is not using the GitHub provider")
-    settings = provider.get("settings")
+    if "settings" not in provider or "webhook_url" not in provider:
+        raise VerificationError("pipeline GitHub provider response is incomplete")
+    settings = provider["settings"]
     if not isinstance(settings, dict):
         raise VerificationError("pipeline GitHub provider settings are unavailable")
     if settings.get("repository") != EXPECTED_PROVIDER_REPOSITORY:
         raise VerificationError("GitHub provider repository is not 1-vps/hostpanel")
 
-    webhook = provider.get("webhook_url")
+    webhook = provider["webhook_url"]
     if require_webhook:
         verify_webhook_url(webhook)
     elif webhook not in (None, ""):
         verify_webhook_url(webhook)
 
-    configuration = pipeline.get("configuration")
+    configuration = pipeline["configuration"]
     if not isinstance(configuration, str):
         raise VerificationError("pipeline YAML configuration is unavailable")
     try:
