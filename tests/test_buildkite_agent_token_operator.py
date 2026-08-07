@@ -173,15 +173,24 @@ class BuildkiteAgentTokenOperatorTests(unittest.TestCase):
         ):
             self.assertIn(expected, source)
 
-    def test_revoke_verifies_token_disappears_before_local_file_cleanup(self) -> None:
+    def test_explicit_revoke_verifies_absence_before_local_file_cleanup(self) -> None:
         source = TOKEN_TOOL.read_text(encoding="utf-8")
-        delete = source.index('run_bk(["api", "--method", "DELETE", token_endpoint(cluster_id, token_id)]')
-        relist = source.index("remaining = list_tokens(cluster_id)", delete)
-        absence = source.index("revoked token id is still present", relist)
+        revoke_start = source.index("def revoke_token")
+        delete = source.index('run_bk(["api", "--method", "DELETE", token_endpoint(cluster_id, token_id)]', revoke_start)
+        absence = source.index("if not token_is_absent(cluster_id, token_id)", delete)
         cleanup = source.index("safe_remove_token_file(token_file)", absence)
-        self.assertLess(delete, relist)
-        self.assertLess(relist, absence)
+        self.assertLess(delete, absence)
         self.assertLess(absence, cleanup)
+
+    def test_automatic_create_rollback_also_verifies_absence(self) -> None:
+        source = TOKEN_TOOL.read_text(encoding="utf-8")
+        rollback_start = source.index("def revoke_created_token")
+        delete = source.index('run_bk(["api", "--method", "DELETE", token_endpoint(cluster_id, token_id)]', rollback_start)
+        absence = source.index("return token_is_absent(cluster_id, token_id)", delete)
+        create_start = source.index("def create_token")
+        failure = source.index("automatic revocation/absence verification also failed", create_start)
+        self.assertLess(delete, absence)
+        self.assertGreater(failure, create_start)
 
     def test_pipeline_contract_and_codeowners_cover_operator(self) -> None:
         self.assertIn("tests.test_buildkite_agent_token_operator", CONTRACT.read_text(encoding="utf-8"))
