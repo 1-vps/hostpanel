@@ -60,6 +60,31 @@ def queue_payload() -> list[dict]:
     ]
 
 
+def activation_identity() -> module.ActivationIdentity:
+    return module.ActivationIdentity(
+        pipeline_uuid=PIPELINE_ID,
+        cluster_uuid=CLUSTER_ID,
+        upload_queue_uuid=QUEUE_IDS["hostpanel-upload"],
+        ci_queue_uuid=QUEUE_IDS["hostpanel-ci"],
+        qemu_queue_uuid=QUEUE_IDS["hostpanel-qemu"],
+    )
+
+
+def identity_args() -> list[str]:
+    return [
+        "--pipeline-id",
+        PIPELINE_ID,
+        "--cluster-id",
+        CLUSTER_ID,
+        "--upload-queue-id",
+        QUEUE_IDS["hostpanel-upload"],
+        "--ci-queue-id",
+        QUEUE_IDS["hostpanel-ci"],
+        "--qemu-queue-id",
+        QUEUE_IDS["hostpanel-qemu"],
+    ]
+
+
 def pipeline_fixture(*, active: bool = False, signed: bool = False, webhook: bool = False) -> dict:
     step = yaml.safe_load(module.STATIC_BOOTSTRAP)["steps"][0]
     if signed:
@@ -117,15 +142,22 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
         self.assertIn("MANDATORY STOP", result.stdout)
         self.assertNotIn("bk CLI is unavailable", result.stderr)
 
-    def test_activation_plan_is_read_only_and_slug_pinned(self) -> None:
-        result = self.run_wrapper("--org", "example-org", "--enable-webhook", "hostpanel")
+    def test_activation_plan_is_read_only_but_requires_exact_created_ids(self) -> None:
+        result = self.run_wrapper(
+            "--org", "example-org", "--enable-webhook", "hostpanel", *identity_args()
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("activation plan", result.stdout)
-        self.assertIn("Cryptographic signature validity is enforced by Buildkite agents", result.stdout)
-        bad = self.run_wrapper("--org", "example-org", "--enable-webhook", "other")
+        self.assertIn(f"pipeline_uuid={PIPELINE_ID}", result.stdout)
+        self.assertIn(f"cluster_uuid={CLUSTER_ID}", result.stdout)
+        missing = self.run_wrapper("--org", "example-org", "--enable-webhook", "hostpanel")
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("activation requires exact created resource UUIDs", missing.stderr)
+        bad = self.run_wrapper(
+            "--org", "example-org", "--enable-webhook", "other", *identity_args()
+        )
         self.assertNotEqual(bad.returncode, 0)
         self.assertIn("reviewed hostpanel pipeline slug", bad.stderr)
-        self.assertNotIn("bk CLI is unavailable", bad.stderr)
 
     def test_apply_confirmation_gates_precede_bk(self) -> None:
         create = self.run_wrapper("--org", "example-org", "--apply")
@@ -133,10 +165,21 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
         self.assertIn("--confirm-create", create.stderr)
         self.assertNotIn("bk CLI is unavailable", create.stderr)
         activate = self.run_wrapper(
-            "--org", "example-org", "--enable-webhook", "hostpanel", "--apply"
+            "--org",
+            "example-org",
+            "--enable-webhook",
+            "hostpanel",
+            *identity_args(),
+            "--apply",
         )
         self.assertNotEqual(activate.returncode, 0)
         self.assertIn("--confirm-static-bootstrap-signed", activate.stderr)
+        self.assertNotIn("bk CLI is unavailable", activate.stderr)
+
+    def test_resource_ids_are_rejected_in_creation_mode(self) -> None:
+        result = self.run_wrapper("--org", "example-org", "--pipeline-id", PIPELINE_ID)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("only valid with --enable-webhook", result.stderr)
 
     def test_pipeline_payload_pins_all_lifecycle_controls(self) -> None:
         payload = json.loads(module.pipeline_payload(CLUSTER_ID))
@@ -313,7 +356,7 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
         self.assertIn("No automatic cleanup was attempted", stderr.getvalue())
         self.assertFalse(any("DELETE" in call for call in calls))
 
-    def test_activation_orders_webhook_before_active_patch_and_reverifies(self) -> None:
+    def test_activation_orders_webhook_before_active_patch_and_reverifies_bound_ids(self) -> None:
         calls: list[list[str]] = []
         state = {"webhook": False, "active": False}
 
@@ -347,15 +390,51 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
             raise AssertionError(f"unexpected fake bk call: {args}")
 
         with mock.patch.object(module, "run_bk", side_effect=fake):
-            module.activate_control_plane("example-org")
+            module.activate_control_plane("example-org", activation_identity())
         webhook_index = calls.index(["api", "--method", "POST", "/pipelines/hostpanel/webhook"])
         patch_index = next(i for i, call in enumerate(calls) if call[:4] == ["api", "--method", "PATCH", "/pipelines/hostpanel"])
         self.assertLess(webhook_index, patch_index)
         self.assertTrue(state["active"])
 
+    def test_activation_rejects_pipeline_cluster_or_queue_rebind(self) -> None:
+        for mutation in ("pipeline", "cluster", "queue"):
+            calls: list[list[str]] = []
+
+            def fake(args: list[str], mutation=mutation) -> str:
+                calls.append(args)
+                if args[:2] == ["auth", "switch"] or args[:2] == ["auth", "status"]:
+                    return "{}"
+                if args == ["api", "/access-token"]:
+                    return access_token()
+                if args[:2] == ["pipeline", "view"]:
+                    payload = pipeline_fixture(signed=True)
+                    if mutation == "pipeline":
+                        payload["id"] = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+                    if mutation == "cluster":
+                        payload["cluster_id"] = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+                    return json.dumps(payload)
+                if args[:2] == ["cluster", "view"]:
+                    return json.dumps({"id": CLUSTER_ID, "name": "HostPanel", "default_queue_id": None})
+                if args[:2] == ["queue", "list"]:
+                    queues = queue_payload()
+                    if mutation == "queue":
+                        queues[0]["id"] = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+                    return json.dumps(queues)
+                if args[0] == "api" and args[1].startswith("/organizations/example-org/agents?"):
+                    return "[]"
+                if args[:2] == ["build", "list"]:
+                    return "[]"
+                raise AssertionError(f"unexpected fake bk call: {args}")
+
+            with self.subTest(mutation=mutation), mock.patch.object(module, "run_bk", side_effect=fake):
+                with self.assertRaises(module.OperatorError):
+                    module.activate_control_plane("example-org", activation_identity())
+            self.assertFalse(any(call[:4] == ["api", "--method", "PATCH", "/pipelines/hostpanel"] for call in calls))
+
     def test_pipeline_verification_binds_provider_repo_template_webhook_and_signed_fields(self) -> None:
         module.verify_pipeline(
             json.dumps(pipeline_fixture(signed=True, webhook=True)),
+            pipeline_id=PIPELINE_ID,
             cluster_id=CLUSTER_ID,
             expected_provider=module.QUARANTINE_PROVIDER,
             require_signature=True,
@@ -375,6 +454,7 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
             with self.assertRaises(module.OperatorError):
                 module.verify_pipeline(
                     json.dumps(payload),
+                    pipeline_id=PIPELINE_ID,
                     cluster_id=CLUSTER_ID,
                     expected_provider=module.QUARANTINE_PROVIDER,
                     require_signature=True,
