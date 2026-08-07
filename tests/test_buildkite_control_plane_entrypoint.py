@@ -26,14 +26,26 @@ class BuildkiteControlPlaneEntrypointTests(unittest.TestCase):
         self.assertIn("bootstrap-control-plane.sh", result.stderr)
         self.assertNotIn("bk CLI is unavailable", result.stderr)
 
-    def test_shell_wrapper_executes_only_the_runtime_layer(self) -> None:
+    def test_direct_runtime_execution_without_isolated_python_is_rejected(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(RUNTIME), "--org", "example-org"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("requires isolated Python", result.stderr)
+        self.assertNotIn("bk CLI is unavailable", result.stderr)
+
+    def test_shell_wrapper_executes_runtime_with_isolated_python(self) -> None:
         text = WRAPPER.read_text(encoding="utf-8")
         self.assertIn('operator="$operator_dir/control-plane-runtime.py"', text)
         self.assertNotIn('operator="$operator_dir/bootstrap-control-plane.py"', text)
-        self.assertIn('exec python3 "$operator" "$@"', text)
+        self.assertIn('exec python3 -I "$operator" "$@"', text)
 
     def test_runtime_loads_base_as_library_not_entrypoint(self) -> None:
         text = RUNTIME.read_text(encoding="utf-8")
+        self.assertIn("not sys.flags.isolated", text)
         self.assertIn('path = here / "bootstrap-control-plane.py"', text)
         self.assertIn("spec.loader.exec_module(module)", text)
         self.assertNotIn("base.main(", text)
