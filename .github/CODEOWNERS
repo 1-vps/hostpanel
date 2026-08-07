@@ -4,8 +4,10 @@
 /tests/test_buildkite_control_plane.py @1-vps
 /tests/test_buildkite_control_plane_entrypoint.py @1-vps
 /tests/test_buildkite_control_plane_runtime.py @1-vps
+/tests/test_buildkite_cluster_secrets.py @1-vps
 /tests/test_buildkite_pipeline_state.py @1-vps
 /tests/test_buildkite_signature_metadata.py @1-vps
+/tests/test_buildkite_build_evidence.py @1-vps
 /tests/test_buildkite_prebootstrap_policy.py @1-vps
 /tests/test_buildkite_ephemeral_service.py @1-vps
 /tests/test_buildkite_checkout_policy.py @1-vps
