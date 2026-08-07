@@ -119,38 +119,92 @@ YAML
 
 read -r -d '' quarantine_provider_json <<'JSON' || true
 {
+  "filter_enabled": false,
   "build_branches": false,
   "build_pull_requests": false,
   "build_pull_request_forks": false,
   "build_tags": false,
+  "ignore_default_branch_pull_requests": false,
   "publish_commit_status": false,
   "publish_commit_status_per_step": false,
-  "build_issue_comment_created": false,
+  "pull_request_branch_filter_enabled": false,
+  "skip_pull_request_builds_for_existing_commits": false,
+  "build_pull_request_base_branch_changed": false,
+  "build_pull_request_labels_changed": false,
   "build_pull_request_ready_for_review": false,
+  "build_pull_request_reopened": false,
+  "build_pull_request_edited": false,
+  "build_pull_request_converted_to_draft": false,
+  "build_pull_request_review_requested": false,
+  "build_check_run_completed": false,
+  "build_pull_request_review_submitted": false,
+  "build_pull_request_review_dismissed": false,
+  "build_release_published": false,
+  "build_release_created": false,
+  "build_release_released": false,
+  "build_issue_comment_created": false,
+  "build_deployment_status_created": false,
+  "build_pull_request_review_comment_created": false,
+  "build_pull_request_dequeued": false,
+  "build_create_event": false,
+  "cancel_deleted_branch_builds": false,
+  "build_merge_group_checks_requested": false,
+  "cancel_when_merge_group_destroyed": false,
+  "use_merge_group_base_commit_for_git_diff_base": false,
+  "prefix_pull_request_fork_branch_names": true,
+  "publish_blocked_as_pending": true,
+  "separate_pull_request_statuses": true,
   "build_pull_request_merge_commits": false,
   "skip_builds_for_existing_commits": false,
-  "skip_pull_request_builds_for_existing_commits": false,
-  "separate_pull_request_statuses": true,
+  "skip_builds_for_closed_pull_requests": true,
+  "use_step_key_as_commit_status": false,
   "trigger_mode": "none"
 }
 JSON
 
 read -r -d '' active_provider_json <<'JSON' || true
 {
+  "filter_enabled": false,
   "build_branches": true,
   "build_pull_requests": true,
   "build_pull_request_forks": false,
   "build_tags": false,
+  "ignore_default_branch_pull_requests": false,
   "publish_commit_status": true,
   "publish_commit_status_per_step": false,
+  "pull_request_branch_filter_enabled": false,
+  "skip_pull_request_builds_for_existing_commits": false,
+  "build_pull_request_base_branch_changed": false,
+  "build_pull_request_labels_changed": false,
+  "build_pull_request_ready_for_review": true,
+  "build_pull_request_reopened": false,
+  "build_pull_request_edited": false,
+  "build_pull_request_converted_to_draft": false,
+  "build_pull_request_review_requested": false,
+  "build_check_run_completed": false,
+  "build_pull_request_review_submitted": false,
+  "build_pull_request_review_dismissed": false,
+  "build_release_published": false,
+  "build_release_created": false,
+  "build_release_released": false,
   "build_issue_comment_created": true,
   "issue_comment_command_word": "/bk",
   "issue_comment_match_mode": "exact",
-  "build_pull_request_ready_for_review": true,
+  "build_deployment_status_created": false,
+  "build_pull_request_review_comment_created": false,
+  "build_pull_request_dequeued": false,
+  "build_create_event": false,
+  "cancel_deleted_branch_builds": false,
+  "build_merge_group_checks_requested": false,
+  "cancel_when_merge_group_destroyed": false,
+  "use_merge_group_base_commit_for_git_diff_base": false,
+  "prefix_pull_request_fork_branch_names": true,
+  "publish_blocked_as_pending": true,
+  "separate_pull_request_statuses": true,
   "build_pull_request_merge_commits": false,
   "skip_builds_for_existing_commits": false,
-  "skip_pull_request_builds_for_existing_commits": false,
-  "separate_pull_request_statuses": true,
+  "skip_builds_for_closed_pull_requests": true,
+  "use_step_key_as_commit_status": false,
   "trigger_mode": "code"
 }
 JSON
@@ -316,6 +370,8 @@ if isinstance(payload, dict) and isinstance(payload.get("queues"), list):
     payload = payload["queues"]
 if not isinstance(payload, list):
     raise SystemExit("bk queue list returned an unrecognized JSON shape")
+if len(payload) >= 100:
+    raise SystemExit("HostPanel queue inventory reached the 100-item bound; cannot prove completeness")
 
 expected = {"hostpanel-upload", "hostpanel-ci", "hostpanel-qemu"}
 mapping = {}
@@ -326,14 +382,20 @@ for item in payload:
     queue_id = item.get("id") or item.get("uuid")
     if not isinstance(key, str) or not isinstance(queue_id, str):
         raise SystemExit("bk queue list contained an invalid queue")
+    if item.get("hosted") is not False and item.get("hosted") is not None:
+        raise SystemExit(f"HostPanel queue {key} has an unexpected hosted flag")
+    if item.get("hosted_agents") is not None:
+        raise SystemExit(f"HostPanel queue {key} is Buildkite-hosted; self-hosted queues are required")
+    if item.get("dispatch_paused") is not False:
+        raise SystemExit(f"HostPanel queue {key} must explicitly have dispatch_paused=false")
     try:
         uuid.UUID(queue_id)
     except ValueError as exc:
         raise SystemExit("Buildkite queue id is not a UUID") from exc
     mapping[key] = queue_id
 
-if set(mapping) != expected:
-    raise SystemExit("HostPanel cluster does not contain exactly the reviewed queue keys")
+if len(payload) != 3 or set(mapping) != expected:
+    raise SystemExit("HostPanel cluster does not contain exactly the three reviewed queue objects")
 for key in ("hostpanel-upload", "hostpanel-ci", "hostpanel-qemu"):
     print(f"{key}={mapping[key]}")
 PY
@@ -367,7 +429,7 @@ PY
 load_queue_ids() {
   local cluster_uuid="$1"
   local queue_json
-  queue_json="$(bk queue list "$cluster_uuid" -o json)"
+  queue_json="$(bk queue list "$cluster_uuid" --limit 100 --per-page 100 -o json)"
   local mapping
   mapping="$(queue_map_from_json "$cluster_uuid" "$queue_json")"
   upload_queue_uuid="$(printf '%s\n' "$mapping" | awk -F= '$1=="hostpanel-upload"{print $2}')"
@@ -442,6 +504,12 @@ if pipeline.get("slug") != slug:
     raise SystemExit("pipeline slug mismatch")
 if pipeline.get("repository") != repository:
     raise SystemExit("pipeline repository mismatch")
+if pipeline.get("visibility") != "private":
+    raise SystemExit("pipeline visibility must remain private")
+if pipeline.get("env") not in ({}, None):
+    raise SystemExit("pipeline-level environment must be empty")
+if pipeline.get("branch_configuration") != "main":
+    raise SystemExit("pipeline branch configuration must restrict branch builds to main")
 
 cluster_id = pipeline.get("cluster_id")
 if not isinstance(cluster_id, str):
@@ -488,6 +556,13 @@ except json.JSONDecodeError as exc:
 for key, expected_value in expected_provider.items():
     if settings.get(key) != expected_value:
         raise SystemExit(f"{mode} provider setting mismatch: {key}")
+allowed_true_settings = {
+    key for key, value in expected_provider.items()
+    if value is True
+}
+for key, value in settings.items():
+    if isinstance(value, bool) and value and key not in allowed_true_settings:
+        raise SystemExit(f"{mode} provider has an unreviewed enabled boolean setting: {key}")
 
 webhook_url = provider.get("webhook_url")
 if require_webhook == "true":
@@ -550,8 +625,8 @@ except json.JSONDecodeError as exc:
     raise SystemExit("bk cluster view did not return valid JSON") from exc
 if not isinstance(payload, dict) or payload.get("id") != cluster_id:
     raise SystemExit("pipeline cluster identity mismatch")
-if payload.get("default_queue_id") is not None:
-    raise SystemExit("HostPanel cluster unexpectedly has a default queue")
+if "default_queue_id" not in payload or payload["default_queue_id"] is not None:
+    raise SystemExit("HostPanel cluster must explicitly report default_queue_id=null")
 PY
   load_queue_ids "$cluster_uuid"
   assert_no_target_agents
@@ -606,8 +681,8 @@ EOF
   exit 0
 fi
 
-cluster_list="$(bk cluster list -o json)"
-pipeline_list="$(bk pipeline list --repository "$repository" -o json)"
+cluster_list="$(bk api "/clusters?per_page=100")"
+pipeline_list="$(bk pipeline list --repository "$repository" --limit 3000 -o json)"
 
 python3 - "$cluster_name" "$pipeline_name" "$repository" "$cluster_list" "$pipeline_list" <<'PY'
 import json
@@ -630,8 +705,18 @@ def objects(value):
         for child in value:
             yield from objects(child)
 
-clusters = load("bk cluster list", cluster_raw)
+clusters = load("bk api /clusters", cluster_raw)
 pipelines = load("bk pipeline list", pipeline_raw)
+if not isinstance(clusters, list):
+    raise SystemExit("cluster inventory returned an unexpected JSON shape")
+if len(clusters) >= 100:
+    raise SystemExit("cluster inventory reached the 100-item pagination bound; cannot prove completeness")
+if isinstance(pipelines, dict) and isinstance(pipelines.get("pipelines"), list):
+    pipelines = pipelines["pipelines"]
+if not isinstance(pipelines, list):
+    raise SystemExit("pipeline inventory returned an unexpected JSON shape")
+if len(pipelines) >= 3000:
+    raise SystemExit("pipeline inventory reached the CLI pagination bound; cannot prove completeness")
 
 for item in objects(clusters):
     name = item.get("name")
@@ -703,8 +788,8 @@ except json.JSONDecodeError as exc:
     raise SystemExit("bk cluster view did not return valid JSON") from exc
 if not isinstance(payload, dict) or payload.get("id") != cluster_id:
     raise SystemExit("created cluster identity mismatch")
-if payload.get("default_queue_id") is not None:
-    raise SystemExit("created HostPanel cluster unexpectedly has a default queue")
+if "default_queue_id" not in payload or payload["default_queue_id"] is not None:
+    raise SystemExit("created HostPanel cluster must explicitly report default_queue_id=null")
 PY
 
 load_queue_ids "$cluster_uuid"
@@ -724,6 +809,7 @@ print(json.dumps({
     "name": name,
     "cluster_id": cluster_id,
     "repository": repository,
+    "branch_configuration": "main",
     "configuration": configuration,
     "provider_settings": json.loads(provider_raw),
 }))
