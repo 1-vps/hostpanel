@@ -44,8 +44,10 @@ python3 -m unittest -v \
   tests.test_buildkite_control_plane \
   tests.test_buildkite_control_plane_entrypoint \
   tests.test_buildkite_control_plane_runtime \
+  tests.test_buildkite_cluster_secrets \
   tests.test_buildkite_pipeline_state \
   tests.test_buildkite_signature_metadata \
+  tests.test_buildkite_build_evidence \
   tests.test_buildkite_prebootstrap_policy \
   tests.test_buildkite_checkout_policy \
   tests.test_buildkite_private_checkout \
