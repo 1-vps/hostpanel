@@ -42,6 +42,7 @@ PY
 python3 -m unittest -v \
   tests.test_buildkite_pipeline \
   tests.test_buildkite_control_plane \
+  tests.test_buildkite_control_plane_entrypoint \
   tests.test_buildkite_control_plane_runtime \
   tests.test_buildkite_pipeline_state \
   tests.test_buildkite_prebootstrap_policy \
