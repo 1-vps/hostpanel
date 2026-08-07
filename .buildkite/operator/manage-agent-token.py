@@ -24,6 +24,7 @@ EXPECTED_QUEUE_KEYS = frozenset({"hostpanel-upload", "hostpanel-ci", "hostpanel-
 MIN_TTL_MINUTES = 15
 MAX_TTL_MINUTES = 60
 MAX_INVENTORY_ITEMS = 100
+TOKEN_ROOT = pathlib.Path("/run/hostpanel-buildkite-tokens")
 
 
 class OperatorError(RuntimeError):
@@ -48,6 +49,8 @@ def exact_ipv4_cidr(value: str) -> str:
         address = ipaddress.IPv4Address(value)
     except ipaddress.AddressValueError as exc:
         raise OperatorError("--allowed-ip must be a valid IPv4 address") from exc
+    if not address.is_global:
+        raise OperatorError("--allowed-ip must be the worker's public globally routable IPv4 address")
     return f"{address}/32"
 
 
@@ -250,15 +253,24 @@ def fd_filesystem_type(fd: int) -> str:
     raise OperatorError("cannot resolve token directory filesystem type")
 
 
+def ensure_token_root() -> None:
+    try:
+        os.mkdir(TOKEN_ROOT, 0o700)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        raise OperatorError("cannot create the HostPanel token tmpfs directory") from exc
+
+
 def open_secure_parent(path: pathlib.Path) -> int:
     if not path.is_absolute():
         raise OperatorError("token file path must be absolute")
-    if path.name in {"", ".", ".."}:
-        raise OperatorError("token file path has an unsafe basename")
+    if path.parent != TOKEN_ROOT or path.name in {"", ".", ".."}:
+        raise OperatorError(f"token file must be a direct child of {TOKEN_ROOT}")
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     flags |= getattr(os, "O_DIRECTORY", 0)
     try:
-        fd = os.open(path.parent, flags)
+        fd = os.open(TOKEN_ROOT, flags)
     except OSError as exc:
         raise OperatorError("token parent directory is unavailable or unsafe") from exc
     try:
@@ -300,11 +312,13 @@ def write_secret_exclusive(path: pathlib.Path, value: str) -> None:
     data = value.encode("ascii")
     parent_fd = open_secure_parent(path)
     fd = -1
+    created = False
     try:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)
         try:
             fd = os.open(path.name, flags, 0o600, dir_fd=parent_fd)
+            created = True
         except FileExistsError as exc:
             raise OperatorError("output token file already exists") from exc
 
@@ -321,10 +335,11 @@ def write_secret_exclusive(path: pathlib.Path, value: str) -> None:
         if fd >= 0:
             os.close(fd)
             fd = -1
-        try:
-            os.unlink(path.name, dir_fd=parent_fd)
-        except FileNotFoundError:
-            pass
+        if created:
+            try:
+                os.unlink(path.name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
         raise
     finally:
         if fd >= 0:
@@ -403,6 +418,7 @@ def create_token(args: argparse.Namespace) -> int:
         raise OperatorError("create --apply requires --confirm-create")
 
     require_apply_root()
+    ensure_token_root()
     secure_parent(output)
     preflight(args.org)
     verify_hostpanel_cluster(cluster_id)
@@ -522,6 +538,7 @@ def revoke_token(args: argparse.Namespace) -> int:
         raise OperatorError("revoke --apply requires --confirm-revoke")
 
     require_apply_root()
+    ensure_token_root()
     if token_file:
         parent_fd = open_secure_parent(token_file)
         os.close(parent_fd)
