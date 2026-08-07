@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Reject Buildkite jobs whose immutable pipeline UUID does not match policy."""
+
+from __future__ import annotations
+
+import os
+import pathlib
+import stat
+import uuid
+from typing import NoReturn
+
+POLICY_FILE = pathlib.Path("/etc/buildkite-agent/hostpanel-policy/pipeline-id")
+MAX_BYTES = 128
+
+
+def fail(message: str) -> NoReturn:
+    raise SystemExit(f"HostPanel Buildkite pipeline-ID policy rejected job: {message}")
+
+
+def read_pipeline_id() -> str:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(POLICY_FILE, flags)
+    except OSError as exc:
+        fail(f"cannot safely open policy file: {exc}")
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            fail("policy file is not a single regular file")
+        if before.st_uid != 0 or before.st_mode & 0o022:
+            fail("policy file ownership or mode is unsafe")
+        if before.st_size <= 0 or before.st_size > MAX_BYTES:
+            fail("policy file size is unsafe")
+        data = os.read(descriptor, MAX_BYTES + 1)
+        after = os.fstat(descriptor)
+        if len(data) != before.st_size or len(data) > MAX_BYTES:
+            fail("policy file changed or exceeded its size bound")
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            fail("policy file changed while read")
+    finally:
+        os.close(descriptor)
+    try:
+        value = data.decode("utf-8", errors="strict").strip().lower()
+        parsed = uuid.UUID(value)
+    except (UnicodeError, ValueError) as exc:
+        fail(f"policy pipeline ID is malformed: {exc}")
+    if str(parsed) != value:
+        fail("policy pipeline ID is not canonical")
+    return value
+
+
+def main() -> int:
+    expected = read_pipeline_id()
+    actual = os.environ.get("BUILDKITE_PIPELINE_ID", "").strip().lower()
+    try:
+        parsed = uuid.UUID(actual)
+    except ValueError as exc:
+        fail(f"BUILDKITE_PIPELINE_ID is missing or malformed: {exc}")
+    if str(parsed) != actual:
+        fail("BUILDKITE_PIPELINE_ID is not canonical")
+    if actual != expected:
+        fail("job belongs to a different Buildkite pipeline")
+    print(f"HostPanel Buildkite pipeline-ID policy accepted {actual}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

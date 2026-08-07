@@ -5,45 +5,67 @@
 <!-- {{HOSTPANEL_RELEASE_STATUS}}=deployable-not-publishable -->
 <!-- {{HOSTPANEL_PUBLICATION_ALLOWED}}=false -->
 
-This reference describes supported installation controls for HostPanel release
-**3.4.1**, derived from signed base **3.4.0-hardened-r5**. The authoritative
-machine-readable state is [`RELEASE-MANIFEST.json`](RELEASE-MANIFEST.json).
+This reference describes the reviewed installation controls for HostPanel `3.4.1`,
+derived from signed base **3.4.0-hardened-r5**. The authoritative machine-readable
+release state is [`RELEASE-MANIFEST.json`](RELEASE-MANIFEST.json).
 
-Do not execute an unpinned branch script as root. Obtain the exact reviewed full
-commit SHA and required Git blob identifiers from [`SETUP.md`](SETUP.md).
+The only documented installation entry point is the immutable `auto-install.sh`
+engine described in [`SETUP.md`](SETUP.md). Do not execute a moving branch script
+as root.
 
-## Private-repository authentication
-
-Use a short-lived token limited to **Contents: Read-only**. Fetch bootstrap and
-validation material through the GitHub Contents API and verify documented Git
-blob IDs before execution.
-
-Provide transient Git authentication through process environment variables, not
-through a URL, remote, shell history, or command-line argument:
+**Reviewed automatic-installer commit:**
 
 ```text
-GIT_CONFIG_COUNT=1
-GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
-GIT_CONFIG_VALUE_0=AUTHORIZATION: basic <base64(x-access-token:TOKEN)>
-GIT_TERMINAL_PROMPT=0
+1a86d380e7ebab287c767d183013b599cb116f7f
 ```
 
-Treat `GIT_CONFIG_VALUE_0` as secret material. Unset all variables and remove any
-temporary token files before repository-controlled helpers or the installer run.
+**Verified automatic-installer Git blob:**
 
-## Required settings
+```text
+db23963e101b9194994da2ff8077b40a6b1cb99c
+```
 
-### `HP_REPO_REF`
+**Reviewed product commit fetched by the installer chain:**
 
-A reviewed full 40-character Git commit SHA. The bootstrap fetches this exact
-commit and verifies executable overlay files against their Git objects.
+```text
+755dcd5e47b7c82404b267e8df4dec27626fe341
+```
 
-Never substitute a branch name, shortened SHA, or mutable tag.
+**Installed `/opt/hostpanel/VERSION`:**
+
+```text
+3.4.1
+```
+
+## Private repository authentication
+
+This repository is private. Follow [`SETUP.md`](SETUP.md) to obtain the exact
+reviewed `auto-install.sh` bytes through an authenticated checkout or reviewed
+file transfer and verify its Git blob before execution.
+
+The installer accepts a short-lived GitHub token with **Contents: Read-only**
+access to `1-vps/hostpanel`. Interactive/unattended launchers pass the token on
+an inherited descriptor; automation may instead use a root-owned, single-linked
+mode `0400` or `0600` file through `HP_GITHUB_TOKEN_FILE`. Tokens must never be
+placed in a URL, normal command argument, shell profile, repository remote,
+logs, or evidence.
+
+The automatic installer and its delegated launchers contain their reviewed Git
+commits and blob IDs. Operators do not select a moving `HP_REPO_REF` for the
+normal installation path.
+
+## Required installation settings
 
 ### `HP_PANEL_HOST`
 
-The panel's fully qualified domain name, for example `panel.example.com`. It is
-used for certificate subjects, routing, and production validation.
+The panel's fully qualified domain name, for example `panel.example.com`. The
+installer uses it for certificate subjects, routing, and validation.
+
+### `HP_PANEL_DOMAIN`
+
+An optional base domain such as `example.com`. The automatic installer converts
+it to `panel.example.com`. An explicitly supplied invalid domain fails closed and
+does not fall back to the machine hostname.
 
 ### `HP_PANEL_ADMIN_CIDR`
 
@@ -54,16 +76,16 @@ The IPv4 or IPv6 address or network allowed to reach the panel, for example:
 2001:db8:100::/64
 ```
 
-When installation runs over SSH, the installer may derive the client address.
-Without either a supplied administrative CIDR or a safe SSH source, installation
-fails closed.
+When installation is launched over SSH, the installer can derive the client
+address. Without either a supplied administrative CIDR or an SSH source,
+installation fails closed.
 
 ## Network settings
 
 ### `HP_PANEL_PORT`
 
-Overrides the public panel port. The default is `2222`. Verify the port in both
-the provider firewall and operating-system firewall, including after reboot.
+Overrides the public panel port. The default is `2222`. Verify the selected port
+in both provider and operating-system firewalls and after reboot.
 
 ### `HP_ALLOW_PUBLIC_PANEL`
 
@@ -75,58 +97,57 @@ for normal installations and prefer a narrow `HP_PANEL_ADMIN_CIDR`.
 ### `HP_MULTI_PHP_REPO`
 
 Keep this set to `off` unless a reviewed external repository has already been
-configured by the operator. HostPanel must not execute mutable third-party
+configured by the operator. The installer does not execute mutable third-party
 repository bootstrap scripts.
 
 ### `HP_RSPAMD_REPO`
 
 Keep this set to `off` unless a reviewed external repository has already been
-configured. Prefer distribution packages where supported.
+configured. Ubuntu 26.04 uses its distribution-provided Rspamd package.
 
 ## Mail settings
 
-Use `--mta postfix` or `--mta exim`. The installer validates the selected MTA.
-Required mail services and the final doctor check fail installation when they do
-not start successfully.
+Use `HP_MTA=postfix` or `HP_MTA=exim`. The selected MTA is validated before
+installation. Required mail services and the final doctor check fail the
+installation when they do not start successfully.
 
 ## Role selection
 
-A full installation selects all roles. Use repeated `--role` arguments to limit
-a node to reviewed roles:
+A full installation selects all roles. Set `HP_ROLES` to a space-separated
+subset of reviewed roles:
 
 ```text
-control
-web
-database
-mail
-dns
-backup
-edge
+control web database mail dns backup edge
 ```
 
-Use the same role selection during preflight and mutating installation.
+Use the same role selection during preflight and the mutating installation.
 
-## Reinstall and recovery
+## Check-only, reinstall, and validation controls
 
-Run `--reinstall --check` before a mutating reinstall. Every mutating run creates
-a root-owned safety snapshot below:
+- `HP_CHECK_ONLY=yes` runs preflight without persistent installation mutation.
+- `HP_REINSTALL=yes` is required for an explicit replacement of an existing
+  installation.
+- `HP_POST_INSTALL_CHECK=no` skips the production validator and doctor; the
+  machine-readable installation result is marked `unverified`, not healthy.
+
+Every mutating installer run creates a root-owned safety snapshot under:
 
 ```text
 /var/backups/hostpanel-install/
 ```
 
-Rollback is best effort, not fully transactional. Keep a provider snapshot and
-console access for production changes.
+Rollback is best-effort rather than fully transactional. Keep a provider-level
+snapshot and console access for production changes.
 
 ## Validation settings
 
-The expected installed application version is:
+The production validator expects the installed application version:
 
 ```text
 HP_EXPECTED_VERSION=3.4.1
 ```
 
-Common validator inputs include:
+Other common validator inputs:
 
 ```text
 HP_PANEL_HOST=panel.example.com
@@ -138,9 +159,10 @@ Run the validator before and after a verified reboot as documented in
 
 ## Managed configuration
 
-Installed configuration is stored below `/opt/hostpanel` and `/etc/hostpanel`.
-Do not loosen ownership or permissions on configuration, credentials, Redis ACL
-material, installer snapshots, authentication files, or validation reports.
+The installed panel configuration is stored under `/opt/hostpanel` and
+`/etc/hostpanel`. Do not loosen ownership or permissions on configuration,
+credentials, Redis ACL material, installer snapshots, authentication files, or
+validation reports.
 
 After supported configuration changes, rerun:
 

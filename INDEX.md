@@ -6,7 +6,7 @@ This is the current documentation map for HostPanel release **3.4.1**.
 
 1. [`README.md`](README.md) — product scope, trust model, requirements, and release state
 2. [`RELEASE-MANIFEST.json`](RELEASE-MANIFEST.json) — authoritative machine-readable release status
-3. [`SETUP.md`](SETUP.md) — authenticated installation from a reviewed commit
+3. [`SETUP.md`](SETUP.md) — authenticated installation from the reviewed immutable installer chain
 4. [`CONFIGURATION.md`](CONFIGURATION.md) — supported configuration controls
 5. [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md) — mandatory production gates
 6. [`SECURITY.md`](SECURITY.md) — security and disclosure policy
@@ -18,6 +18,8 @@ This is the current documentation map for HostPanel release **3.4.1**.
 - [`FIREWALL.md`](FIREWALL.md)
 - [`CUSTOMBUILD.md`](CUSTOMBUILD.md)
 - [`LOCALIZATION-OVERLAY.md`](LOCALIZATION-OVERLAY.md)
+- [`BUILDKITE.md`](BUILDKITE.md)
+- `.buildkite/pipeline.yml`
 - `.github/workflows/qemu-vm-acceptance.yml`
 - `.github/workflows/vps-acceptance.yml`
 - `tools/validate-production-vm.sh`
@@ -39,7 +41,7 @@ current release status, deployment approval, or production-readiness source**:
 Some historical documents contain dates, version numbers, progress checklists, or
 phrases such as “ready to deploy” that applied only to their original audit scope.
 Current release truth always comes from `RELEASE-MANIFEST.json`, maintained docs,
-exact-head workflow results, and production acceptance evidence.
+exact-head Buildkite results, and production acceptance evidence.
 
 ## Consistency enforcement
 
@@ -50,5 +52,5 @@ python3 tools/validate_release_manifest.py
 ```
 
 The validator fails closed when `RELEASE_VERSION`, maintained documentation, and
-the release manifest disagree. The same check runs in
-`.github/workflows/release-consistency.yml`.
+the release manifest disagree. The same check and its focused regression suite run
+in Buildkite's `release-metadata` step for the exact checked-out commit.

@@ -1,0 +1,126 @@
+agents:
+  queue: "hostpanel-ci"
+
+env:
+  LANG: "C.UTF-8"
+  LC_ALL: "C.UTF-8"
+  PYTHONDONTWRITEBYTECODE: "1"
+  BUILDKITE_CLEAN_CHECKOUT: "true"
+
+steps:
+  - label: ":lock: Pipeline contract"
+    key: "pipeline-contract"
+    command: ".buildkite/scripts/run-pipeline-contract.sh"
+    timeout_in_minutes: 10
+
+  - group: ":shield: Core validation"
+    key: "core-validation"
+    depends_on: "pipeline-contract"
+    steps:
+      - label: ":python: Repository regressions"
+        key: "repository-regressions"
+        command: ".buildkite/scripts/run-check.sh"
+        env:
+          HP_BUILDKITE_CHECK: "repository"
+        timeout_in_minutes: 75
+
+      - label: ":shell: Installer static analysis"
+        key: "installer-static"
+        command: ".buildkite/scripts/run-check.sh"
+        env:
+          HP_BUILDKITE_CHECK: "shell"
+        timeout_in_minutes: 30
+
+      - label: ":page_facing_up: Release metadata"
+        key: "release-metadata"
+        command: ".buildkite/scripts/run-check.sh"
+        env:
+          HP_BUILDKITE_CHECK: "metadata"
+        timeout_in_minutes: 15
+
+      - label: ":stethoscope: Production validator"
+        key: "production-validator"
+        command: ".buildkite/scripts/run-check.sh"
+        env:
+          HP_BUILDKITE_CHECK: "production-validator"
+        timeout_in_minutes: 20
+
+      - label: ":computer: QEMU harness contracts"
+        key: "qemu-contracts"
+        command: ".buildkite/scripts/run-check.sh"
+        env:
+          HP_BUILDKITE_CHECK: "qemu-contracts"
+        timeout_in_minutes: 35
+
+  - group: ":package: Supported OS preflight"
+    key: "supported-os"
+    depends_on:
+      - "repository-regressions"
+      - "installer-static"
+    steps:
+      - label: "Ubuntu 22.04"
+        key: "os-ubuntu-2204"
+        command: ".buildkite/scripts/run-check.sh"
+        env: {HP_BUILDKITE_CHECK: "installer-os", HP_BUILDKITE_OS: "ubuntu-22.04"}
+        timeout_in_minutes: 90
+
+      - label: "Ubuntu 24.04"
+        key: "os-ubuntu-2404"
+        command: ".buildkite/scripts/run-check.sh"
+        env: {HP_BUILDKITE_CHECK: "installer-os", HP_BUILDKITE_OS: "ubuntu-24.04"}
+        timeout_in_minutes: 90
+
+      - label: "Ubuntu 26.04"
+        key: "os-ubuntu-2604"
+        command: ".buildkite/scripts/run-check.sh"
+        env: {HP_BUILDKITE_CHECK: "installer-os", HP_BUILDKITE_OS: "ubuntu-26.04"}
+        timeout_in_minutes: 90
+
+      - label: "Debian 12"
+        key: "os-debian-12"
+        command: ".buildkite/scripts/run-check.sh"
+        env: {HP_BUILDKITE_CHECK: "installer-os", HP_BUILDKITE_OS: "debian-12"}
+        timeout_in_minutes: 90
+
+      - label: "Debian 13"
+        key: "os-debian-13"
+        command: ".buildkite/scripts/run-check.sh"
+        env: {HP_BUILDKITE_CHECK: "installer-os", HP_BUILDKITE_OS: "debian-13"}
+        timeout_in_minutes: 90
+
+      - label: "Rocky Linux 9"
+        key: "os-rocky-9"
+        command: ".buildkite/scripts/run-check.sh"
+        env: {HP_BUILDKITE_CHECK: "installer-os", HP_BUILDKITE_OS: "rocky-9"}
+        timeout_in_minutes: 90
+
+      - label: "Rocky Linux 10"
+        key: "os-rocky-10"
+        command: ".buildkite/scripts/run-check.sh"
+        env: {HP_BUILDKITE_CHECK: "installer-os", HP_BUILDKITE_OS: "rocky-10"}
+        timeout_in_minutes: 90
+
+      - label: "AlmaLinux 9"
+        key: "os-almalinux-9"
+        command: ".buildkite/scripts/run-check.sh"
+        env: {HP_BUILDKITE_CHECK: "installer-os", HP_BUILDKITE_OS: "almalinux-9"}
+        timeout_in_minutes: 90
+
+      - label: "AlmaLinux 10"
+        key: "os-almalinux-10"
+        command: ".buildkite/scripts/run-check.sh"
+        env: {HP_BUILDKITE_CHECK: "installer-os", HP_BUILDKITE_OS: "almalinux-10"}
+        timeout_in_minutes: 90
+
+  - label: ":computer: QEMU VM acceptance"
+    key: "qemu-vm-acceptance"
+    depends_on:
+      - "release-metadata"
+      - "production-validator"
+      - "qemu-contracts"
+      - "supported-os"
+    command: ".buildkite/scripts/run-qemu.sh"
+    agents:
+      queue: "hostpanel-qemu"
+    if: build.pull_request.id == null && build.branch == "main"
+    timeout_in_minutes: 180

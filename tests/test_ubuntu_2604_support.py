@@ -59,7 +59,7 @@ class Ubuntu2604InstallerTests(unittest.TestCase):
         matrix = (ROOT / "test-matrix.sh").read_text(encoding="utf-8")
         full_matrix = (ROOT / "run-full-test-matrix.sh").read_text(encoding="utf-8")
         self.assertIn("Ubuntu 22.04, 24.04, or 26.04", setup)
-        self.assertIn("distribution-provided PHP 8.5", setup)
+        self.assertIn("OpenLiteSpeed is not installed", setup)
         self.assertIn('ubuntu-26.04]="ubuntu:26.04"', matrix)
         self.assertIn('"$SCRIPT_DIR/test-matrix.sh"', full_matrix)
         self.assertIn("ubuntu-26.04", full_matrix)

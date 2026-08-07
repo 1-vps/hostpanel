@@ -24,9 +24,9 @@ The single machine-readable source of truth is
 - Production publication: **blocked**
 
 A deployable build is not the same as an approved production publication. The
-manifest lists every current publication blocker. CI runs
-`tools/validate_release_manifest.py` to fail when maintained documentation,
-`RELEASE_VERSION`, and the manifest diverge.
+manifest lists every current publication blocker. Buildkite's `release-metadata`
+gate runs `tools/validate_release_manifest.py` and the matching regression tests
+against the exact checked-out commit.
 
 The current `LICENSE` remains a draft with unresolved legal and commercial
 placeholders. It must not be treated as approved commercial terms.
@@ -35,14 +35,15 @@ placeholders. It must not be treated as approved commercial terms.
 
 HostPanel changes operating-system packages, service configuration, firewall
 rules, databases, mail, DNS, scheduled jobs, and customer-data paths. Never run
-an unpinned branch script as root.
+a moving branch script as root.
 
 Installation uses two independent verification layers:
 
 1. the embedded long-lived release public key verifies the signed
    `3.4.0-hardened-r5` base-source archive;
-2. the operator-supplied full Git commit SHA authenticates every reviewed overlay
-   object used to derive release `3.4.1`.
+2. the immutable `auto-install.sh` chain described in [`SETUP.md`](SETUP.md)
+   verifies the reviewed installer, delegated launcher, and product Git objects
+   before root execution.
 
 The installed `/opt/hostpanel/VERSION` must contain `3.4.1`. The signed-base label
 identifies the authenticated starting archive, not the final installed release.
@@ -67,26 +68,24 @@ external repositories yourself and keep `HP_MULTI_PHP_REPO=off` and
 ## Secure installation
 
 Anonymous `raw.githubusercontent.com` commands do not work for this private
-repository. Never place a GitHub token in a URL or command-line argument.
+repository. Never place a GitHub token in a URL or normal command-line argument.
 
-Follow [`SETUP.md`](SETUP.md) exactly. It documents:
+Follow [`SETUP.md`](SETUP.md) exactly. Obtain the reviewed `auto-install.sh`
+object, verify its documented Git blob, and supply the short-lived repository
+token through the inherited descriptor path or the documented root-owned secret
+file. The normal automatic-install path does not accept a moving repository ref.
 
-- hidden prompting for a short-lived read-only token;
-- downloads bound to the exact reviewed full commit SHA;
-- transient Git authentication scoped to the reviewed fetch;
-- removal of token material before repository-controlled helpers run;
-- non-mutating `--check` execution before installation.
-
-Panel exposure fails closed. Supply `HP_PANEL_ADMIN_CIDR` when no administrative
-source can be safely detected. `HP_ALLOW_PUBLIC_PANEL=yes` is only an explicit
-controlled-test override.
+Use `HP_CHECK_ONLY=yes` for non-mutating preflight and `HP_REINSTALL=yes` only
+for an explicit replacement of an existing installation. Panel exposure fails
+closed; supply `HP_PANEL_ADMIN_CIDR` when no administrative source can be safely
+detected. `HP_ALLOW_PUBLIC_PANEL=yes` is an explicit controlled-test override.
 
 ## Reinstall, rollback, and verification
 
-Run `--reinstall --check` before a mutating reinstall. Each mutating run creates a
-root-owned `0700` safety snapshot below `/var/backups/hostpanel-install/`.
-Rollback is best effort because package scripts and external service side effects
-are not fully transactional. Keep a provider snapshot and console access.
+Every mutating run creates a root-owned safety snapshot below
+`/var/backups/hostpanel-install/`. Rollback is best effort because package scripts
+and external service side effects are not fully transactional. Keep a provider
+snapshot and console access.
 
 After installation, verify at minimum:
 
@@ -116,12 +115,13 @@ Installer log:
 Before customer use, complete the exact checklist in
 [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md), including fresh-VM
 installation, external web/DNS/mail checks, backup and restore, quota enforcement,
-firewall persistence, verified reboot, recovery testing, workflow evidence, and
-legal approval.
+firewall persistence, verified reboot, recovery testing, hosted workflow evidence,
+and legal approval.
 
-The QEMU acceptance workflow validates a checksum-pinned disposable VM. The
-provider-backed VPS workflow is manual, environment-gated, and destructive.
-Neither replaces final validation on the intended infrastructure.
+Buildkite validates pull-request heads through the hardened disposable-worker
+pipeline. QEMU VM acceptance runs for eligible `main` builds after the supported
+OS and core validation gates. Provider-backed VPS acceptance remains a separate,
+manual, protected-environment production gate.
 
 ## Maintained documentation
 

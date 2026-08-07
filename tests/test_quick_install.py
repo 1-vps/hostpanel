@@ -10,9 +10,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "quick-install.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "installer-hardening.yml"
 SETUP = ROOT / "SETUP.md"
-EXPECTED_RELEASE_COMMIT = "d50ccea35aa6356f7f815a606fa91f6186b66a6f"
+EXPECTED_RELEASE_COMMIT = "755dcd5e47b7c82404b267e8df4dec27626fe341"
 EXPECTED_BOOTSTRAP_BLOB = "639fae60ddd5bec36f5e3167dd21733a412a69fd"
 EXPECTED_VALIDATOR_BLOB = "2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9"
+AUTO_COMMIT = "1a86d380e7ebab287c767d183013b599cb116f7f"
+AUTO_BLOB = "db23963e101b9194994da2ff8077b40a6b1cb99c"
 
 
 class QuickInstallTests(unittest.TestCase):
@@ -52,16 +54,19 @@ class QuickInstallTests(unittest.TestCase):
         self.assertIn('REPOSITORY_API="https://api.github.com/repos/1-vps/hostpanel"', self.source)
         self.assertIn("--proto '=https' --tlsv1.2", self.source)
         self.assertIn("application/vnd.github.raw+json", self.source)
-        self.assertIn('git hash-object "$WORK_DIR/bootstrap-install.sh"', self.source)
-        self.assertIn('git hash-object "$WORK_DIR/validate-production-vm.sh"', self.source)
+        self.assertIn('git hash-object --no-filters "$WORK_DIR/bootstrap-install.sh"', self.source)
+        self.assertIn('git hash-object --no-filters "$WORK_DIR/validate-production-vm.sh"', self.source)
         self.assertNotIn("raw.githubusercontent.com", self.source)
 
     def test_preflight_always_precedes_mutating_install(self) -> None:
-        preflight = 'bash /root/bootstrap-install.sh --check "${install_args[@]}"'
-        mutation = 'bash /root/bootstrap-install.sh "${install_args[@]}"'
+        preflight = 'env "${common_env[@]}" bash "$WORK_DIR/bootstrap-install.sh" --check "${install_args[@]}"'
+        persist_bootstrap = 'install -o root -g root -m 0700 "$WORK_DIR/bootstrap-install.sh" /root/bootstrap-install.sh'
+        mutation = 'env "${common_env[@]}" bash /root/bootstrap-install.sh "${install_args[@]}"'
         self.assertIn(preflight, self.source)
+        self.assertIn(persist_bootstrap, self.source)
         self.assertIn(mutation, self.source)
-        self.assertLess(self.source.index(preflight), self.source.index(mutation))
+        self.assertLess(self.source.index(preflight), self.source.index(persist_bootstrap))
+        self.assertLess(self.source.index(persist_bootstrap), self.source.index(mutation))
         self.assertIn('if [[ "$CHECK_ONLY" == yes ]]', self.source)
 
     def test_root_environment_is_sanitized(self) -> None:
@@ -73,12 +78,13 @@ class QuickInstallTests(unittest.TestCase):
             self.assertIn(variable, self.source)
         self.assertIn("umask 077", self.source)
 
-
-    def test_documented_one_line_launcher_is_immutable_and_private_safe(self) -> None:
-        self.assertIn("7745b637d3a77664e385528838800100291d575c", self.setup)
-        self.assertIn("contents/quick-install.sh?ref=7745b637d3a77664e385528838800100291d575c", self.setup)
-        self.assertIn("HP_GITHUB_TOKEN_FILE=\"$D/token\"", self.setup)
-        self.assertIn("Authorization: Bearer %s", self.setup)
+    def test_setup_documents_current_immutable_automatic_entry(self) -> None:
+        self.assertIn("`auto-install.sh` is the only documented HostPanel installation entry point", self.setup)
+        self.assertIn(AUTO_COMMIT, self.setup)
+        self.assertIn(AUTO_BLOB, self.setup)
+        self.assertIn("authenticated checkout or", self.setup)
+        self.assertIn("reviewed file transfer", self.setup)
+        self.assertNotIn("quick-install.sh", self.setup)
         self.assertNotIn("quick-install.sh?ref=main", self.setup)
         self.assertNotIn("raw.githubusercontent.com", self.setup)
 
@@ -87,9 +93,7 @@ class QuickInstallTests(unittest.TestCase):
             self.workflow,
             re.compile(r"bash -n quick-install\.sh", re.MULTILINE),
         )
-        shellcheck_block = self.workflow[
-            self.workflow.index("shellcheck -S error") :
-        ]
+        shellcheck_block = self.workflow[self.workflow.index("shellcheck -S error") :]
         self.assertIn("quick-install.sh", shellcheck_block)
 
 
