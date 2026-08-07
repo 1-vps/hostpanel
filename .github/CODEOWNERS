@@ -2,6 +2,7 @@
 /BUILDKITE.md @1-vps
 /tests/test_buildkite_pipeline.py @1-vps
 /tests/test_buildkite_control_plane.py @1-vps
+/tests/test_buildkite_control_plane_runtime.py @1-vps
 /tests/test_buildkite_pipeline_state.py @1-vps
 /tests/test_buildkite_prebootstrap_policy.py @1-vps
 /tests/test_buildkite_ephemeral_service.py @1-vps
