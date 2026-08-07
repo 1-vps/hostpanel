@@ -15,11 +15,36 @@ class BuildkiteEphemeralServiceTests(unittest.TestCase):
         self.assertEqual(
             DROPIN.read_text(encoding="utf-8"),
             "[Service]\n"
+            "Environment=BUILDKITE_ENABLE_ENVIRONMENT_VARIABLE_ALLOWLIST=true\n"
+            "Environment=BUILDKITE_ALLOWED_ENVIRONMENT_VARIABLES=^LANG$,^LC_ALL$,^PYTHONDONTWRITEBYTECODE$,^HP_BUILDKITE_CHECK$,^HP_BUILDKITE_OS$\n"
             "Restart=no\n"
             "ExecStartPost=\n"
             "ExecStopPost=+/usr/bin/rm -f /etc/buildkite-agent/agent-token "
             "/run/hostpanel-buildkite/checkout-deploy-key\n",
         )
+
+    def test_environment_allowlist_precedes_job_hooks(self) -> None:
+        text = DROPIN.read_text(encoding="utf-8")
+        self.assertIn("Environment=BUILDKITE_ENABLE_ENVIRONMENT_VARIABLE_ALLOWLIST=true\n", text)
+        allow = next(
+            line for line in text.splitlines()
+            if line.startswith("Environment=BUILDKITE_ALLOWED_ENVIRONMENT_VARIABLES=")
+        )
+        self.assertEqual(
+            allow,
+            "Environment=BUILDKITE_ALLOWED_ENVIRONMENT_VARIABLES="
+            "^LANG$,^LC_ALL$,^PYTHONDONTWRITEBYTECODE$,^HP_BUILDKITE_CHECK$,^HP_BUILDKITE_OS$",
+        )
+        for forbidden in (
+            "BASH_ENV",
+            "GIT_EXTERNAL_DIFF",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_SSH_COMMAND",
+            "LD_PRELOAD",
+            "PYTHONPATH",
+        ):
+            self.assertNotIn(forbidden, allow)
 
     def test_token_cleanup_does_not_require_a_writable_etc_mount(self) -> None:
         text = DROPIN.read_text(encoding="utf-8")
