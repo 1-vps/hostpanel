@@ -89,6 +89,7 @@ done
 [[ "$org" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || fail "invalid --org"
 if [[ -n "$enable_webhook_slug" ]]; then
   [[ "$enable_webhook_slug" =~ ^[a-z0-9][a-z0-9-]{0,99}$ ]] || fail "invalid --enable-webhook slug"
+  [[ "$enable_webhook_slug" == "hostpanel" ]] || fail "--enable-webhook must target the reviewed hostpanel pipeline slug"
   [[ "$confirm_create" == "false" ]] || fail "--confirm-create is not valid with --enable-webhook"
 else
   [[ "$confirm_static_bootstrap_signed" == "false" ]] || {
@@ -102,6 +103,7 @@ fi
 repository='git@github.com:1-vps/hostpanel.git'
 cluster_name='HostPanel'
 pipeline_name='HostPanel'
+pipeline_slug_expected='hostpanel'
 queue_upload='hostpanel-upload'
 queue_ci='hostpanel-ci'
 queue_qemu='hostpanel-qemu'
@@ -479,6 +481,7 @@ verify_pipeline() {
   python3 - \
     "$mode" \
     "$slug" \
+    "$pipeline_name" \
     "$repository" \
     "$static_bootstrap" \
     "$expected_provider" \
@@ -492,7 +495,7 @@ import sys
 import uuid
 import yaml
 
-mode, slug, repository, expected_configuration, expected_provider_raw, require_signature, require_webhook, raw = sys.argv[1:]
+mode, slug, expected_name, repository, expected_configuration, expected_provider_raw, require_signature, require_webhook, raw = sys.argv[1:]
 
 try:
     pipeline = json.loads(raw)
@@ -500,8 +503,10 @@ except json.JSONDecodeError as exc:
     raise SystemExit("pipeline view did not return valid JSON") from exc
 if not isinstance(pipeline, dict):
     raise SystemExit("pipeline view did not return a JSON object")
-if pipeline.get("slug") != slug:
+if pipeline.get("slug") != slug or slug != "hostpanel":
     raise SystemExit("pipeline slug mismatch")
+if pipeline.get("name") != expected_name:
+    raise SystemExit("pipeline name mismatch")
 if pipeline.get("repository") != repository:
     raise SystemExit("pipeline repository mismatch")
 if pipeline.get("visibility") != "private":
@@ -510,6 +515,10 @@ if pipeline.get("env") not in ({}, None):
     raise SystemExit("pipeline-level environment must be empty")
 if pipeline.get("branch_configuration") != "main":
     raise SystemExit("pipeline branch configuration must restrict branch builds to main")
+if pipeline.get("default_branch") != "main":
+    raise SystemExit("pipeline default branch must be main")
+if pipeline.get("allow_rebuilds") is not False:
+    raise SystemExit("pipeline rebuilds must be disabled")
 
 cluster_id = pipeline.get("cluster_id")
 if not isinstance(cluster_id, str):
@@ -682,13 +691,13 @@ EOF
 fi
 
 cluster_list="$(bk api "/clusters?per_page=100")"
-pipeline_list="$(bk pipeline list --repository "$repository" --limit 3000 -o json)"
+pipeline_list="$(bk pipeline list --limit 3000 -o json)"
 
-python3 - "$cluster_name" "$pipeline_name" "$repository" "$cluster_list" "$pipeline_list" <<'PY'
+python3 - "$cluster_name" "$pipeline_name" "$pipeline_slug_expected" "$repository" "$cluster_list" "$pipeline_list" <<'PY'
 import json
 import sys
 
-cluster_name, pipeline_name, repository, cluster_raw, pipeline_raw = sys.argv[1:]
+cluster_name, pipeline_name, pipeline_slug, repository, cluster_raw, pipeline_raw = sys.argv[1:]
 
 def load(label, raw):
     try:
@@ -727,6 +736,8 @@ for item in objects(pipelines):
     name = item.get("name")
     if isinstance(name, str) and name.casefold() == pipeline_name.casefold():
         raise SystemExit("an existing HostPanel pipeline name was found; inspect it instead of creating a duplicate")
+    if item.get("slug") == pipeline_slug:
+        raise SystemExit("an existing HostPanel pipeline slug was found; inspect it instead of creating a duplicate")
     if item.get("repository") == repository or item.get("repository_url") == repository:
         raise SystemExit("an existing pipeline for the HostPanel repository was found; inspect it instead of creating a duplicate")
 PY
@@ -798,18 +809,24 @@ assert_no_target_agents
 pipeline_payload="$(
   python3 - \
     "$pipeline_name" \
+    "$pipeline_slug_expected" \
     "$cluster_uuid" \
     "$repository" \
     "$static_bootstrap" \
     "$quarantine_provider_json" <<'PY'
 import json
 import sys
-name, cluster_id, repository, configuration, provider_raw = sys.argv[1:]
+name, slug, cluster_id, repository, configuration, provider_raw = sys.argv[1:]
 print(json.dumps({
     "name": name,
+    "slug": slug,
     "cluster_id": cluster_id,
     "repository": repository,
     "branch_configuration": "main",
+    "default_branch": "main",
+    "visibility": "private",
+    "env": {},
+    "allow_rebuilds": False,
     "configuration": configuration,
     "provider_settings": json.loads(provider_raw),
 }))
@@ -837,8 +854,8 @@ try:
     uuid.UUID(pipeline_id)
 except ValueError as exc:
     raise SystemExit("pipeline id is not a UUID") from exc
-if not isinstance(slug, str) or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,99}", slug) is None:
-    raise SystemExit("pipeline creation returned an unsafe slug")
+if slug != "hostpanel":
+    raise SystemExit("pipeline creation did not return the reviewed hostpanel slug")
 print(pipeline_id, slug)
 PY
 )
