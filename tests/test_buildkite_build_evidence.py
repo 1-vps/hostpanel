@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import copy
 import importlib.util
 import json
@@ -32,6 +33,21 @@ BRANCH = "agent/release-consistency-foundation"
 BUILD_NUMBER = 42
 
 
+def signed_step() -> dict:
+    protected = base64.urlsafe_b64encode(
+        json.dumps(
+            {"alg": "EdDSA", "kid": "hostpanel-2026-08"}, separators=(",", ":")
+        ).encode()
+    ).decode().rstrip("=")
+    return {
+        "signature": {
+            "algorithm": "EdDSA",
+            "signed_fields": ["command", "env", "matrix", "plugins", "repository_url"],
+            "value": f"{protected}..b3BhcXVlLXNpZ25hdHVyZQ",
+        }
+    }
+
+
 def build_fixture() -> dict:
     return {
         "id": "44444444-4444-4444-4444-444444444444",
@@ -55,6 +71,7 @@ def job_fixture(step_key: str, command: str, queue_id: str, index: int) -> dict:
         "id": str(uuid.UUID(int=index + 1)),
         "type": "script",
         "step_key": step_key,
+        "step": signed_step(),
         "command": command,
         "state": "passed",
         "soft_failed": False,
@@ -165,6 +182,48 @@ class BuildkiteBuildEvidenceTests(unittest.TestCase):
                 with self.assertRaises(module.EvidenceError):
                     self.verify_jobs(payload)
 
+    def test_unsigned_or_wrong_signature_metadata_is_rejected(self) -> None:
+        mutations = (
+            None,
+            {
+                "algorithm": "EdDSA",
+                "signed_fields": ["command", "repository_url"],
+                "value": signed_step()["signature"]["value"],
+            },
+            {
+                "algorithm": "EdDSA",
+                "signed_fields": ["command", "env", "matrix", "plugins", "repository_url"],
+                "value": signed_step()["signature"]["value"].replace(
+                    "hostpanel-2026-08", "other"
+                ),
+            },
+        )
+        for signature in mutations:
+            with self.subTest(signature=signature):
+                payload = jobs_fixture()
+                if signature is None:
+                    payload["items"][0]["step"] = {}
+                else:
+                    payload["items"][0]["step"] = {"signature": signature}
+                with self.assertRaises(module.EvidenceError):
+                    self.verify_jobs(payload)
+
+    def test_missing_required_build_or_job_field_is_rejected(self) -> None:
+        build = build_fixture()
+        del build["rebuilt_from"]
+        with self.assertRaisesRegex(module.EvidenceError, "missing required fields"):
+            module.verify_build(
+                build,
+                build_number=BUILD_NUMBER,
+                expected_commit=COMMIT,
+                expected_branch=BRANCH,
+                pipeline_id=PIPELINE_ID,
+            )
+        jobs = jobs_fixture()
+        del jobs["items"][0]["signal_reason"]
+        with self.assertRaisesRegex(module.EvidenceError, "missing required fields"):
+            self.verify_jobs(jobs)
+
     def test_missing_duplicate_and_extra_attempts_are_rejected(self) -> None:
         missing = jobs_fixture()
         missing["items"].pop()
@@ -182,10 +241,14 @@ class BuildkiteBuildEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(module.EvidenceError, "job count mismatch"):
             self.verify_jobs(extra)
 
-    def test_jobs_pagination_is_fail_closed(self) -> None:
+    def test_jobs_pagination_and_shape_are_fail_closed(self) -> None:
         payload = jobs_fixture()
         payload["links"]["next"] = "https://api.buildkite.com/v2/organizations/x/.../jobs?after=cursor"
         with self.assertRaisesRegex(module.EvidenceError, "next cursor"):
+            self.verify_jobs(payload)
+        payload = jobs_fixture()
+        payload["unexpected"] = True
+        with self.assertRaisesRegex(module.EvidenceError, "top-level"):
             self.verify_jobs(payload)
 
     def test_build_metadata_is_bound_to_exact_webhook_commit_pipeline_and_branch(self) -> None:
