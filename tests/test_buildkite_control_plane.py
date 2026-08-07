@@ -83,6 +83,9 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
             'bk api "/organizations/$org/agents?cluster_queue_id=$queue_uuid"',
             text,
         )
+        self.assertIn('bk queue list "$cluster_uuid" --limit 100 --per-page 100 -o json', text)
+        self.assertIn('item.get("hosted_agents") is not None', text)
+        self.assertIn('item.get("dispatch_paused") is not False', text)
         self.assertIn("assert_queue_has_no_connected_agents", text)
         self.assertIn("assert_no_target_agents", text)
         self.assertIn("hostpanel-upload", text)
@@ -99,8 +102,14 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
             'bk api --method PATCH "/pipelines/$enable_webhook_slug" --data "$active_patch"',
             text,
         )
-        self.assertIn("verify_pipeline quarantine", text)
-        self.assertIn("verify_pipeline active", text)
+        self.assertIn(
+            "verify_pipeline quarantine",
+            text,
+        )
+        self.assertIn(
+            "verify_pipeline active",
+            text,
+        )
         self.assertLess(
             text.index('"trigger_mode": "none"'),
             text.index('"trigger_mode": "code"'),
@@ -135,6 +144,61 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
         self.assertIn("No automatic cleanup was attempted", text)
         self.assertIn("static bootstrap JWS key ID mismatch", text)
         self.assertIn("build_pull_request_merge_commits", text)
+
+    def test_provider_policy_closes_all_documented_github_trigger_paths(self) -> None:
+        text = CONTROL_PLANE.read_text(encoding="utf-8")
+        for setting in (
+            "filter_enabled",
+            "build_pull_request_base_branch_changed",
+            "build_pull_request_labels_changed",
+            "build_pull_request_reopened",
+            "build_pull_request_edited",
+            "build_pull_request_converted_to_draft",
+            "build_pull_request_review_requested",
+            "build_check_run_completed",
+            "build_pull_request_review_submitted",
+            "build_pull_request_review_dismissed",
+            "build_release_published",
+            "build_release_created",
+            "build_release_released",
+            "build_deployment_status_created",
+            "build_pull_request_review_comment_created",
+            "build_pull_request_dequeued",
+            "build_create_event",
+            "build_merge_group_checks_requested",
+            "skip_builds_for_closed_pull_requests",
+            "publish_blocked_as_pending",
+        ):
+            self.assertGreaterEqual(text.count(f'"{setting}"'), 2, setting)
+        self.assertIn("unreviewed enabled boolean setting", text)
+
+    def test_queue_and_cluster_shape_checks_are_exact(self) -> None:
+        text = CONTROL_PLANE.read_text(encoding="utf-8")
+        self.assertIn("if len(payload) != 3 or set(mapping) != expected:", text)
+        self.assertIn('item.get("hosted_agents") is not None', text)
+        self.assertIn('item.get("dispatch_paused") is not False', text)
+        self.assertEqual(text.count('"default_queue_id" not in payload'), 2)
+
+    def test_future_enabled_provider_boolean_fails_closed(self) -> None:
+        text = CONTROL_PLANE.read_text(encoding="utf-8")
+        self.assertIn("allowed_true_settings", text)
+        self.assertIn("isinstance(value, bool) and value", text)
+        self.assertNotIn("key.startswith(\"build_\") and value is True", text)
+
+    def test_pipeline_control_plane_fields_are_fail_closed(self) -> None:
+        text = CONTROL_PLANE.read_text(encoding="utf-8")
+        self.assertIn('pipeline.get("visibility") != "private"', text)
+        self.assertIn('pipeline.get("env") not in ({}, None)', text)
+        self.assertIn('pipeline.get("branch_configuration") != "main"', text)
+        self.assertIn('"branch_configuration": "main"', text)
+
+    def test_duplicate_and_queue_inventory_checks_are_pagination_bounded(self) -> None:
+        text = CONTROL_PLANE.read_text(encoding="utf-8")
+        self.assertIn('bk api "/clusters?per_page=100"', text)
+        self.assertIn('--limit 3000', text)
+        self.assertIn("cluster inventory reached the 100-item pagination bound", text)
+        self.assertIn("pipeline inventory reached the CLI pagination bound", text)
+        self.assertIn("HostPanel queue inventory reached the 100-item bound", text)
 
     def test_embedded_python_blocks_compile(self) -> None:
         text = CONTROL_PLANE.read_text(encoding="utf-8")
