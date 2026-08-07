@@ -25,7 +25,10 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
         self.assertIn("control-plane creation plan", result.stdout)
         self.assertIn("No agents are started by this tool.", result.stdout)
         self.assertIn("No GitHub webhook is created in this phase.", result.stdout)
-        self.assertIn("no-checkout bootstrap", result.stdout)
+        self.assertIn("exactly these queues", result.stdout)
+        self.assertIn("fork PR builds disabled", result.stdout)
+        self.assertIn("commit-status publishing enabled", result.stdout)
+        self.assertIn("/bk issue-comment retrigger enabled", result.stdout)
         self.assertIn("use --enable-webhook", result.stdout)
         self.assertNotIn("--create-webhook", result.stdout)
 
@@ -36,10 +39,12 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("webhook activation plan", result.stdout)
         self.assertIn("statically signed", result.stdout)
+        self.assertIn("provider policy", result.stdout)
         self.assertIn("public half of the read-only checkout deploy key", result.stdout)
         self.assertIn("No build has ever been created", result.stdout)
         self.assertIn("No agent is connected", result.stdout)
-        self.assertIn("zero-build", result.stdout)
+        self.assertIn("POST /pipelines/<slug>/webhook", result.stdout)
+        self.assertIn("optional expanded-webhook-triggers", result.stdout)
 
     def test_create_apply_requires_explicit_confirmation(self) -> None:
         result = self.run_tool("--org", "example-org", "--apply")
@@ -75,24 +80,38 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
             'bk pipeline list --repository "$repository" -o json',
             "bk cluster create",
             "bk queue create",
+            'bk cluster view "$cluster_uuid" -o json',
+            'bk queue list "$cluster_uuid" -o json',
+            "default_queue_id",
             "hostpanel-upload",
             "hostpanel-ci",
             "hostpanel-qemu",
+            "provider_settings",
+            '"build_pull_requests": True',
+            '"build_pull_request_forks": False',
+            '"publish_commit_status": True',
+            '"build_issue_comment_created": True',
+            '"issue_comment_command_word": "/bk"',
+            '"build_pull_request_merge_commits": False',
+            '"separate_pull_request_statuses": True',
+            '"trigger_mode": "code"',
             "bk api --method POST /pipelines --data",
-            '"/pipelines/$enable_webhook_slug/webhook"',
-            '"/pipelines/$enable_webhook_slug/github-webhooks"',
+            'bk api --method POST "/pipelines/$enable_webhook_slug/webhook"',
             "python3 -c 'import yaml'",
             "static bootstrap is not signed",
-            "signature algorithm is not EdDSA",
+            "static bootstrap signature algorithm is not EdDSA",
             "static bootstrap JWS key ID mismatch",
             "pipeline already has build history",
+            "agent inventory reached the query limit",
             "an agent is already connected to the HostPanel cluster",
+            "Buildkite did not expose the expected GitHub webhook URL",
             "No automatic cleanup was attempted",
             "MANDATORY STOP:",
         ):
             self.assertIn(expected, text)
         for forbidden in (
             "--create-webhook",
+            "/github-webhooks",
             "bk auth token",
             "--token",
             "buildkite-agent start",
