@@ -18,4 +18,4 @@ command -v python3 >/dev/null 2>&1 || {
   exit 1
 }
 
-exec python3 "$operator" "$@"
+exec python3 -I "$operator" "$@"
