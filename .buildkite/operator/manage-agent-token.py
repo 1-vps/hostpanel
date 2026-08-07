@@ -221,6 +221,10 @@ def list_tokens(cluster_id: str) -> list[dict]:
     return payload
 
 
+def worker_token_matches(cluster_id: str, description: str) -> list[dict]:
+    return [item for item in list_tokens(cluster_id) if item.get("description") == description]
+
+
 def token_is_absent(cluster_id: str, token_id: str) -> bool:
     try:
         remaining = list_tokens(cluster_id)
@@ -392,6 +396,36 @@ def revoke_created_token(cluster_id: str, token_id: str) -> bool:
     return token_is_absent(cluster_id, token_id)
 
 
+def fail_ambiguous_create(cluster_id: str, description: str, cause: Exception) -> None:
+    try:
+        matches = worker_token_matches(cluster_id, description)
+    except OperatorError as inventory_exc:
+        raise OperatorError(
+            "agent token create request failed ambiguously and token inventory could not be "
+            f"verified; inspect cluster tokens for description {description!r} and revoke any "
+            "match before provisioning or retrying"
+        ) from cause
+
+    if len(matches) == 1 and isinstance(matches[0].get("id"), str):
+        token_id = canonical_uuid(matches[0]["id"], "recovered ambiguous token id")
+        if revoke_created_token(cluster_id, token_id):
+            raise OperatorError(
+                "agent token create request failed ambiguously; one matching token was recovered "
+                f"and revoked ({token_id}); provisioning remains stopped so the operator can "
+                "inspect the failed create before retrying"
+            ) from cause
+        raise OperatorError(
+            "agent token create request failed ambiguously and the recovered matching token could "
+            f"not be proven revoked; revoke token id {token_id} manually before provisioning"
+        ) from cause
+
+    raise OperatorError(
+        "agent token create request failed ambiguously; token inventory did not contain exactly "
+        f"one recoverable match for description {description!r}. Inspect the cluster token "
+        "inventory and revoke every matching token before provisioning or retrying"
+    ) from cause
+
+
 def create_token(args: argparse.Namespace) -> int:
     if not ORG_RE.fullmatch(args.org):
         raise OperatorError("invalid --org")
@@ -428,12 +462,11 @@ def create_token(args: argparse.Namespace) -> int:
     preflight(args.org)
     verify_hostpanel_cluster(cluster_id)
 
-    for item in list_tokens(cluster_id):
-        if item.get("description") == description:
-            raise OperatorError(
-                "an agent token already exists for this worker id; "
-                "inspect/revoke it instead of creating a duplicate"
-            )
+    if worker_token_matches(cluster_id, description):
+        raise OperatorError(
+            "an agent token already exists for this worker id; "
+            "inspect/revoke it instead of creating a duplicate"
+        )
 
     expires = (
         dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
@@ -447,10 +480,15 @@ def create_token(args: argparse.Namespace) -> int:
         },
         separators=(",", ":"),
     )
-    raw = run_bk(
-        ["api", "--method", "POST", token_endpoint(cluster_id), "--data", payload],
-        sensitive_response=True,
-    )
+    try:
+        raw = run_bk(
+            ["api", "--method", "POST", token_endpoint(cluster_id), "--data", payload],
+            sensitive_response=True,
+        )
+    except OperatorError as exc:
+        fail_ambiguous_create(cluster_id, description, exc)
+        raise AssertionError("unreachable")
+
     token_id = ""
     try:
         created = parse_json(raw, "agent token create")
@@ -466,13 +504,8 @@ def create_token(args: argparse.Namespace) -> int:
     except Exception as exc:
         if not token_id:
             try:
-                matches = [
-                    item
-                    for item in list_tokens(cluster_id)
-                    if item.get("description") == description
-                    and isinstance(item.get("id"), str)
-                ]
-                if len(matches) == 1:
+                matches = worker_token_matches(cluster_id, description)
+                if len(matches) == 1 and isinstance(matches[0].get("id"), str):
                     token_id = canonical_uuid(matches[0]["id"], "recovered token id")
             except OperatorError:
                 token_id = ""
