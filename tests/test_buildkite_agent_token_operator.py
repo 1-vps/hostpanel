@@ -323,7 +323,7 @@ class BuildkiteAgentTokenOperatorTests(unittest.TestCase):
         source = TOKEN_TOOL.read_text(encoding="utf-8")
         create = source.index("def create_token")
         cluster = source.index("verify_hostpanel_cluster(cluster_id)", create)
-        inventory = source.index("for item in list_tokens(cluster_id):", cluster)
+        inventory = source.index("if worker_token_matches(cluster_id, description):", cluster)
         post = source.index('"--method", "POST"', inventory)
         self.assertLess(cluster, inventory)
         self.assertLess(inventory, post)
