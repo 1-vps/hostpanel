@@ -1,6 +1,7 @@
 /.buildkite/ @1-vps
 /BUILDKITE.md @1-vps
 /tests/test_buildkite_pipeline.py @1-vps
+/tests/test_buildkite_dynamic_signing.py @1-vps
 /tests/test_buildkite_control_plane.py @1-vps
 /tests/test_buildkite_control_plane_entrypoint.py @1-vps
 /tests/test_buildkite_control_plane_runtime.py @1-vps
