@@ -16,6 +16,7 @@ import uuid
 
 SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 REQUIRED_SCOPES = frozenset({"read_clusters", "write_clusters"})
+REQUIRED_CREATE_SCOPES = REQUIRED_SCOPES | frozenset({"read_secret_details"})
 WORKER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 ORG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 DESCRIPTION_PREFIX = "hostpanel-worker:"
@@ -140,14 +141,18 @@ def parse_json(raw: str, label: str):
         raise OperatorError(f"{label} did not return valid JSON") from exc
 
 
-def preflight(org: str) -> None:
+def preflight(
+    org: str,
+    *,
+    required_scopes: frozenset[str] = REQUIRED_SCOPES,
+) -> None:
     run_bk(["auth", "switch", org])
     run_bk(["auth", "status", "-o", "json"])
     payload = parse_json(run_bk(["api", "/access-token"]), "bk api /access-token")
     if not isinstance(payload, dict) or not isinstance(payload.get("scopes"), list):
         raise OperatorError("Buildkite access-token response does not contain scopes")
     scopes = {item for item in payload["scopes"] if isinstance(item, str)}
-    missing = sorted(REQUIRED_SCOPES - scopes)
+    missing = sorted(required_scopes - scopes)
     if missing:
         raise OperatorError("Buildkite credential is missing required scopes: " + ", ".join(missing))
 
@@ -159,6 +164,39 @@ def token_endpoint(cluster_id: str, token_id: str | None = None) -> str:
 
 def queue_endpoint(cluster_id: str) -> str:
     return f"/clusters/{cluster_id}/queues?per_page={MAX_INVENTORY_ITEMS}"
+
+
+def secret_endpoint(org: str, cluster_id: str) -> str:
+    if ORG_RE.fullmatch(org) is None:
+        raise OperatorError("invalid organization slug for cluster Secrets lookup")
+    return (
+        f"/organizations/{org}/clusters/{cluster_id}/secrets"
+        f"?per_page={MAX_INVENTORY_ITEMS}"
+    )
+
+
+def verify_no_cluster_secrets(org: str, cluster_id: str) -> None:
+    payload = parse_json(
+        run_bk(["api", secret_endpoint(org, cluster_id)]),
+        "HostPanel cluster Secrets inventory",
+    )
+    if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
+        raise OperatorError("HostPanel cluster Secrets inventory returned an unexpected JSON shape")
+    if len(payload) >= MAX_INVENTORY_ITEMS:
+        raise OperatorError(
+            "HostPanel cluster Secrets inventory reached the 100-item pagination bound; "
+            "cannot prove inventory completeness"
+        )
+    if payload:
+        keys: list[str] = []
+        for item in payload[:10]:
+            key = item.get("key")
+            keys.append(key if isinstance(key, str) and key else "<unknown>")
+        raise OperatorError(
+            "HostPanel cluster contains Buildkite Secrets ("
+            + ", ".join(keys)
+            + "); remove/review every Secret before issuing a worker registration token"
+        )
 
 
 def verify_hostpanel_cluster_identity(cluster_id: str) -> dict:
@@ -459,8 +497,9 @@ def create_token(args: argparse.Namespace) -> int:
     require_apply_root()
     ensure_token_root()
     secure_parent(output)
-    preflight(args.org)
+    preflight(args.org, required_scopes=REQUIRED_CREATE_SCOPES)
     verify_hostpanel_cluster(cluster_id)
+    verify_no_cluster_secrets(args.org, cluster_id)
 
     if worker_token_matches(cluster_id, description):
         raise OperatorError(
@@ -500,6 +539,10 @@ def create_token(args: argparse.Namespace) -> int:
             allowed_cidr=allowed_cidr,
             expires_at=expires,
         )
+        # Close the activation-to-connect race: a newly-added Buildkite Secret
+        # after token issuance must revoke the fresh registration credential
+        # before its value is persisted for worker provisioning.
+        verify_no_cluster_secrets(args.org, cluster_id)
         write_secret_exclusive(output, token)
     except Exception as exc:
         if not token_id:
@@ -530,6 +573,7 @@ def create_token(args: argparse.Namespace) -> int:
     print(f"allowed_ip_addresses={allowed_cidr}")
     print(f"expires_at={isoformat_z(expires)}")
     print(f"token_file={output}")
+    print("Verified zero HostPanel cluster Secrets before and after token issuance.")
     print("After the worker connects and smoke-test passes, revoke this token immediately.")
     return 0
 
@@ -580,6 +624,8 @@ def revoke_token(args: argparse.Namespace) -> int:
     if token_file:
         parent_fd = open_secure_parent(token_file)
         os.close(parent_fd)
+    # Keep the narrower read/write-cluster scope for incident cleanup: revoke
+    # must still work when read_secret_details is unavailable.
     preflight(args.org)
     # Revocation is an incident-cleanup path. Bind it to the exact HostPanel
     # cluster identity, but do not require any queue topology to still be healthy.
