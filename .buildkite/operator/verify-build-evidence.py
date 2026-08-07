@@ -14,7 +14,6 @@ if __name__ == "__main__" and not sys.flags.isolated:
 import argparse
 import json
 import os
-import pathlib
 import re
 import shutil
 import subprocess
@@ -27,6 +26,47 @@ REQUIRED_SCOPES = frozenset({"read_builds", "read_artifacts"})
 ORG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 MAX_JOBS = 100
+
+REQUIRED_BUILD_FIELDS = frozenset(
+    {
+        "id",
+        "number",
+        "state",
+        "blocked",
+        "commit",
+        "branch",
+        "source",
+        "rebuilt_from",
+        "pipeline",
+    }
+)
+REQUIRED_JOB_FIELDS = frozenset(
+    {
+        "id",
+        "type",
+        "step_key",
+        "command",
+        "state",
+        "soft_failed",
+        "exit_status",
+        "signal",
+        "signal_reason",
+        "broken_reason",
+        "artifact_paths",
+        "retried",
+        "retried_in_job_id",
+        "retries_count",
+        "retry_source",
+        "retry_type",
+        "parallel_group_index",
+        "parallel_group_total",
+        "matrix",
+        "cluster_id",
+        "cluster_queue_id",
+        "started_at",
+        "finished_at",
+    }
+)
 
 UPLOAD_STEP = (
     "upload-reviewed-pipeline",
@@ -67,6 +107,12 @@ def canonical_uuid(value: object, label: str) -> str:
     if value != canonical:
         raise EvidenceError(f"{label} is not canonical lowercase UUID form")
     return canonical
+
+
+def require_fields(payload: dict, required: frozenset[str], label: str) -> None:
+    missing = sorted(required.difference(payload))
+    if missing:
+        raise EvidenceError(f"{label} is missing required fields: " + ", ".join(missing))
 
 
 def safe_environment() -> dict[str, str]:
@@ -164,29 +210,33 @@ def verify_build(
 ) -> str:
     if not isinstance(payload, dict):
         raise EvidenceError("build response is not a JSON object")
-    build_id = canonical_uuid(payload.get("id"), "build id")
-    if payload.get("number") != build_number:
+    require_fields(payload, REQUIRED_BUILD_FIELDS, "build response")
+    build_id = canonical_uuid(payload["id"], "build id")
+    if payload["number"] != build_number:
         raise EvidenceError("build number mismatch")
-    if payload.get("state") != "passed":
+    if payload["state"] != "passed":
         raise EvidenceError("build state is not passed")
-    if payload.get("blocked") is not False:
-        raise EvidenceError("build is blocked or blocked state is unavailable")
-    if payload.get("commit") != expected_commit:
+    if payload["blocked"] is not False:
+        raise EvidenceError("build is blocked")
+    if payload["commit"] != expected_commit:
         raise EvidenceError("build commit does not match the exact expected SHA")
-    if payload.get("branch") != expected_branch:
+    if payload["branch"] != expected_branch:
         raise EvidenceError("build branch does not match the expected branch")
-    if payload.get("source") != "webhook":
+    if payload["source"] != "webhook":
         raise EvidenceError("merge evidence must come from a webhook build")
-    if payload.get("rebuilt_from") is not None:
+    if payload["rebuilt_from"] is not None:
         raise EvidenceError("rebuilt builds are not accepted as merge evidence")
-    pipeline = payload.get("pipeline")
+    pipeline = payload["pipeline"]
     if not isinstance(pipeline, dict):
         raise EvidenceError("build pipeline object is unavailable")
-    if canonical_uuid(pipeline.get("id"), "build pipeline id") != pipeline_id:
+    for field in ("id", "slug", "repository"):
+        if field not in pipeline:
+            raise EvidenceError(f"build pipeline object is missing required field: {field}")
+    if canonical_uuid(pipeline["id"], "build pipeline id") != pipeline_id:
         raise EvidenceError("build pipeline id mismatch")
-    if pipeline.get("slug") != PIPELINE_SLUG:
+    if pipeline["slug"] != PIPELINE_SLUG:
         raise EvidenceError("build pipeline slug mismatch")
-    if pipeline.get("repository") != REPOSITORY:
+    if pipeline["repository"] != REPOSITORY:
         raise EvidenceError("build pipeline repository mismatch")
     return build_id
 
@@ -220,18 +270,19 @@ def verify_job(
 ) -> str:
     if not isinstance(job, dict):
         raise EvidenceError(f"{step_key}: job is not a JSON object")
-    job_id = canonical_uuid(job.get("id"), f"{step_key} job id")
-    if job.get("type") != "script":
+    require_fields(job, REQUIRED_JOB_FIELDS, f"{step_key} job")
+    job_id = canonical_uuid(job["id"], f"{step_key} job id")
+    if job["type"] != "script":
         raise EvidenceError(f"{step_key}: job type is not script")
-    if job.get("step_key") != step_key:
+    if job["step_key"] != step_key:
         raise EvidenceError(f"{step_key}: step key mismatch")
-    if job.get("command") != expected_command:
+    if job["command"] != expected_command:
         raise EvidenceError(f"{step_key}: command mismatch")
-    if job.get("state") != "passed":
+    if job["state"] != "passed":
         raise EvidenceError(f"{step_key}: state is not passed")
-    if job.get("soft_failed") is not False:
+    if job["soft_failed"] is not False:
         raise EvidenceError(f"{step_key}: soft_failed must be false")
-    exit_status = job.get("exit_status")
+    exit_status = job["exit_status"]
     if isinstance(exit_status, bool) or not isinstance(exit_status, int) or exit_status != 0:
         raise EvidenceError(f"{step_key}: exit_status must be integer zero")
     for field in (
@@ -241,27 +292,29 @@ def verify_job(
         "retried_in_job_id",
         "retry_source",
         "retry_type",
-        "retried_by",
         "parallel_group_index",
         "parallel_group_total",
         "matrix",
-        "promised_exit_status",
-        "promised_exit_status_at",
     ):
         require_none(job, field, step_key)
-    if job.get("retried") is not False:
+    for optional_failure_field in ("promised_exit_status", "promised_exit_status_at"):
+        if optional_failure_field in job and job[optional_failure_field] is not None:
+            raise EvidenceError(f"{step_key}: {optional_failure_field} must be absent or null")
+    if "retried_by" in job and job["retried_by"] is not None:
+        raise EvidenceError(f"{step_key}: retried_by must be absent or null")
+    if job["retried"] is not False:
         raise EvidenceError(f"{step_key}: retried must be false")
-    if job.get("retries_count") not in (None, 0):
+    if job["retries_count"] not in (None, 0):
         raise EvidenceError(f"{step_key}: retries_count proves retry history")
-    if job.get("artifact_paths") not in (None, ""):
+    if job["artifact_paths"] not in (None, ""):
         raise EvidenceError(f"{step_key}: artifact_paths must be empty")
-    if canonical_uuid(job.get("cluster_id"), f"{step_key} cluster id") != cluster_id:
+    if canonical_uuid(job["cluster_id"], f"{step_key} cluster id") != cluster_id:
         raise EvidenceError(f"{step_key}: cluster id mismatch")
-    if canonical_uuid(job.get("cluster_queue_id"), f"{step_key} queue id") != queue_id:
+    if canonical_uuid(job["cluster_queue_id"], f"{step_key} queue id") != queue_id:
         raise EvidenceError(f"{step_key}: queue id mismatch")
-    if not isinstance(job.get("started_at"), str) or not job["started_at"]:
+    if not isinstance(job["started_at"], str) or not job["started_at"]:
         raise EvidenceError(f"{step_key}: started_at is missing")
-    if not isinstance(job.get("finished_at"), str) or not job["finished_at"]:
+    if not isinstance(job["finished_at"], str) or not job["finished_at"]:
         raise EvidenceError(f"{step_key}: finished_at is missing")
     return job_id
 
@@ -277,6 +330,10 @@ def verify_jobs_page(
 ) -> int:
     if not isinstance(payload, dict):
         raise EvidenceError("jobs response is not a JSON object")
+    if set(payload).difference({"items", "links"}):
+        # Extra top-level metadata is not security-sensitive, but fail closed so
+        # an API shape change is explicitly reviewed before merge evidence is trusted.
+        raise EvidenceError("jobs response contains unreviewed top-level fields")
     items = payload.get("items")
     links = payload.get("links")
     if not isinstance(items, list) or not isinstance(links, dict):
