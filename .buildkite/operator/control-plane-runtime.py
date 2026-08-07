@@ -22,25 +22,43 @@ class RuntimeErrorSafe(RuntimeError):
     pass
 
 
-def load_base():
+def load_sibling(filename: str, module_name: str):
     here = pathlib.Path(__file__).resolve().parent
-    path = here / "bootstrap-control-plane.py"
+    path = here / filename
     try:
         info = os.lstat(path)
     except OSError as exc:
-        raise RuntimeErrorSafe("control-plane base operator is unavailable") from exc
+        raise RuntimeErrorSafe(f"required operator module is unavailable: {filename}") from exc
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
-        raise RuntimeErrorSafe("control-plane base operator must be a regular non-symlink file")
-    spec = importlib.util.spec_from_file_location("hostpanel_control_plane_base", path)
+        raise RuntimeErrorSafe(f"required operator module must be a regular non-symlink file: {filename}")
+    spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
-        raise RuntimeErrorSafe("cannot load control-plane base operator")
+        raise RuntimeErrorSafe(f"cannot load operator module: {filename}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
-base = load_base()
+base = load_sibling("bootstrap-control-plane.py", "hostpanel_control_plane_base")
+secret_verifier = load_sibling("verify-cluster-secrets.py", "hostpanel_cluster_secret_verifier")
+
+
+def preflight(org: str) -> None:
+    base.preflight(org)
+    try:
+        secret_verifier.verify_scope_payload(base.run_bk(["api", "/access-token"]))
+    except secret_verifier.SecretVerificationError as exc:
+        raise base.OperatorError(str(exc)) from exc
+
+
+def assert_no_cluster_secrets(org: str, cluster_id: str) -> None:
+    try:
+        endpoint = secret_verifier.endpoint(org, cluster_id)
+        raw = base.run_bk(["api", endpoint])
+        secret_verifier.verify_empty_inventory(raw)
+    except secret_verifier.SecretVerificationError as exc:
+        raise base.OperatorError(str(exc)) from exc
 
 
 def fetch_pipeline_raw() -> str:
@@ -149,7 +167,7 @@ def verify_full_patch_response(
 def create_control_plane(org: str):
     resources = base.CreatedResources()
     try:
-        base.preflight(org)
+        preflight(org)
         base.assert_no_existing_control_plane()
         resources.cluster_uuid = base.top_uuid(
             base.run_bk(
@@ -193,6 +211,7 @@ def create_control_plane(org: str):
         if verified_queues != queue_ids:
             raise base.OperatorError("re-fetched HostPanel queue UUIDs do not match created queue UUIDs")
         base.assert_no_queue_agents(org, verified_queues)
+        assert_no_cluster_secrets(org, resources.cluster_uuid)
 
         created = base.parse_json(
             base.run_bk(
@@ -241,6 +260,7 @@ def create_control_plane(org: str):
         )
         base.assert_zero_builds(org)
         base.assert_no_queue_agents(org, verified_queues)
+        assert_no_cluster_secrets(org, resources.cluster_uuid)
         return resources
     except Exception:
         print("Control-plane creation stopped. Created non-secret resource identifiers, if any:", file=sys.stderr)
@@ -251,7 +271,8 @@ def create_control_plane(org: str):
 
 
 def activate_control_plane(org: str, identity) -> None:
-    base.preflight(org)
+    preflight(org)
+    assert_no_cluster_secrets(org, identity.cluster_uuid)
     queues = base.verify_cluster(identity.cluster_uuid)
     if queues != identity.queues:
         raise base.OperatorError("HostPanel queue UUIDs changed between creation and activation")
@@ -278,6 +299,7 @@ def activate_control_plane(org: str, identity) -> None:
         raise base.OperatorError("HostPanel queue UUIDs changed during quarantine normalization")
     base.assert_no_queue_agents(org, identity.queues)
     base.assert_zero_builds(org)
+    assert_no_cluster_secrets(org, identity.cluster_uuid)
 
     provider = base.parse_json(normalized, "quarantine PATCH").get("provider")
     webhook = provider.get("webhook_url") if isinstance(provider, dict) else None
@@ -305,6 +327,7 @@ def activate_control_plane(org: str, identity) -> None:
         raise base.OperatorError("HostPanel queue UUIDs changed before provider activation")
     base.assert_no_queue_agents(org, identity.queues)
     base.assert_zero_builds(org)
+    assert_no_cluster_secrets(org, identity.cluster_uuid)
 
     active_patch_sent = False
     try:
@@ -327,6 +350,10 @@ def activate_control_plane(org: str, identity) -> None:
             raise base.OperatorError("HostPanel queue UUIDs changed after provider activation")
         base.assert_no_queue_agents(org, identity.queues)
         base.assert_zero_builds(org)
+        # This is the final in-operator checkpoint before any external lifecycle
+        # controller is allowed to connect a worker. The runbook repeats it at
+        # worker provisioning time because external state can always change later.
+        assert_no_cluster_secrets(org, identity.cluster_uuid)
     except Exception:
         if active_patch_sent:
             try:
