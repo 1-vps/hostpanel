@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+# Fail-closed HostPanel Buildkite agent policy hook.
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import re
+import stat
+import uuid
+from typing import NoReturn
+
+POLICY_DIR = pathlib.Path("/etc/buildkite-agent/hostpanel-policy")
+EXPECTED_REPOSITORY = "git@github.com:1-vps/hostpanel.git"
+EXPECTED_GITHUB_IDENTITY = ("1-vps", "hostpanel")
+MAX_POLICY_BYTES = 256
+MAX_ENV_BYTES = 1024 * 1024
+
+DANGEROUS_ENVIRONMENT_VARIABLES = {
+    "BASH_ENV",
+    "ENV",
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "SSH_AUTH_SOCK",
+    "CDPATH",
+}
+
+OS_STEPS = {
+    "os-ubuntu-2204": "ubuntu-22.04",
+    "os-ubuntu-2404": "ubuntu-24.04",
+    "os-ubuntu-2604": "ubuntu-26.04",
+    "os-debian-12": "debian-12",
+    "os-debian-13": "debian-13",
+    "os-rocky-9": "rocky-9",
+    "os-rocky-10": "rocky-10",
+    "os-almalinux-9": "almalinux-9",
+    "os-almalinux-10": "almalinux-10",
+}
+
+CI_STEPS = {
+    "pipeline-contract": (".buildkite/scripts/run-pipeline-contract.sh", "", ""),
+    "repository-regressions": (".buildkite/scripts/run-check.sh", "repository", ""),
+    "installer-static": (".buildkite/scripts/run-check.sh", "shell", ""),
+    "release-metadata": (".buildkite/scripts/run-check.sh", "metadata", ""),
+    "production-validator": (
+        ".buildkite/scripts/run-check.sh",
+        "production-validator",
+        "",
+    ),
+    "qemu-contracts": (".buildkite/scripts/run-check.sh", "qemu-contracts", ""),
+    **{
+        key: (".buildkite/scripts/run-check.sh", "installer-os", os_name)
+        for key, os_name in OS_STEPS.items()
+    },
+}
+
+
+def fail(message: str) -> NoReturn:
+    raise SystemExit(f"HostPanel Buildkite policy rejected job: {message}")
+
+
+def read_regular(path: pathlib.Path, *, max_bytes: int, root_owned: bool) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        fail(f"cannot safely open {path}: {exc}")
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            fail(f"{path} is not a single regular file")
+        if root_owned and info.st_uid != 0:
+            fail(f"{path} is not root-owned")
+        if info.st_mode & 0o022:
+            fail(f"{path} is group/world writable")
+        if info.st_size <= 0 or info.st_size > max_bytes:
+            fail(f"{path} has an unsafe size")
+        data = os.read(fd, max_bytes + 1)
+        if len(data) != info.st_size or len(data) > max_bytes:
+            fail(f"{path} changed or exceeded its size bound")
+        if os.read(fd, 1):
+            fail(f"{path} exceeded its size bound")
+        after = os.fstat(fd)
+        if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            fail(f"{path} changed while read")
+        return data
+    finally:
+        os.close(fd)
+
+
+def read_policy(name: str) -> str:
+    try:
+        value = read_regular(
+            POLICY_DIR / name, max_bytes=MAX_POLICY_BYTES, root_owned=True
+        ).decode("utf-8", errors="strict").strip()
+    except UnicodeError as exc:
+        fail(f"policy file {name} is not strict UTF-8: {exc}")
+    if not value or "\n" in value or "\r" in value:
+        fail(f"policy file {name} is malformed")
+    return value
+
+
+def github_repository_identity(repository: str) -> tuple[str, str] | None:
+    value = repository.strip()
+    patterns = (
+        r"^git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$",
+        r"^ssh://git@github\.com/([^/]+)/([^/]+?)(?:\.git)?$",
+        r"^https://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$",
+        r"^git://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$",
+    )
+    for pattern in patterns:
+        match = re.fullmatch(pattern, value, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).casefold(), match.group(2).casefold()
+    return None
+
+
+def main() -> int:
+    queue = read_policy("queue")
+    pipeline_slug = read_policy("pipeline-slug")
+    pipeline_id = read_policy("pipeline-id").lower()
+    if queue not in {"hostpanel-upload", "hostpanel-ci", "hostpanel-qemu"}:
+        fail("configured queue is unknown")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,99}", pipeline_slug):
+        fail("configured pipeline slug is malformed")
+    try:
+        parsed_pipeline_id = uuid.UUID(pipeline_id)
+    except ValueError as exc:
+        fail(f"configured pipeline ID is malformed: {exc}")
+    if str(parsed_pipeline_id) != pipeline_id:
+        fail("configured pipeline ID is not canonical")
+
+    env_path_value = os.environ.get("BUILDKITE_ENV_JSON_FILE", "")
+    if not env_path_value:
+        fail("BUILDKITE_ENV_JSON_FILE is missing")
+    env_path = pathlib.Path(env_path_value)
+    try:
+        payload = json.loads(
+            read_regular(env_path, max_bytes=MAX_ENV_BYTES, root_owned=False).decode(
+                "utf-8", errors="strict"
+            )
+        )
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        fail(f"job environment is invalid: {exc}")
+    if not isinstance(payload, dict):
+        fail("job environment is not an object")
+
+    def value(name: str) -> str:
+        item = payload.get(name, "")
+        if item is None:
+            return ""
+        if not isinstance(item, str):
+            fail(f"{name} is not a string")
+        if "\n" in item or "\r" in item:
+            fail(f"{name} contains a line break")
+        return item
+
+    repository = value("BUILDKITE_REPO")
+    command = value("BUILDKITE_COMMAND")
+    actual_pipeline = value("BUILDKITE_PIPELINE_SLUG")
+    actual_pipeline_id = value("BUILDKITE_PIPELINE_ID").lower()
+    step_key = value("BUILDKITE_STEP_KEY")
+    branch = value("BUILDKITE_BRANCH")
+    pull_request = value("BUILDKITE_PULL_REQUEST") or "false"
+    pull_request_repo = value("BUILDKITE_PULL_REQUEST_REPO")
+    source = value("BUILDKITE_SOURCE")
+    plugins = value("BUILDKITE_PLUGINS").strip()
+    clean_checkout = value("BUILDKITE_CLEAN_CHECKOUT").lower()
+    skip_checkout = value("BUILDKITE_SKIP_CHECKOUT").lower()
+    requested_check = value("HP_BUILDKITE_CHECK")
+    requested_os = value("HP_BUILDKITE_OS")
+
+    if repository != EXPECTED_REPOSITORY:
+        fail("repository is not the reviewed HostPanel repository")
+    if source != "webhook":
+        fail("only webhook-triggered builds are accepted")
+    if actual_pipeline != pipeline_slug:
+        fail("pipeline slug does not match the provisioned policy")
+    try:
+        parsed_actual_pipeline_id = uuid.UUID(actual_pipeline_id)
+    except ValueError as exc:
+        fail(f"job pipeline ID is missing or malformed: {exc}")
+    if str(parsed_actual_pipeline_id) != actual_pipeline_id:
+        fail("job pipeline ID is not canonical")
+    if actual_pipeline_id != pipeline_id:
+        fail("job belongs to a different Buildkite pipeline")
+    if plugins not in {"", "[]", "null"}:
+        fail("plugins are forbidden")
+    for name in DANGEROUS_ENVIRONMENT_VARIABLES:
+        if value(name):
+            fail(f"dangerous environment variable is forbidden: {name}")
+    for name in payload:
+        if isinstance(name, str) and name.startswith("HP_QEMU_"):
+            fail(f"QEMU environment injection is forbidden: {name}")
+
+    if pull_request == "false":
+        if pull_request_repo:
+            fail("non-PR build unexpectedly contains a pull-request repository")
+    else:
+        if github_repository_identity(pull_request_repo) != EXPECTED_GITHUB_IDENTITY:
+            fail("pull request comes from an unreviewed repository")
+
+    if queue == "hostpanel-upload":
+        if step_key != "upload-reviewed-pipeline":
+            fail("upload queue received an unexpected step")
+        if command != "/usr/local/libexec/hostpanel-upload-pipeline":
+            fail("upload queue received an unexpected command")
+        if skip_checkout != "true":
+            fail("upload queue must skip repository checkout")
+        if clean_checkout not in {"", "false"}:
+            fail("upload queue received contradictory checkout settings")
+        if requested_check or requested_os:
+            fail("upload queue received unexpected HostPanel step variables")
+    elif queue == "hostpanel-ci":
+        if clean_checkout != "true":
+            fail("BUILDKITE_CLEAN_CHECKOUT must be true")
+        if skip_checkout not in {"", "false"}:
+            fail("checkout may not be skipped")
+        expected = CI_STEPS.get(step_key)
+        if expected is None:
+            fail("CI queue received an unexpected step")
+        expected_command, expected_check, expected_os = expected
+        if command != expected_command:
+            fail("CI queue received an unexpected command")
+        if (requested_check, requested_os) != (expected_check, expected_os):
+            fail("CI step environment does not match the reviewed step key")
+    else:
+        if clean_checkout != "true":
+            fail("BUILDKITE_CLEAN_CHECKOUT must be true")
+        if skip_checkout not in {"", "false"}:
+            fail("checkout may not be skipped")
+        if step_key != "qemu-vm-acceptance":
+            fail("QEMU queue received an unexpected step")
+        if command != ".buildkite/scripts/run-qemu.sh":
+            fail("QEMU queue received an unexpected command")
+        if branch != "main" or pull_request != "false":
+            fail("QEMU queue only accepts non-PR main builds")
+        if requested_check or requested_os:
+            fail("QEMU queue received unexpected HostPanel step variables")
+
+    print(f"HostPanel Buildkite policy accepted {queue}:{step_key}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

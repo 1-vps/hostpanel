@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+unset BASH_ENV ENV PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH \
+  GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_DIR GIT_WORK_TREE SSH_AUTH_SOCK CDPATH
+
+policy_file=/etc/buildkite-agent/hostpanel-policy/queue
+queue="$(python3 - "$policy_file" <<'PY'
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+fd = os.open(path, flags)
+try:
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise SystemExit("checkout policy file is not a single regular file")
+    if info.st_uid != 0 or info.st_mode & 0o022:
+        raise SystemExit("checkout policy file ownership or mode is unsafe")
+    if info.st_size <= 0 or info.st_size > 64:
+        raise SystemExit("checkout policy file size is unsafe")
+    data = os.read(fd, 65)
+    after = os.fstat(fd)
+    if len(data) != info.st_size or len(data) > 64:
+        raise SystemExit("checkout policy file changed or exceeded its size bound")
+    if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    ):
+        raise SystemExit("checkout policy file changed while read")
+finally:
+    os.close(fd)
+
+value = data.decode("utf-8", errors="strict").strip()
+if value not in {"hostpanel-upload", "hostpanel-ci", "hostpanel-qemu"}:
+    raise SystemExit("checkout policy queue is unknown")
+print(value)
+PY
+)"
+
+case "$queue" in
+  hostpanel-upload)
+    export BUILDKITE_SKIP_CHECKOUT=true
+    unset BUILDKITE_CLEAN_CHECKOUT
+    unset GIT_SSH_COMMAND BUILDKITE_GIT_SSH_KEY SSH_AUTH_SOCK
+    ;;
+  hostpanel-ci|hostpanel-qemu)
+    export BUILDKITE_SKIP_CHECKOUT=false
+    export BUILDKITE_CLEAN_CHECKOUT=true
+    ;;
+esac

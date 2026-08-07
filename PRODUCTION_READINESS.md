@@ -1,41 +1,33 @@
 # HostPanel production readiness
 
-This checklist applies to the `3.4.0-hardened-r6` working release after the
-installer pipeline has passed. It does not replace validation on a real systemd
-VM using the intended kernel, firewall, storage, DNS, and mail environment.
+This checklist applies to HostPanel `3.4.1` after the reviewed installer
+pipeline has passed. It does not replace validation on a real systemd VM using
+the intended kernel, firewall, storage, DNS, and mail environment.
 
-**Reviewed installer overlay:**
-
-```text
-9c38d0095563ea33efd14124babfd29556c0da46
-```
-
-**Installed application version:**
+The only documented installation entry point is the immutable automatic engine
+from [`SETUP.md`](SETUP.md):
 
 ```text
-3.4.0
+auto-install.sh commit  1a86d380e7ebab287c767d183013b599cb116f7f
+auto-install.sh blob    db23963e101b9194994da2ff8077b40a6b1cb99c
+product commit          755dcd5e47b7c82404b267e8df4dec27626fe341
+installed version       3.4.1
 ```
 
 ## Source and authentication prerequisites
 
 This repository is private. Do not use anonymous `raw.githubusercontent.com`
-commands and do not place a GitHub token in a URL or command-line argument.
-Follow [`SETUP.md`](SETUP.md) to:
+commands, moving `main` references, or place a GitHub token in a URL or normal
+command-line argument.
 
-- prompt without echo for a short-lived Contents:Read token;
-- fetch bootstrap and validator through the GitHub Contents API from the exact
-  reviewed commit;
-- verify Git blob IDs before either file is executed as root;
-- provide transient Git authentication while the bootstrap fetches the reviewed
-  overlay;
-- remove local and remote authentication state on success and failure.
+Follow [`SETUP.md`](SETUP.md) to obtain and verify the exact automatic-installer
+Git object. Supply a short-lived **Contents: Read-only** GitHub token through an
+inherited descriptor or a root-owned, single-linked mode `0400`/`0600` secret
+file. Remove local authentication material on both success and failure.
 
-Required reviewed Git blobs:
-
-```text
-bootstrap-install.sh                  639fae60ddd5bec36f5e3167dd21733a412a69fd
-tools/validate-production-vm.sh      2eefb797a50a0a2e2827ca5687ba83a2b4b3eec9
-```
+The immutable installer chain verifies the delegated launcher/product objects
+before root execution. Record the exact commits and Git blob IDs used for the
+acceptance run.
 
 ## Prepare a disposable VM
 
@@ -52,43 +44,39 @@ Record:
 - customer-data filesystem;
 - selected HostPanel roles;
 - provider snapshot identifier;
-- reviewed Git commit and verified blob IDs.
+- automatic-installer and product commits plus verified blob IDs.
 
-## Install from the pinned commit
+## Install from the immutable automatic engine
 
-Run the authenticated driver from [`SETUP.md`](SETUP.md). It must complete both
-the non-mutating preflight and installation from:
-
-```text
-HP_REPO_REF=9c38d0095563ea33efd14124babfd29556c0da46
-```
+Run the reviewed `auto-install.sh` path from [`SETUP.md`](SETUP.md). The normal
+installation path does not accept a moving repository ref. It must complete both
+non-mutating preflight and installation through the pinned object chain.
 
 Preserve `/var/log/hostpanel-install.log` and the snapshot path printed by the
 installer. Confirm:
 
 ```bash
-test "$(tr -d '[:space:]' < /opt/hostpanel/VERSION)" = 3.4.0
+test "$(tr -d '[:space:]' < /opt/hostpanel/VERSION)" = 3.4.1
 sudo /opt/hostpanel/venv/bin/python \
   /opt/hostpanel/app/hostpanel-doctor --quiet
 ```
 
 ## Initial validation
 
-The blob-verified validator is downloaded before installation by the setup
-driver. Run:
+Run the reviewed production validator from the installed/reviewed chain:
 
 ```bash
 sudo env \
-  HP_EXPECTED_VERSION=3.4.0 \
+  HP_EXPECTED_VERSION=3.4.1 \
   HP_PANEL_HOST=panel.example.com \
   HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
   bash /root/validate-production-vm.sh --check
 ```
 
 Resolve every failure before continuing. Warnings require explicit review even
-when they do not make the validator fail automatically. In particular, an
-installed OpenLiteSpeed binary or `lsws.service` must have an active and valid
-service state; it must not be accepted as an unexplained post-reboot warning.
+when they do not make the validator fail automatically. An installed
+OpenLiteSpeed binary or `lsws.service` must have an active and valid service
+state; it must not be accepted as an unexplained post-reboot warning.
 
 ## Verify reboot persistence
 
@@ -96,7 +84,7 @@ Record the current boot ID only after the initial checks pass:
 
 ```bash
 sudo env \
-  HP_EXPECTED_VERSION=3.4.0 \
+  HP_EXPECTED_VERSION=3.4.1 \
   HP_PANEL_HOST=panel.example.com \
   HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
   bash /root/validate-production-vm.sh --prepare-reboot
@@ -108,7 +96,7 @@ Reconnect over the configured SSH port and run:
 
 ```bash
 sudo env \
-  HP_EXPECTED_VERSION=3.4.0 \
+  HP_EXPECTED_VERSION=3.4.1 \
   HP_PANEL_HOST=panel.example.com \
   HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
   bash /root/validate-production-vm.sh --post-reboot
@@ -191,4 +179,4 @@ Retain:
 A release is not production-ready until every selected role and recovery path
 passes on the exact operating system and infrastructure intended for deployment.
 
-Current deployable overlay release: **3.4.1** (signed base source: `3.4.0`).
+Current deployable HostPanel version: **3.4.1**.

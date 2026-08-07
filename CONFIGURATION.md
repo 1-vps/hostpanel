@@ -1,59 +1,63 @@
 # HostPanel configuration
 
-This reference describes the reviewed installation controls for
-`3.4.0-hardened-r6`. Supply settings to the pinned bootstrap. Do not execute an
-unpinned branch script as root.
+This reference describes the reviewed installation controls for HostPanel `3.4.1`.
+The only documented installation entry point is the immutable `auto-install.sh`
+engine described in [`SETUP.md`](SETUP.md). Do not execute a moving branch script
+as root.
 
-**Reviewed installer and VM-harness commit:**
+**Reviewed automatic-installer commit:**
 
 ```text
-9c38d0095563ea33efd14124babfd29556c0da46
+1a86d380e7ebab287c767d183013b599cb116f7f
+```
+
+**Verified automatic-installer Git blob:**
+
+```text
+db23963e101b9194994da2ff8077b40a6b1cb99c
+```
+
+**Reviewed product commit fetched by the installer chain:**
+
+```text
+755dcd5e47b7c82404b267e8df4dec27626fe341
 ```
 
 **Installed `/opt/hostpanel/VERSION`:**
 
 ```text
-3.4.0
+3.4.1
 ```
 
 ## Private repository authentication
 
-This repository is private. Follow [`SETUP.md`](SETUP.md) to fetch the bootstrap
-and validator through the GitHub Contents API with a short-lived token limited to
-**Contents: Read-only**, then verify their Git blob IDs before execution.
+This repository is private. Follow [`SETUP.md`](SETUP.md) to obtain the exact
+reviewed `auto-install.sh` bytes through an authenticated checkout or reviewed
+file transfer and verify its Git blob before execution.
 
-The bootstrap fetches the reviewed overlay through Git. Provide transient Git
-authentication with process environment variables rather than a credential in a
-URL, remote, or command-line argument:
+The installer accepts a short-lived GitHub token with **Contents: Read-only**
+access to `1-vps/hostpanel`. Interactive/unattended launchers pass the token on
+an inherited descriptor; automation may instead use a root-owned, single-linked
+mode `0400` or `0600` file through `HP_GITHUB_TOKEN_FILE`. Tokens must never be
+placed in a URL, normal command argument, shell profile, repository remote,
+logs, or evidence.
 
-```text
-GIT_CONFIG_COUNT=1
-GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
-GIT_CONFIG_VALUE_0=AUTHORIZATION: basic <base64(x-access-token:TOKEN)>
-GIT_TERMINAL_PROMPT=0
-```
-
-Treat `GIT_CONFIG_VALUE_0` as a secret even though it is encoded. Unset all four
-variables immediately after preflight and installation, remove temporary token
-files, and never persist them in shell profiles, systemd units, logs, evidence,
-or repository configuration.
+The automatic installer and its delegated launchers contain their reviewed Git
+commits and blob IDs. Operators do not select a moving `HP_REPO_REF` for the
+normal installation path.
 
 ## Required installation settings
-
-### `HP_REPO_REF`
-
-The reviewed full 40-character Git commit SHA. The bootstrap fetches this exact
-commit and verifies every executable overlay against its Git object before use.
-For the current working release:
-
-```text
-HP_REPO_REF=9c38d0095563ea33efd14124babfd29556c0da46
-```
 
 ### `HP_PANEL_HOST`
 
 The panel's fully qualified domain name, for example `panel.example.com`. The
 installer uses it for certificate subjects, routing, and validation.
+
+### `HP_PANEL_DOMAIN`
+
+An optional base domain such as `example.com`. The automatic installer converts
+it to `panel.example.com`. An explicitly supplied invalid domain fails closed and
+does not fall back to the machine hostname.
 
 ### `HP_PANEL_ADMIN_CIDR`
 
@@ -95,31 +99,30 @@ configured. Ubuntu 26.04 uses its distribution-provided Rspamd package.
 
 ## Mail settings
 
-Use `--mta postfix` or `--mta exim`. The selected MTA is validated before
+Use `HP_MTA=postfix` or `HP_MTA=exim`. The selected MTA is validated before
 installation. Required mail services and the final doctor check fail the
 installation when they do not start successfully.
 
 ## Role selection
 
-A full installation selects all roles. Use repeated `--role` arguments to limit
-a node to reviewed roles:
+A full installation selects all roles. Set `HP_ROLES` to a space-separated
+subset of reviewed roles:
 
 ```text
-control
-web
-database
-mail
-dns
-backup
-edge
+control web database mail dns backup edge
 ```
 
 Use the same role selection during preflight and the mutating installation.
 
-## Reinstall and recovery
+## Check-only, reinstall, and validation controls
 
-Use `--reinstall --check` before a mutating reinstall. Every mutating run creates
-a root-owned safety snapshot under:
+- `HP_CHECK_ONLY=yes` runs preflight without persistent installation mutation.
+- `HP_REINSTALL=yes` is required for an explicit replacement of an existing
+  installation.
+- `HP_POST_INSTALL_CHECK=no` skips the production validator and doctor; the
+  machine-readable installation result is marked `unverified`, not healthy.
+
+Every mutating installer run creates a root-owned safety snapshot under:
 
 ```text
 /var/backups/hostpanel-install/
@@ -130,8 +133,7 @@ snapshot and console access for production changes.
 
 ## Validation settings
 
-The production validator expects the installed application version, not the
-working-release label:
+The production validator expects the installed application version:
 
 ```text
 HP_EXPECTED_VERSION=3.4.1
@@ -166,4 +168,4 @@ sudo env \
   bash /root/validate-production-vm.sh --check
 ```
 
-Current deployable overlay release: **3.4.1** (signed base source: `3.4.0`).
+Current deployable HostPanel version: **3.4.1**.

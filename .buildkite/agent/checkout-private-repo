@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+unset BASH_ENV ENV PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT \
+  GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_EXEC_PATH GIT_TEMPLATE_DIR \
+  GIT_CEILING_DIRECTORIES GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS \
+  GIT_SSH GIT_SSH_COMMAND GIT_SSH_VARIANT GIT_PROXY_COMMAND \
+  SSH_AUTH_SOCK SSH_ASKPASS GIT_ASKPASS CDPATH
+while IFS='=' read -r name _; do
+  case "$name" in
+    GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*) unset "$name" ;;
+  esac
+done < <(env)
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_TERMINAL_PROMPT=0
+export GIT_ALLOW_PROTOCOL=ssh
+
+fail() {
+  printf 'HostPanel private checkout failed: %s\n' "$*" >&2
+  exit 1
+}
+
+expected_repo='git@github.com:1-vps/hostpanel.git'
+key=/run/hostpanel-buildkite/checkout-deploy-key
+known_hosts=/var/lib/buildkite-agent/.ssh/known_hosts
+checkout_path="${BUILDKITE_BUILD_CHECKOUT_PATH:-}"
+commit="${BUILDKITE_COMMIT:-}"
+repository="${BUILDKITE_REPO:-}"
+
+cleanup_checkout_key() {
+  rm -f -- "$key"
+  unset GIT_SSH_COMMAND
+}
+trap cleanup_checkout_key EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+[[ "$repository" == "$expected_repo" ]] || fail "repository is not the reviewed HostPanel SSH repository"
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "BUILDKITE_COMMIT is not a full lowercase SHA-1"
+[[ -n "$checkout_path" ]] || fail "BUILDKITE_BUILD_CHECKOUT_PATH is missing"
+
+python3 - "$checkout_path" "$key" "$known_hosts" <<'PY'
+import os
+import pathlib
+import stat
+import sys
+
+checkout = pathlib.Path(sys.argv[1])
+key = pathlib.Path(sys.argv[2])
+known_hosts = pathlib.Path(sys.argv[3])
+base = pathlib.Path('/var/lib/buildkite-agent/builds').resolve()
+resolved = checkout.resolve(strict=False)
+try:
+    resolved.relative_to(base)
+except ValueError as exc:
+    raise SystemExit('checkout path escapes the reviewed build root') from exc
+if resolved == base:
+    raise SystemExit('checkout path may not equal the build root')
+if checkout.exists() and (checkout.is_symlink() or not checkout.is_dir()):
+    raise SystemExit('checkout path is not a safe directory')
+if checkout.exists() and any(checkout.iterdir()):
+    raise SystemExit('checkout path is not empty on the disposable worker')
+
+def read_checked(path: pathlib.Path, expected_mode: int, expected_uid: int) -> bytes:
+    flags = os.O_RDONLY | getattr(os, 'O_CLOEXEC', 0) | getattr(os, 'O_NOFOLLOW', 0)
+    fd = os.open(path, flags)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise SystemExit(f'checkout credential input is not a single regular file: {path}')
+        if info.st_uid != expected_uid or stat.S_IMODE(info.st_mode) != expected_mode:
+            raise SystemExit(f'checkout credential input ownership or mode is unsafe: {path}')
+        if info.st_size <= 0 or info.st_size > 64 * 1024:
+            raise SystemExit(f'checkout credential input size is unsafe: {path}')
+        data = os.read(fd, 64 * 1024 + 1)
+        if len(data) != info.st_size or len(data) > 64 * 1024:
+            raise SystemExit(f'checkout credential input changed while read: {path}')
+        after = os.fstat(fd)
+        if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != (
+            after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns
+        ):
+            raise SystemExit(f'checkout credential input changed while read: {path}')
+        return data
+    finally:
+        os.close(fd)
+
+key_data = read_checked(key, 0o400, os.getuid())
+read_checked(known_hosts, 0o440, 0)
+if not key_data.startswith(b'-----BEGIN OPENSSH PRIVATE KEY-----'):
+    raise SystemExit('checkout credential is not an OpenSSH private key')
+PY
+
+[[ -r "$key" ]] || fail "checkout credential is not readable by the agent user"
+[[ -r "$known_hosts" ]] || fail "reviewed GitHub known_hosts is not readable"
+install -d -m 0700 -- "$checkout_path"
+
+export GIT_SSH_COMMAND="/usr/bin/ssh -F /dev/null -i $key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts"
+
+/usr/bin/git -C "$checkout_path" -c core.hooksPath=/dev/null init -q
+/usr/bin/git -C "$checkout_path" -c core.hooksPath=/dev/null remote add origin "$expected_repo"
+fetch_ok=false
+for attempt in 1 2 3; do
+  if /usr/bin/timeout --signal=TERM --kill-after=10s 600 \
+    /usr/bin/git -C "$checkout_path" -c core.hooksPath=/dev/null fetch \
+      --no-tags --no-recurse-submodules --depth=1 origin "$commit"
+  then
+    fetch_ok=true
+    break
+  fi
+  [[ "$attempt" == "3" ]] || sleep "$attempt"
+done
+[[ "$fetch_ok" == "true" ]] || fail "exact commit fetch failed after three bounded attempts"
+/usr/bin/git -C "$checkout_path" -c core.hooksPath=/dev/null checkout --detach --force "$commit"
+
+[[ "$(/usr/bin/git -C "$checkout_path" remote get-url origin)" == "$expected_repo" ]] || {
+  fail "checked-out repository origin mismatch"
+}
+[[ "$(/usr/bin/git -C "$checkout_path" rev-parse HEAD)" == "$commit" ]] || {
+  fail "checked-out repository commit mismatch"
+}
+[[ -z "$(/usr/bin/git -C "$checkout_path" status --porcelain=v1 --untracked-files=all)" ]] || {
+  fail "checked-out repository is dirty"
+}
+
+cleanup_checkout_key
+trap - EXIT HUP INT TERM
+[[ ! -e "$key" ]] || fail "checkout credential survived checkout"
+printf 'HostPanel private checkout verified and credential destroyed: %s\n' "$commit"
