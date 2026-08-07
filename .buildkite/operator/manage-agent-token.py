@@ -161,7 +161,7 @@ def queue_endpoint(cluster_id: str) -> str:
     return f"/clusters/{cluster_id}/queues?per_page={MAX_INVENTORY_ITEMS}"
 
 
-def verify_hostpanel_cluster_identity(cluster_id: str) -> None:
+def verify_hostpanel_cluster_identity(cluster_id: str) -> dict:
     cluster = parse_json(
         run_bk(["api", f"/clusters/{cluster_id}"]),
         "HostPanel cluster lookup",
@@ -172,12 +172,13 @@ def verify_hostpanel_cluster_identity(cluster_id: str) -> None:
         raise OperatorError("looked-up cluster id mismatch")
     if cluster.get("name") != EXPECTED_CLUSTER_NAME:
         raise OperatorError("refusing to manage worker tokens outside the HostPanel cluster")
-    if "default_queue_id" not in cluster or cluster["default_queue_id"] is not None:
-        raise OperatorError("HostPanel cluster must explicitly have no default queue")
+    return cluster
 
 
 def verify_hostpanel_cluster(cluster_id: str) -> None:
-    verify_hostpanel_cluster_identity(cluster_id)
+    cluster = verify_hostpanel_cluster_identity(cluster_id)
+    if "default_queue_id" not in cluster or cluster["default_queue_id"] is not None:
+        raise OperatorError("HostPanel cluster must explicitly have no default queue")
 
     queues = parse_json(run_bk(["api", queue_endpoint(cluster_id)]), "HostPanel queue inventory")
     if not isinstance(queues, list) or not all(isinstance(item, dict) for item in queues):
@@ -548,8 +549,7 @@ def revoke_token(args: argparse.Namespace) -> int:
         os.close(parent_fd)
     preflight(args.org)
     # Revocation is an incident-cleanup path. Bind it to the exact HostPanel
-    # cluster identity, but do not require the queue topology to still be healthy:
-    # queue drift must never prevent removal of a leaked/stale registration token.
+    # cluster identity, but do not require any queue topology to still be healthy.
     verify_hostpanel_cluster_identity(cluster_id)
 
     matches = [item for item in list_tokens(cluster_id) if item.get("id") == token_id]
