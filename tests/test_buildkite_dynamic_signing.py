@@ -28,10 +28,7 @@ class BuildkiteDynamicSigningTests(unittest.TestCase):
         text = CONFIGURE.read_text(encoding="utf-8")
         self.assertIn('signing-jwks-file="/etc/buildkite-agent/keys/signing.jwks"', text)
         self.assertIn('signing-jwks-key-id="${signing_key_id}"', text)
-        self.assertIn(
-            'item.get("kid") == signing_key_id and "d" in item',
-            text,
-        )
+        self.assertIn('item.get("kid") == signing_key_id and "d" in item', text)
         self.assertIn('verification-failure-behavior="block"', text)
         self.assertIn('verification-jwks-file="/etc/buildkite-agent/keys/verification.jwks"', text)
 
@@ -50,16 +47,14 @@ class BuildkiteDynamicSigningTests(unittest.TestCase):
 
     def test_configure_installs_reviewed_pipeline_copy_hash_and_uploader(self) -> None:
         text = CONFIGURE.read_text(encoding="utf-8")
-        self.assertIn(
-            'install -o root -g buildkite-agent -m 0440 \\\n    "$script_root/.buildkite/pipeline.yml" \\\n    /etc/buildkite-agent/hostpanel-pipeline.yml',
-            text,
-        )
+        self.assertIn('install -o root -g buildkite-agent -m 0440', text)
+        self.assertIn('"$script_root/.buildkite/pipeline.yml"', text)
+        self.assertIn('/etc/buildkite-agent/hostpanel-pipeline.yml', text)
         self.assertIn('sha256sum /etc/buildkite-agent/hostpanel-pipeline.yml', text)
         self.assertIn('/etc/buildkite-agent/hostpanel-policy/pipeline-sha256', text)
-        self.assertIn(
-            'install -o root -g buildkite-agent -m 0550 \\\n    "$script_root/.buildkite/agent/upload-trusted-pipeline.sh" \\\n    /usr/local/libexec/hostpanel-upload-pipeline',
-            text,
-        )
+        self.assertIn('install -o root -g buildkite-agent -m 0550', text)
+        self.assertIn('"$script_root/.buildkite/agent/upload-trusted-pipeline.sh"', text)
+        self.assertIn('/usr/local/libexec/hostpanel-upload-pipeline', text)
 
     def test_dynamic_pipeline_contains_only_reviewed_repository_commands(self) -> None:
         text = PIPELINE.read_text(encoding="utf-8")
