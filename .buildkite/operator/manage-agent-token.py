@@ -347,10 +347,13 @@ def revoke_token(args: argparse.Namespace) -> int:
         raise OperatorError("refusing to revoke a token not created for a HostPanel per-worker registration")
 
     run_bk(["api", "--method", "DELETE", token_endpoint(cluster_id, token_id)], sensitive_response=True)
+    remaining = list_tokens(cluster_id)
+    if any(item.get("id") == token_id for item in remaining):
+        raise OperatorError("revoked token id is still present in the cluster token inventory")
     if token_file:
         safe_remove_token_file(token_file)
 
-    print(f"Revoked HostPanel per-worker Buildkite agent token {token_id}.")
+    print(f"Revoked and verified removal of HostPanel per-worker Buildkite agent token {token_id}.")
     if token_file:
         print("Removed the local token file if it was still present.")
     return 0
