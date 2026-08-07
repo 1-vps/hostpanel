@@ -33,11 +33,9 @@ BRANCH = "agent/release-consistency-foundation"
 BUILD_NUMBER = 42
 
 
-def signed_step() -> dict:
+def signed_step(*, kid: str = "hostpanel-2026-08") -> dict:
     protected = base64.urlsafe_b64encode(
-        json.dumps(
-            {"alg": "EdDSA", "kid": "hostpanel-2026-08"}, separators=(",", ":")
-        ).encode()
+        json.dumps({"alg": "EdDSA", "kid": kid}, separators=(",", ":")).encode()
     ).decode().rstrip("=")
     return {
         "signature": {
@@ -122,18 +120,28 @@ class BuildkiteBuildEvidenceTests(unittest.TestCase):
         )
 
     def test_pr_and_main_expected_script_job_counts_are_exact(self) -> None:
-        self.assertEqual(len(module.expected_jobs(
-            mode="pr",
-            upload_queue_id=UPLOAD_QUEUE_ID,
-            ci_queue_id=CI_QUEUE_ID,
-            qemu_queue_id=QEMU_QUEUE_ID,
-        )), 16)
-        self.assertEqual(len(module.expected_jobs(
-            mode="main",
-            upload_queue_id=UPLOAD_QUEUE_ID,
-            ci_queue_id=CI_QUEUE_ID,
-            qemu_queue_id=QEMU_QUEUE_ID,
-        )), 17)
+        self.assertEqual(
+            len(
+                module.expected_jobs(
+                    mode="pr",
+                    upload_queue_id=UPLOAD_QUEUE_ID,
+                    ci_queue_id=CI_QUEUE_ID,
+                    qemu_queue_id=QEMU_QUEUE_ID,
+                )
+            ),
+            16,
+        )
+        self.assertEqual(
+            len(
+                module.expected_jobs(
+                    mode="main",
+                    upload_queue_id=UPLOAD_QUEUE_ID,
+                    ci_queue_id=CI_QUEUE_ID,
+                    qemu_queue_id=QEMU_QUEUE_ID,
+                )
+            ),
+            17,
+        )
 
     def test_reviewed_pr_job_inventory_passes(self) -> None:
         self.assertEqual(self.verify_jobs(jobs_fixture("pr")), 16)
@@ -190,13 +198,7 @@ class BuildkiteBuildEvidenceTests(unittest.TestCase):
                 "signed_fields": ["command", "repository_url"],
                 "value": signed_step()["signature"]["value"],
             },
-            {
-                "algorithm": "EdDSA",
-                "signed_fields": ["command", "env", "matrix", "plugins", "repository_url"],
-                "value": signed_step()["signature"]["value"].replace(
-                    "hostpanel-2026-08", "other"
-                ),
-            },
+            signed_step(kid="other-key")["signature"],
         )
         for signature in mutations:
             with self.subTest(signature=signature):
