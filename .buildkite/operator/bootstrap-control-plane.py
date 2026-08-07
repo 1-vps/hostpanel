@@ -624,7 +624,7 @@ def activate_control_plane(org: str, identity: ActivationIdentity) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    top = argparse.ArgumentParser(description="Fail-closed HostPanel Buildkite control-plane operator")
+    top = argparse.ArgumentParser(description="Fail-closed HostPanel Buildkite control-plane operator library")
     top.add_argument("--org", required=True)
     top.add_argument("--apply", action="store_true")
     top.add_argument("--confirm-create", action="store_true")
@@ -685,44 +685,14 @@ def validate_args(args: argparse.Namespace) -> ActivationIdentity | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
-    try:
-        identity = validate_args(args)
-        if not args.apply:
-            if identity is not None:
-                print_activation_plan(args.org, identity)
-            else:
-                print_create_plan(args.org)
-            return 0
-
-        if identity is None:
-            if not args.confirm_create:
-                raise OperatorError("--apply requires --confirm-create")
-            resources = create_control_plane(args.org)
-            print("HostPanel Buildkite control plane created in GitHub-trigger quarantine.")
-            for name, value in resources.__dict__.items():
-                print(f"{name}={value}")
-            print("provider_trigger_mode=none")
-            print("MANDATORY STOP: record these UUIDs; do not connect an agent or activate GitHub triggers yet.")
-            return 0
-
-        if not args.confirm_static_bootstrap_signed:
-            raise OperatorError("--enable-webhook with --apply requires --confirm-static-bootstrap-signed")
-        if not args.confirm_public_deploy_key_added:
-            raise OperatorError("--enable-webhook with --apply requires --confirm-public-deploy-key-added")
-        activate_control_plane(args.org, identity)
-        print("HostPanel Buildkite pipeline activation verified.")
-        print(f"organization={args.org}")
-        print(f"pipeline_slug={PIPELINE_SLUG}")
-        print(f"pipeline_uuid={identity.pipeline_uuid}")
-        print(f"cluster_uuid={identity.cluster_uuid}")
-        print(f"repository={REPOSITORY}")
-        print("provider_trigger_mode=code")
-        print("No agents were started.")
-        return 0
-    except OperatorError as exc:
-        print(f"HostPanel Buildkite control-plane operator failed: {exc}", file=sys.stderr)
-        return 1
+    del argv
+    print(
+        "HostPanel Buildkite control-plane base library is not an executable entrypoint; "
+        "use .buildkite/operator/bootstrap-control-plane.sh so runtime normalization and "
+        "quarantine rollback cannot be bypassed.",
+        file=sys.stderr,
+    )
+    return 2
 
 
 if __name__ == "__main__":
