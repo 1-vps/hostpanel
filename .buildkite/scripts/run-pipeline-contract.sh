@@ -45,6 +45,7 @@ python3 -m unittest -v \
   tests.test_buildkite_control_plane_entrypoint \
   tests.test_buildkite_control_plane_runtime \
   tests.test_buildkite_pipeline_state \
+  tests.test_buildkite_signature_metadata \
   tests.test_buildkite_prebootstrap_policy \
   tests.test_buildkite_checkout_policy \
   tests.test_buildkite_private_checkout \
@@ -52,4 +53,5 @@ python3 -m unittest -v \
   tests.test_buildkite_provisioning_source \
   tests.test_buildkite_agent_token \
   tests.test_buildkite_agent_token_operator \
-  tests.test_buildkite_agent_token_revoke
+  tests.test_buildkite_agent_token_revoke \
+  tests.test_buildkite_agent_token_ambiguous_create
