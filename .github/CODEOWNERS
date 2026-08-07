@@ -5,6 +5,7 @@
 /tests/test_buildkite_control_plane_entrypoint.py @1-vps
 /tests/test_buildkite_control_plane_runtime.py @1-vps
 /tests/test_buildkite_pipeline_state.py @1-vps
+/tests/test_buildkite_signature_metadata.py @1-vps
 /tests/test_buildkite_prebootstrap_policy.py @1-vps
 /tests/test_buildkite_ephemeral_service.py @1-vps
 /tests/test_buildkite_checkout_policy.py @1-vps
@@ -13,3 +14,4 @@
 /tests/test_buildkite_agent_token.py @1-vps
 /tests/test_buildkite_agent_token_operator.py @1-vps
 /tests/test_buildkite_agent_token_revoke.py @1-vps
+/tests/test_buildkite_agent_token_ambiguous_create.py @1-vps
