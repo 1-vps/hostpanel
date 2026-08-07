@@ -200,6 +200,29 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
         self.assertIn("pipeline inventory reached the CLI pagination bound", text)
         self.assertIn("HostPanel queue inventory reached the 100-item bound", text)
 
+    def test_pipeline_identity_and_rebuild_policy_are_pinned(self) -> None:
+        text = CONTROL_PLANE.read_text(encoding="utf-8")
+        self.assertIn("pipeline_slug_expected='hostpanel'", text)
+        self.assertIn('pipeline.get("name") != expected_name', text)
+        self.assertIn('pipeline.get("default_branch") != "main"', text)
+        self.assertIn('pipeline.get("allow_rebuilds") is not False', text)
+        self.assertIn('"slug": slug', text)
+        self.assertIn('"default_branch": "main"', text)
+        self.assertIn('"visibility": "private"', text)
+        self.assertIn('"env": {}', text)
+        self.assertIn('"allow_rebuilds": False', text)
+        self.assertIn('pipeline_list="$(bk pipeline list --limit 3000 -o json)"', text)
+        self.assertNotIn('bk pipeline list --repository "$repository"', text)
+        self.assertIn('item.get("slug") == pipeline_slug', text)
+
+    def test_activation_rejects_unreviewed_pipeline_slug_before_bk(self) -> None:
+        result = self.run_tool(
+            "--org", "example-org", "--enable-webhook", "other-pipeline"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must target the reviewed hostpanel pipeline slug", result.stderr)
+        self.assertNotIn("bk CLI is unavailable", result.stderr)
+
     def test_embedded_python_blocks_compile(self) -> None:
         text = CONTROL_PLANE.read_text(encoding="utf-8")
         blocks = text.split("<<'PY'\n")[1:]
