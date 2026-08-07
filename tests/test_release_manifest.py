@@ -111,9 +111,12 @@ class ReleaseManifestTests(unittest.TestCase):
             + "Release channel: **candidate**\n"
             + "Production publication: **blocked**\n"
             + "A deployable build is not the same as an approved production publication.\n"
-            + "Ubuntu 22.04 Ubuntu 24.04 Ubuntu 26.04 Debian 12 Debian 13 "
-            + "Rocky Linux 9 Rocky Linux 10 AlmaLinux 9 AlmaLinux 10\n"
-            + "x86-64/AMD64 ARM64/AArch64 at least 2 GiB RAM and 10 GiB free\n"
+            + "- Ubuntu 22.04, 24.04, or 26.04\n"
+            + "- Debian 12 or 13\n"
+            + "- Rocky Linux 9 or 10\n"
+            + "- AlmaLinux 9 or 10\n"
+            + "- x86-64/AMD64 or ARM64/AArch64\n"
+            + "- at least 2 GiB RAM and 10 GiB free on `/`\n"
             + "Installed application version: `3.4.1`\n",
             encoding="utf-8",
         )
@@ -309,8 +312,51 @@ class ReleaseManifestTests(unittest.TestCase):
             root = pathlib.Path(directory)
             self.build_repository(root)
             readme = root / "README.md"
-            readme.write_text(readme.read_text().replace("Ubuntu 26.04", "Ubuntu 25.10"))
-            with self.assertRaisesRegex(release.ValidationError, "platform OS Ubuntu 26.04"):
+            readme.write_text(
+                readme.read_text().replace(
+                    "- Ubuntu 22.04, 24.04, or 26.04",
+                    "- Ubuntu 22.04, 24.04, or 25.10",
+                )
+            )
+            with self.assertRaisesRegex(
+                release.ValidationError, "Ubuntu platform versions"
+            ):
+                self.validate(root)
+
+    def test_extra_visible_platform_version_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.build_repository(root)
+            readme = root / "README.md"
+            readme.write_text(
+                readme.read_text().replace(
+                    "- Ubuntu 22.04, 24.04, or 26.04",
+                    "- Ubuntu 22.04, 24.04, 25.10, or 26.04",
+                )
+            )
+            with self.assertRaisesRegex(
+                release.ValidationError, "Ubuntu platform versions"
+            ):
+                self.validate(root)
+
+    def test_manifest_status_change_requires_visible_contract_update(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            manifest = self.build_repository(root)
+            modified = copy.deepcopy(manifest)
+            modified["release"]["status"] = "withdrawn"
+            self.write_manifest(root, modified)
+            for name in ("README.md", "CONFIGURATION.md", "PRODUCTION_READINESS.md"):
+                path = root / name
+                path.write_text(
+                    path.read_text().replace(
+                        "{{HOSTPANEL_RELEASE_STATUS}}=deployable-not-publishable",
+                        "{{HOSTPANEL_RELEASE_STATUS}}=withdrawn",
+                    )
+                )
+            with self.assertRaisesRegex(
+                release.ValidationError, "visible release-status contract"
+            ):
                 self.validate(root)
 
     def test_conflicting_document_version_is_rejected(self) -> None:
