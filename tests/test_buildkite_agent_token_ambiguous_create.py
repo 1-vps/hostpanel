@@ -44,11 +44,12 @@ class BuildkiteAgentTokenAmbiguousCreateTests(unittest.TestCase):
             mock.patch.object(module, "secure_parent"),
             mock.patch.object(module, "preflight"),
             mock.patch.object(module, "verify_hostpanel_cluster"),
+            mock.patch.object(module, "verify_no_cluster_secrets"),
         )
 
     def test_ambiguous_create_recovers_one_matching_token_and_revokes_it(self) -> None:
         patches = self.common_patches()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], mock.patch.object(
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], mock.patch.object(
             module,
             "worker_token_matches",
             side_effect=[[], [{"id": TOKEN_ID, "description": DESCRIPTION}]],
@@ -61,7 +62,7 @@ class BuildkiteAgentTokenAmbiguousCreateTests(unittest.TestCase):
 
     def test_ambiguous_create_with_no_unique_match_requires_manual_inventory_cleanup(self) -> None:
         patches = self.common_patches()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], mock.patch.object(
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], mock.patch.object(
             module, "worker_token_matches", side_effect=[[], []]
         ), mock.patch.object(
             module, "run_bk", side_effect=module.OperatorError("synthetic ambiguous POST")
@@ -71,7 +72,7 @@ class BuildkiteAgentTokenAmbiguousCreateTests(unittest.TestCase):
 
     def test_ambiguous_create_with_unreadable_inventory_stops_retry(self) -> None:
         patches = self.common_patches()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], mock.patch.object(
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], mock.patch.object(
             module,
             "worker_token_matches",
             side_effect=[[], module.OperatorError("synthetic inventory failure")],
@@ -83,7 +84,7 @@ class BuildkiteAgentTokenAmbiguousCreateTests(unittest.TestCase):
 
     def test_ambiguous_create_recovered_token_must_be_proven_revoked(self) -> None:
         patches = self.common_patches()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], mock.patch.object(
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], mock.patch.object(
             module,
             "worker_token_matches",
             side_effect=[[], [{"id": TOKEN_ID, "description": DESCRIPTION}]],
@@ -95,7 +96,7 @@ class BuildkiteAgentTokenAmbiguousCreateTests(unittest.TestCase):
 
     def test_ambiguous_create_never_continues_to_secret_write(self) -> None:
         patches = self.common_patches()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], mock.patch.object(
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], mock.patch.object(
             module, "worker_token_matches", side_effect=[[], []]
         ), mock.patch.object(
             module, "run_bk", side_effect=module.OperatorError("synthetic ambiguous POST")
