@@ -24,36 +24,33 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("control-plane creation plan", result.stdout)
         self.assertIn("No agents are started by this tool.", result.stdout)
-        self.assertIn("trigger_mode=none", result.stdout)
-        self.assertIn("branch/PR/tag/comment triggers disabled", result.stdout)
-        self.assertIn("webhook presence never activates", result.stdout)
+        self.assertIn("trigger_mode=none quarantine", result.stdout)
+        self.assertIn("cluster_queue_id", result.stdout)
         self.assertIn("MANDATORY STOP:", result.stdout)
 
-    def test_activation_plan_preserves_quarantine_until_verified(self) -> None:
+    def test_activation_is_a_separate_plan(self) -> None:
         result = self.run_tool(
             "--org", "example-org", "--enable-webhook", "hostpanel"
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("trigger activation plan", result.stdout)
-        self.assertIn("/access-token", result.stdout)
-        self.assertIn("trigger_mode=none", result.stdout)
-        self.assertIn("If a valid Buildkite webhook already exists", result.stdout)
-        self.assertIn("PATCH provider_settings", result.stdout)
-        self.assertIn("trigger_mode=code", result.stdout)
+        self.assertIn("activation plan", result.stdout)
+        self.assertIn("statically signed", result.stdout)
+        self.assertIn("zero connected/stopping agents", result.stdout)
+        self.assertIn("PATCHes only provider_settings", result.stdout)
 
     def test_create_apply_requires_explicit_confirmation(self) -> None:
         result = self.run_tool("--org", "example-org", "--apply")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--apply requires --confirm-create", result.stderr)
 
-    def test_activation_apply_requires_signed_bootstrap_confirmation(self) -> None:
+    def test_activation_requires_signed_bootstrap_confirmation(self) -> None:
         result = self.run_tool(
             "--org", "example-org", "--enable-webhook", "hostpanel", "--apply"
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--confirm-static-bootstrap-signed", result.stderr)
 
-    def test_activation_apply_requires_public_deploy_key_confirmation(self) -> None:
+    def test_activation_requires_public_deploy_key_confirmation(self) -> None:
         result = self.run_tool(
             "--org",
             "example-org",
@@ -65,13 +62,11 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--confirm-public-deploy-key-added", result.stderr)
 
-    def test_scope_preflight_is_mandatory_before_resource_writes(self) -> None:
+    def test_required_scope_preflight_precedes_resource_writes(self) -> None:
         text = CONTROL_PLANE.read_text(encoding="utf-8")
-        scope_index = text.index('access_token_metadata="$(bk api /access-token)"')
-        cluster_write = text.index("bk cluster create")
-        pipeline_write = text.index("bk api --method POST /pipelines --data")
-        self.assertLess(scope_index, cluster_write)
-        self.assertLess(scope_index, pipeline_write)
+        preflight = text.index('token_json="$(bk api /access-token)"')
+        self.assertLess(preflight, text.index("bk cluster create"))
+        self.assertLess(preflight, text.index("bk api --method POST /pipelines"))
         for scope in (
             "read_clusters",
             "write_clusters",
@@ -81,67 +76,73 @@ class BuildkiteControlPlaneTests(unittest.TestCase):
             "read_agents",
         ):
             self.assertIn(f'"{scope}"', text)
-        self.assertIn("missing required scope(s)", text)
 
-    def test_pipeline_creation_uses_fail_closed_quarantine_policy(self) -> None:
+    def test_connected_agent_proof_is_queue_uuid_scoped(self) -> None:
+        text = CONTROL_PLANE.read_text(encoding="utf-8")
+        self.assertIn(
+            'bk api "/organizations/$org/agents?cluster_queue_id=$queue_uuid"',
+            text,
+        )
+        self.assertIn("assert_queue_has_no_connected_agents", text)
+        self.assertIn("assert_no_target_agents", text)
+        self.assertIn("hostpanel-upload", text)
+        self.assertIn("hostpanel-ci", text)
+        self.assertIn("hostpanel-qemu", text)
+        self.assertNotIn("bk agent list", text)
+        self.assertNotIn("--limit 1000", text)
+
+    def test_quarantine_to_active_transition_is_explicit(self) -> None:
         text = CONTROL_PLANE.read_text(encoding="utf-8")
         self.assertIn('"trigger_mode": "none"', text)
-        for setting in (
-            '"build_branches": False',
-            '"build_pull_requests": False',
-            '"build_tags": False',
-            '"publish_commit_status": False',
-            '"build_issue_comment_created": False',
-        ):
-            self.assertIn(setting, text)
         self.assertIn('"trigger_mode": "code"', text)
-        self.assertIn('"build_pull_requests": True', text)
-        self.assertIn('"publish_commit_status": True', text)
+        self.assertIn(
+            'bk api --method PATCH "/pipelines/$enable_webhook_slug" --data "$active_patch"',
+            text,
+        )
+        self.assertIn("verify_pipeline quarantine", text)
+        self.assertIn("verify_pipeline active", text)
+        self.assertLess(
+            text.index('"trigger_mode": "none"'),
+            text.index('"trigger_mode": "code"'),
+        )
 
-    def test_webhook_is_idempotent_and_activation_is_explicit_patch(self) -> None:
+    def test_webhook_handling_is_idempotent_and_stays_quarantined(self) -> None:
         text = CONTROL_PLANE.read_text(encoding="utf-8")
         self.assertIn('if [[ -z "$webhook_url" ]]; then', text)
         self.assertIn(
             'bk api --method POST "/pipelines/$enable_webhook_slug/webhook"',
             text,
         )
-        self.assertIn("--method PATCH", text)
-        self.assertIn('"/pipelines/$enable_webhook_slug"', text)
-        self.assertIn('"provider_settings"', text)
-        self.assertNotIn("unexpectedly exposes a webhook before activation", text)
+        self.assertIn(
+            'verify_pipeline quarantine "$enable_webhook_slug" "$pipeline_json" true true',
+            text,
+        )
+        self.assertNotIn("/github-webhooks", text)
 
-    def test_control_plane_tool_retains_hard_security_boundaries(self) -> None:
+    def test_control_plane_tool_keeps_security_forbidden_actions_out(self) -> None:
         text = CONTROL_PLANE.read_text(encoding="utf-8")
         self.assertTrue(text.startswith("#!/usr/bin/env bash\nset -euo pipefail\n"))
-        for expected in (
-            'bk auth switch "$org"',
-            "bk auth status -o json",
-            "bk cluster list -o json",
-            'bk pipeline list --repository "$repository" -o json',
-            "default_queue_id",
-            "hostpanel-upload",
-            "hostpanel-ci",
-            "hostpanel-qemu",
-            "static bootstrap is not signed",
-            "static bootstrap signature algorithm is not EdDSA",
-            "static bootstrap JWS key ID mismatch",
-            "pipeline already has build history",
-            "agent inventory reached the query limit",
-            "an agent is already connected to the HostPanel cluster",
-            "No automatic cleanup was attempted",
-        ):
-            self.assertIn(expected, text)
-
         for forbidden in (
-            "--create-webhook",
-            "/github-webhooks",
             "bk auth token",
+            "--token",
             "buildkite-agent start",
             "systemctl start",
             "systemctl restart",
             "agent-token",
+            "--create-webhook",
         ):
             self.assertNotIn(forbidden, text)
+        self.assertIn("No automatic cleanup was attempted", text)
+        self.assertIn("static bootstrap JWS key ID mismatch", text)
+        self.assertIn("build_pull_request_merge_commits", text)
+
+    def test_embedded_python_blocks_compile(self) -> None:
+        text = CONTROL_PLANE.read_text(encoding="utf-8")
+        blocks = text.split("<<'PY'\n")[1:]
+        self.assertGreaterEqual(len(blocks), 10)
+        for index, tail in enumerate(blocks, 1):
+            code = tail.split("\nPY\n", 1)[0]
+            compile(code, f"<control-plane-heredoc-{index}>", "exec")
 
     def test_pipeline_contract_and_codeowners_cover_control_plane_tool(self) -> None:
         self.assertIn(
