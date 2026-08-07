@@ -140,6 +140,14 @@ def list_tokens(cluster_id: str) -> list[dict]:
     return payload
 
 
+def token_is_absent(cluster_id: str, token_id: str) -> bool:
+    try:
+        remaining = list_tokens(cluster_id)
+    except OperatorError:
+        return False
+    return not any(item.get("id") == token_id for item in remaining)
+
+
 def secure_parent(path: pathlib.Path) -> None:
     if not path.is_absolute():
         raise OperatorError("--output-file must be an absolute path")
@@ -213,7 +221,7 @@ def revoke_created_token(cluster_id: str, token_id: str) -> bool:
         run_bk(["api", "--method", "DELETE", token_endpoint(cluster_id, token_id)], sensitive_response=True)
     except OperatorError:
         return False
-    return True
+    return token_is_absent(cluster_id, token_id)
 
 
 def create_token(args: argparse.Namespace) -> int:
@@ -290,7 +298,7 @@ def create_token(args: argparse.Namespace) -> int:
             revoked = revoke_created_token(cluster_id, token_id)
             if not revoked:
                 raise OperatorError(
-                    f"token create follow-up failed and automatic revocation also failed; revoke token id {token_id} manually"
+                    f"token create follow-up failed and automatic revocation/absence verification also failed; revoke token id {token_id} manually"
                 ) from exc
         raise
 
@@ -347,9 +355,8 @@ def revoke_token(args: argparse.Namespace) -> int:
         raise OperatorError("refusing to revoke a token not created for a HostPanel per-worker registration")
 
     run_bk(["api", "--method", "DELETE", token_endpoint(cluster_id, token_id)], sensitive_response=True)
-    remaining = list_tokens(cluster_id)
-    if any(item.get("id") == token_id for item in remaining):
-        raise OperatorError("revoked token id is still present in the cluster token inventory")
+    if not token_is_absent(cluster_id, token_id):
+        raise OperatorError("revoked token id is still present or its absence could not be verified")
     if token_file:
         safe_remove_token_file(token_file)
 
