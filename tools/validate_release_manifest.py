@@ -429,24 +429,59 @@ def require_visible(text: str, name: str, needle: str, label: str) -> None:
 
 
 def validate_readme_platform(text: str, platform: dict[str, Any]) -> None:
+    distro_names = ("Ubuntu", "Debian", "Rocky Linux", "AlmaLinux")
+    expected_by_distro: dict[str, list[str]] = {name: [] for name in distro_names}
     for operating_system in platform["operating_systems"]:
-        require_visible(text, "README.md", operating_system, f"platform OS {operating_system}")
-    architecture_tokens = {
-        "x86_64": ("x86-64", "AMD64"),
-        "aarch64": ("ARM64", "AArch64"),
-    }
-    for architecture in platform["architectures"]:
-        tokens = architecture_tokens.get(architecture, (architecture,))
-        if not any(token in text for token in tokens):
-            raise ValidationError(
-                f"README.md has a conflicting or missing visible architecture declaration: {architecture}"
+        matched = False
+        for distro in distro_names:
+            prefix = f"{distro} "
+            if operating_system.startswith(prefix):
+                expected_by_distro[distro].append(operating_system[len(prefix):])
+                matched = True
+                break
+        if not matched:
+            require_visible(
+                text, "README.md", operating_system, f"platform OS {operating_system}"
             )
+
+    for distro, expected_versions in expected_by_distro.items():
+        if not expected_versions:
+            continue
+        match = re.search(rf"(?m)^- {re.escape(distro)} (?P<versions>[^\n]+)$", text)
+        if not match:
+            raise ValidationError(
+                f"README.md is missing the visible {distro} platform declaration"
+            )
+        actual_versions = re.findall(r"[0-9]+(?:\.[0-9]+)?", match.group("versions"))
+        if actual_versions != expected_versions:
+            raise ValidationError(
+                f"README.md {distro} platform versions do not match the manifest"
+            )
+
+    architecture_tokens = {
+        "x86_64": "x86-64/AMD64",
+        "aarch64": "ARM64/AArch64",
+    }
+    try:
+        architecture_display = " or ".join(
+            architecture_tokens[item] for item in platform["architectures"]
+        )
+    except KeyError as exc:
+        raise ValidationError(
+            f"README.md has no reviewed visible architecture mapping for {exc.args[0]}"
+        ) from exc
+    require_visible(text, "README.md", f"- {architecture_display}", "architecture list")
+
     ram = platform["minimum_ram_mib"]
     root_free = platform["minimum_root_free_mib"]
-    ram_text = f"{ram // 1024} GiB RAM" if ram % 1024 == 0 else f"{ram} MiB RAM"
-    root_text = f"{root_free // 1024} GiB free" if root_free % 1024 == 0 else f"{root_free} MiB free"
-    require_visible(text, "README.md", ram_text, "minimum RAM")
-    require_visible(text, "README.md", root_text, "minimum root free space")
+    ram_text = f"{ram // 1024} GiB" if ram % 1024 == 0 else f"{ram} MiB"
+    root_text = f"{root_free // 1024} GiB" if root_free % 1024 == 0 else f"{root_free} MiB"
+    require_visible(
+        text,
+        "README.md",
+        f"- at least {ram_text} RAM and {root_text} free on `/`",
+        "resource minimums",
+    )
 
 
 def validate_docs(
@@ -491,13 +526,17 @@ def validate_docs(
             require_visible(text, name, f"Release channel: **{channel}**", "release channel")
             publication = "allowed" if publish_allowed else "blocked"
             require_visible(text, name, f"Production publication: **{publication}**", "publication")
-            if status == "deployable-not-publishable":
-                require_visible(
-                    text,
-                    name,
-                    "A deployable build is not the same as an approved production publication.",
-                    "release status",
+            if status != "deployable-not-publishable":
+                raise ValidationError(
+                    "README.md visible release-status contract must be updated before "
+                    f"using manifest status {status}"
                 )
+            require_visible(
+                text,
+                name,
+                "A deployable build is not the same as an approved production publication.",
+                "release status",
+            )
             validate_readme_platform(text, platform)
         elif name == "CONFIGURATION.md":
             pattern = re.compile(
