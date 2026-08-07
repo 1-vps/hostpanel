@@ -96,18 +96,18 @@ class BuildkiteAgentTokenOperatorTests(unittest.TestCase):
 
     def test_ttl_bounds_are_fail_closed(self) -> None:
         source = TOKEN_TOOL.read_text(encoding="utf-8")
-        self.assertIn("MIN_TTL_MINUTES = 5", source)
+        self.assertIn("MIN_TTL_MINUTES = 15", source)
         self.assertIn("MAX_TTL_MINUTES = 60", source)
         self.assertIn("--ttl-minutes must be between", source)
 
-    def test_create_response_requires_exact_metadata_and_bkct_prefix(self) -> None:
+    def test_create_response_requires_exact_metadata_and_safe_opaque_token(self) -> None:
         expires = dt.datetime(2026, 8, 7, 19, 0, tzinfo=dt.timezone.utc)
         payload = {
             "id": "11111111-2222-3333-4444-555555555555",
             "description": "hostpanel-worker:ci-01",
             "allowed_ip_addresses": "192.0.2.10/32",
             "expires_at": "2026-08-07T19:00:00Z",
-            "token": "bkct_example-secret",
+            "token": "igo6HEj5fxQbgBTDoDzNaZzT",
         }
         token_id, token = module.validate_create_response(
             payload,
@@ -117,10 +117,24 @@ class BuildkiteAgentTokenOperatorTests(unittest.TestCase):
         )
         self.assertEqual(token_id, payload["id"])
         self.assertEqual(token, payload["token"])
+        for bad_token in (
+            "short",
+            "token with whitespace here",
+            "é" * 24,
+            "x" * 513,
+        ):
+            changed = dict(payload)
+            changed["token"] = bad_token
+            with self.assertRaises(module.OperatorError):
+                module.validate_create_response(
+                    changed,
+                    description="hostpanel-worker:ci-01",
+                    allowed_cidr="192.0.2.10/32",
+                    expires_at=expires,
+                )
         for key, bad in (
             ("allowed_ip_addresses", "0.0.0.0/0"),
             ("description", "shared-token"),
-            ("token", "not-a-cluster-token"),
         ):
             changed = dict(payload)
             changed[key] = bad
@@ -136,11 +150,11 @@ class BuildkiteAgentTokenOperatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             os.chmod(tmp, 0o700)
             path = pathlib.Path(tmp) / "token"
-            module.write_secret_exclusive(path, "bkct_secret")
-            self.assertEqual(path.read_bytes(), b"bkct_secret")
+            module.write_secret_exclusive(path, "opaque-secret-token-12345")
+            self.assertEqual(path.read_bytes(), b"opaque-secret-token-12345")
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             with self.assertRaises(module.OperatorError):
-                module.write_secret_exclusive(path, "bkct_other")
+                module.write_secret_exclusive(path, "opaque-other-token-12345")
 
     def test_secret_parent_rejects_group_or_other_permissions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -191,6 +205,18 @@ class BuildkiteAgentTokenOperatorTests(unittest.TestCase):
         failure = source.index("automatic revocation/absence verification also failed", create_start)
         self.assertLess(delete, absence)
         self.assertGreater(failure, create_start)
+
+    def test_token_inventory_is_bounded_and_fails_closed_on_pagination(self) -> None:
+        source = TOKEN_TOOL.read_text(encoding="utf-8")
+        self.assertIn('token_endpoint(cluster_id) + "?per_page=100"', source)
+        self.assertIn("if len(payload) >= 100:", source)
+        self.assertIn("cannot prove inventory completeness", source)
+
+    def test_successful_create_with_unrecoverable_id_demands_manual_cleanup(self) -> None:
+        source = TOKEN_TOOL.read_text(encoding="utf-8")
+        self.assertIn("token create returned success but its token id could not be safely recovered", source)
+        self.assertIn("inspect cluster tokens for description", source)
+        self.assertIn("revoke any match before provisioning", source)
 
     def test_pipeline_contract_and_codeowners_cover_operator(self) -> None:
         self.assertIn("tests.test_buildkite_agent_token_operator", CONTRACT.read_text(encoding="utf-8"))
