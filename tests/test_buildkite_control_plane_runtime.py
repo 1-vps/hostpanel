@@ -120,7 +120,7 @@ class BuildkiteControlPlaneRuntimeTests(unittest.TestCase):
                 require_webhook=True,
             )
 
-    def test_create_normalizes_lifecycle_in_quarantine(self) -> None:
+    def test_create_normalizes_lifecycle_and_checks_secrets_twice(self) -> None:
         resources = base.CreatedResources(
             cluster_uuid=CLUSTER_ID,
             upload_queue_uuid=QUEUE_IDS["hostpanel-upload"],
@@ -135,7 +135,7 @@ class BuildkiteControlPlaneRuntimeTests(unittest.TestCase):
             calls.append(provider)
             return json.dumps(pipeline(provider=provider, signed=False, webhook=False))
 
-        with mock.patch.object(base, "preflight"), mock.patch.object(
+        with mock.patch.object(runtime, "preflight"), mock.patch.object(
             base, "assert_no_existing_control_plane"
         ), mock.patch.object(
             base, "run_bk", side_effect=[
@@ -153,12 +153,16 @@ class BuildkiteControlPlaneRuntimeTests(unittest.TestCase):
             runtime, "patch_pipeline_state", side_effect=patch
         ), mock.patch.object(
             runtime, "verify_full_patch_response", return_value=pipeline(signed=False, webhook=False)
-        ), mock.patch.object(base, "assert_zero_builds"):
+        ), mock.patch.object(base, "assert_zero_builds"), mock.patch.object(
+            runtime, "assert_no_cluster_secrets"
+        ) as secret_check:
             actual = runtime.create_control_plane("example-org")
         self.assertEqual(actual, resources)
         self.assertEqual(calls, [base.QUARANTINE_PROVIDER])
+        self.assertEqual(secret_check.call_count, 2)
+        secret_check.assert_called_with("example-org", CLUSTER_ID)
 
-    def test_activation_happy_path_orders_quarantine_webhook_active(self) -> None:
+    def test_activation_happy_path_orders_quarantine_webhook_active_and_secret_checks(self) -> None:
         patches: list[str] = []
         webhook_calls: list[list[str]] = []
         state = {"webhook": False}
@@ -181,7 +185,7 @@ class BuildkiteControlPlaneRuntimeTests(unittest.TestCase):
                 return "{}"
             raise AssertionError(args)
 
-        with mock.patch.object(base, "preflight"), mock.patch.object(
+        with mock.patch.object(runtime, "preflight"), mock.patch.object(
             base, "verify_cluster", return_value=QUEUE_IDS
         ), mock.patch.object(base, "assert_no_queue_agents"), mock.patch.object(
             base, "assert_zero_builds"
@@ -195,14 +199,16 @@ class BuildkiteControlPlaneRuntimeTests(unittest.TestCase):
             )
         ), mock.patch.object(runtime, "patch_pipeline_state", side_effect=patch), mock.patch.object(
             runtime, "verify_full_patch_response", side_effect=lambda raw, **_: json.loads(raw)
-        ), mock.patch.object(base, "run_bk", side_effect=run_bk):
+        ), mock.patch.object(base, "run_bk", side_effect=run_bk), mock.patch.object(
+            runtime, "assert_no_cluster_secrets"
+        ) as secret_check:
             runtime.activate_control_plane("example-org", identity())
         self.assertEqual(patches, ["none", "none", "code"])
         self.assertEqual(len(webhook_calls), 1)
+        self.assertEqual(secret_check.call_count, 4)
 
     def test_post_active_failure_rolls_back_to_quarantine(self) -> None:
         patches: list[str] = []
-        state = {"webhook": True, "active_verified": False}
 
         def patch(provider):
             mode = provider["trigger_mode"]
@@ -221,7 +227,7 @@ class BuildkiteControlPlaneRuntimeTests(unittest.TestCase):
             provider = base.ACTIVE_PROVIDER if patches and patches[-1] == "code" else base.QUARANTINE_PROVIDER
             return json.dumps(pipeline(provider=provider, signed=True, webhook=True))
 
-        with mock.patch.object(base, "preflight"), mock.patch.object(
+        with mock.patch.object(runtime, "preflight"), mock.patch.object(
             base, "verify_cluster", return_value=QUEUE_IDS
         ), mock.patch.object(base, "assert_no_queue_agents"), mock.patch.object(
             base, "assert_zero_builds", side_effect=zero_builds
@@ -229,11 +235,44 @@ class BuildkiteControlPlaneRuntimeTests(unittest.TestCase):
             runtime, "patch_pipeline_state", side_effect=patch
         ), mock.patch.object(
             runtime, "verify_full_patch_response", side_effect=lambda raw, **_: json.loads(raw)
-        ):
+        ), mock.patch.object(runtime, "assert_no_cluster_secrets"):
             with self.assertRaises(base.OperatorError):
                 runtime.activate_control_plane("example-org", identity())
         self.assertEqual(patches[-2:], ["code", "none"])
         self.assertGreaterEqual(build_checks, 3)
+
+    def test_post_active_secret_drift_rolls_back_to_quarantine(self) -> None:
+        patches: list[str] = []
+        secret_checks = 0
+
+        def patch(provider):
+            mode = provider["trigger_mode"]
+            patches.append(mode)
+            return json.dumps(pipeline(provider=provider, signed=True, webhook=True))
+
+        def check_secrets(_org, _cluster):
+            nonlocal secret_checks
+            secret_checks += 1
+            if patches and patches[-1] == "code":
+                raise base.OperatorError("synthetic secret appeared after activation")
+
+        def fetch():
+            provider = base.ACTIVE_PROVIDER if patches and patches[-1] == "code" else base.QUARANTINE_PROVIDER
+            return json.dumps(pipeline(provider=provider, signed=True, webhook=True))
+
+        with mock.patch.object(runtime, "preflight"), mock.patch.object(
+            base, "verify_cluster", return_value=QUEUE_IDS
+        ), mock.patch.object(base, "assert_no_queue_agents"), mock.patch.object(
+            base, "assert_zero_builds"
+        ), mock.patch.object(runtime, "fetch_pipeline_raw", side_effect=fetch), mock.patch.object(
+            runtime, "patch_pipeline_state", side_effect=patch
+        ), mock.patch.object(
+            runtime, "verify_full_patch_response", side_effect=lambda raw, **_: json.loads(raw)
+        ), mock.patch.object(runtime, "assert_no_cluster_secrets", side_effect=check_secrets):
+            with self.assertRaisesRegex(base.OperatorError, "secret appeared"):
+                runtime.activate_control_plane("example-org", identity())
+        self.assertEqual(patches[-2:], ["code", "none"])
+        self.assertGreaterEqual(secret_checks, 4)
 
     def test_failed_quarantine_rollback_emits_manual_trigger_mode_instruction(self) -> None:
         patches: list[str] = []
@@ -249,7 +288,7 @@ class BuildkiteControlPlaneRuntimeTests(unittest.TestCase):
             if patches and patches[-1] == "code":
                 raise base.OperatorError("synthetic active verification failure")
 
-        with mock.patch.object(base, "preflight"), mock.patch.object(
+        with mock.patch.object(runtime, "preflight"), mock.patch.object(
             base, "verify_cluster", return_value=QUEUE_IDS
         ), mock.patch.object(base, "assert_no_queue_agents"), mock.patch.object(
             base, "assert_zero_builds", side_effect=zero_builds
@@ -257,7 +296,7 @@ class BuildkiteControlPlaneRuntimeTests(unittest.TestCase):
             runtime, "fetch_pipeline_raw", return_value=json.dumps(pipeline(signed=True, webhook=True))
         ), mock.patch.object(runtime, "patch_pipeline_state", side_effect=patch), mock.patch.object(
             runtime, "verify_full_patch_response", side_effect=lambda raw, **_: json.loads(raw)
-        ):
+        ), mock.patch.object(runtime, "assert_no_cluster_secrets"):
             with self.assertRaisesRegex(base.OperatorError, "trigger_mode=none manually"):
                 runtime.activate_control_plane("example-org", identity())
 
