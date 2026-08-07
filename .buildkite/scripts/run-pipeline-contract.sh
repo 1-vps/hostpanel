@@ -41,6 +41,7 @@ PY
 
 python3 -m unittest -v \
   tests.test_buildkite_pipeline \
+  tests.test_buildkite_control_plane \
   tests.test_buildkite_prebootstrap_policy \
   tests.test_buildkite_checkout_policy \
   tests.test_buildkite_private_checkout \
