@@ -31,7 +31,6 @@ GITHUB_REPOSITORY = "1-vps/hostpanel"
 CLUSTER_NAME = "HostPanel"
 PIPELINE_NAME = "HostPanel"
 PIPELINE_SLUG = "hostpanel"
-SIGNING_KEY_ID = "hostpanel-2026-08"
 MAX_CLUSTERS = 100
 MAX_PIPELINES = 3000
 MAX_QUEUES = 100
@@ -120,6 +119,23 @@ class CreatedResources:
     qemu_queue_uuid: str = ""
     pipeline_uuid: str = ""
     pipeline_slug: str = ""
+
+
+@dataclass(frozen=True)
+class ActivationIdentity:
+    pipeline_uuid: str
+    cluster_uuid: str
+    upload_queue_uuid: str
+    ci_queue_uuid: str
+    qemu_queue_uuid: str
+
+    @property
+    def queues(self) -> dict[str, str]:
+        return {
+            "hostpanel-upload": self.upload_queue_uuid,
+            "hostpanel-ci": self.ci_queue_uuid,
+            "hostpanel-qemu": self.qemu_queue_uuid,
+        }
 
 
 def operator_dir() -> pathlib.Path:
@@ -212,8 +228,7 @@ def top_uuid(raw: str, label: str) -> str:
     payload = parse_json(raw, label)
     if not isinstance(payload, dict):
         raise OperatorError(f"{label} did not return a JSON object")
-    value = payload.get("id") or payload.get("uuid")
-    return canonical_uuid(value, f"{label} id")
+    return canonical_uuid(payload.get("id") or payload.get("uuid"), f"{label} id")
 
 
 def preflight(org: str) -> None:
@@ -290,6 +305,7 @@ def parse_queue_inventory(raw: str) -> dict[str, str]:
 
 
 def verify_cluster(cluster_id: str) -> dict[str, str]:
+    cluster_id = canonical_uuid(cluster_id, "expected cluster id")
     cluster = parse_json(run_bk(["cluster", "view", cluster_id, "-o", "json"]), "cluster view")
     if not isinstance(cluster, dict):
         raise OperatorError("cluster view did not return a JSON object")
@@ -299,7 +315,7 @@ def verify_cluster(cluster_id: str) -> dict[str, str]:
         raise OperatorError("HostPanel cluster name mismatch")
     if "default_queue_id" not in cluster or cluster["default_queue_id"] is not None:
         raise OperatorError("HostPanel cluster must explicitly report default_queue_id=null")
-    queues = parse_queue_inventory(
+    return parse_queue_inventory(
         run_bk(
             [
                 "queue",
@@ -314,12 +330,11 @@ def verify_cluster(cluster_id: str) -> dict[str, str]:
             ]
         )
     )
-    return queues
 
 
 def assert_no_queue_agents(org: str, queues: dict[str, str]) -> None:
     for key in ("hostpanel-upload", "hostpanel-ci", "hostpanel-qemu"):
-        queue_id = queues[key]
+        queue_id = canonical_uuid(queues[key], f"{key} expected queue id")
         payload = parse_json(
             run_bk(["api", f"/organizations/{org}/agents?cluster_queue_id={queue_id}"]),
             f"agent query for {key}",
@@ -400,6 +415,7 @@ def verify_provider_policy(pipeline: dict, expected: dict) -> None:
 def verify_pipeline(
     raw: str,
     *,
+    pipeline_id: str,
     cluster_id: str,
     expected_provider: dict,
     require_signature: bool,
@@ -410,6 +426,7 @@ def verify_pipeline(
     try:
         state.verify_pipeline_state(
             payload,
+            expected_pipeline_id=pipeline_id,
             expected_cluster_id=cluster_id,
             require_signature=require_signature,
             require_webhook=require_webhook,
@@ -422,6 +439,7 @@ def verify_pipeline(
 
 
 def pipeline_payload(cluster_id: str) -> str:
+    cluster_id = canonical_uuid(cluster_id, "pipeline cluster id")
     body = {
         "name": PIPELINE_NAME,
         "slug": PIPELINE_SLUG,
@@ -451,17 +469,22 @@ def print_create_plan(org: str) -> None:
     print("Preflight scopes, refuse duplicates, create one cluster and exactly three self-hosted queues.")
     print("Create pipeline hostpanel with trigger_mode=none, no template, no rebuild/skip/cancel behavior.")
     print("Reverify exact provider repository, private pipeline state, zero builds and zero queue agents.")
+    print("Record every created UUID for the separate activation command.")
     print("MANDATORY STOP: sign Pipeline Settings and install only the public read-only checkout deploy key.")
 
 
-def print_activation_plan(org: str) -> None:
+def print_activation_plan(org: str, identity: ActivationIdentity) -> None:
     print("HostPanel Buildkite activation plan")
     print(f"organization: {org}")
     print(f"pipeline:     {PIPELINE_SLUG}")
+    print(f"pipeline_uuid={identity.pipeline_uuid}")
+    print(f"cluster_uuid={identity.cluster_uuid}")
+    for key, value in identity.queues.items():
+        print(f"{key}_uuid={value}")
     print("No agents are started by this tool.")
-    print("Reverify signed static bootstrap metadata and pipeline/provider lifecycle while quarantined.")
+    print("Reverify every resource UUID, signed static bootstrap metadata and provider lifecycle while quarantined.")
     print("Reuse or create one valid Buildkite webhook, then PATCH provider_settings to trigger_mode=code.")
-    print("Reverify active policy, strict webhook URL, zero builds and zero queue agents.")
+    print("Reverify the same resource UUIDs, active policy, strict webhook URL, zero builds and zero queue agents.")
     print("Cryptographic signature validity is enforced by Buildkite agents using verification JWKS with block behavior.")
 
 
@@ -470,36 +493,40 @@ def create_control_plane(org: str) -> CreatedResources:
     try:
         preflight(org)
         assert_no_existing_control_plane()
-        cluster_raw = run_bk(
-            [
-                "cluster",
-                "create",
-                "--name",
-                CLUSTER_NAME,
-                "--description",
-                "Disposable hardened HostPanel CI",
-                "-o",
-                "json",
-            ]
-        )
-        resources.cluster_uuid = top_uuid(cluster_raw, "bk cluster create")
-
-        queue_ids: dict[str, str] = {}
-        for key, description in QUEUE_DESCRIPTIONS.items():
-            raw = run_bk(
+        resources.cluster_uuid = top_uuid(
+            run_bk(
                 [
-                    "queue",
+                    "cluster",
                     "create",
-                    resources.cluster_uuid,
-                    "--key",
-                    key,
+                    "--name",
+                    CLUSTER_NAME,
                     "--description",
-                    description,
+                    "Disposable hardened HostPanel CI",
                     "-o",
                     "json",
                 ]
+            ),
+            "bk cluster create",
+        )
+
+        queue_ids: dict[str, str] = {}
+        for key, description in QUEUE_DESCRIPTIONS.items():
+            queue_ids[key] = top_uuid(
+                run_bk(
+                    [
+                        "queue",
+                        "create",
+                        resources.cluster_uuid,
+                        "--key",
+                        key,
+                        "--description",
+                        description,
+                        "-o",
+                        "json",
+                    ]
+                ),
+                f"bk queue create {key}",
             )
-            queue_ids[key] = top_uuid(raw, f"bk queue create {key}")
         resources.upload_queue_uuid = queue_ids["hostpanel-upload"]
         resources.ci_queue_uuid = queue_ids["hostpanel-ci"]
         resources.qemu_queue_uuid = queue_ids["hostpanel-qemu"]
@@ -509,8 +536,10 @@ def create_control_plane(org: str) -> CreatedResources:
             raise OperatorError("re-fetched HostPanel queue UUIDs do not match created queue UUIDs")
         assert_no_queue_agents(org, verified_queues)
 
-        raw = run_bk(["api", "--method", "POST", "/pipelines", "--data", pipeline_payload(resources.cluster_uuid)])
-        created = parse_json(raw, "pipeline creation")
+        created = parse_json(
+            run_bk(["api", "--method", "POST", "/pipelines", "--data", pipeline_payload(resources.cluster_uuid)]),
+            "pipeline creation",
+        )
         if not isinstance(created, dict):
             raise OperatorError("pipeline creation did not return a JSON object")
         resources.pipeline_uuid = canonical_uuid(created.get("id"), "created pipeline id")
@@ -518,9 +547,9 @@ def create_control_plane(org: str) -> CreatedResources:
             raise OperatorError("pipeline creation did not return the reviewed hostpanel slug")
         resources.pipeline_slug = PIPELINE_SLUG
 
-        raw = run_bk(["pipeline", "view", f"{org}/{PIPELINE_SLUG}", "-o", "json"])
         verify_pipeline(
-            raw,
+            run_bk(["pipeline", "view", f"{org}/{PIPELINE_SLUG}", "-o", "json"]),
+            pipeline_id=resources.pipeline_uuid,
             cluster_id=resources.cluster_uuid,
             expected_provider=QUARANTINE_PROVIDER,
             require_signature=False,
@@ -537,52 +566,60 @@ def create_control_plane(org: str) -> CreatedResources:
         raise
 
 
-def activate_control_plane(org: str) -> None:
+def activate_control_plane(org: str, identity: ActivationIdentity) -> None:
     preflight(org)
     raw = run_bk(["pipeline", "view", f"{org}/{PIPELINE_SLUG}", "-o", "json"])
     first = parse_json(raw, "pipeline view")
     if not isinstance(first, dict):
         raise OperatorError("pipeline view did not return a JSON object")
-    cluster_id = canonical_uuid(first.get("cluster_id"), "pipeline cluster id")
-    queues = verify_cluster(cluster_id)
+    if canonical_uuid(first.get("id"), "pipeline id") != identity.pipeline_uuid:
+        raise OperatorError("pipeline UUID changed between creation and activation")
+    if canonical_uuid(first.get("cluster_id"), "pipeline cluster id") != identity.cluster_uuid:
+        raise OperatorError("pipeline cluster UUID changed between creation and activation")
+    queues = verify_cluster(identity.cluster_uuid)
+    if queues != identity.queues:
+        raise OperatorError("HostPanel queue UUIDs changed between creation and activation")
     assert_no_queue_agents(org, queues)
     assert_zero_builds(org)
     pipeline = verify_pipeline(
         raw,
-        cluster_id=cluster_id,
+        pipeline_id=identity.pipeline_uuid,
+        cluster_id=identity.cluster_uuid,
         expected_provider=QUARANTINE_PROVIDER,
         require_signature=True,
         require_webhook=False,
     )
 
-    provider = pipeline["provider"]
-    webhook = provider["webhook_url"]
-    if webhook in (None, ""):
+    if pipeline["provider"]["webhook_url"] in (None, ""):
         run_bk(["api", "--method", "POST", f"/pipelines/{PIPELINE_SLUG}/webhook"])
 
-    raw = run_bk(["pipeline", "view", f"{org}/{PIPELINE_SLUG}", "-o", "json"])
     verify_pipeline(
-        raw,
-        cluster_id=cluster_id,
+        run_bk(["pipeline", "view", f"{org}/{PIPELINE_SLUG}", "-o", "json"]),
+        pipeline_id=identity.pipeline_uuid,
+        cluster_id=identity.cluster_uuid,
         expected_provider=QUARANTINE_PROVIDER,
         require_signature=True,
         require_webhook=True,
     )
-    assert_no_queue_agents(org, queues)
+    if verify_cluster(identity.cluster_uuid) != identity.queues:
+        raise OperatorError("HostPanel queue UUIDs changed before provider activation")
+    assert_no_queue_agents(org, identity.queues)
     assert_zero_builds(org)
 
     patch = json.dumps({"provider_settings": ACTIVE_PROVIDER}, separators=(",", ":"))
     run_bk(["api", "--method", "PATCH", f"/pipelines/{PIPELINE_SLUG}", "--data", patch])
 
-    raw = run_bk(["pipeline", "view", f"{org}/{PIPELINE_SLUG}", "-o", "json"])
     verify_pipeline(
-        raw,
-        cluster_id=cluster_id,
+        run_bk(["pipeline", "view", f"{org}/{PIPELINE_SLUG}", "-o", "json"]),
+        pipeline_id=identity.pipeline_uuid,
+        cluster_id=identity.cluster_uuid,
         expected_provider=ACTIVE_PROVIDER,
         require_signature=True,
         require_webhook=True,
     )
-    assert_no_queue_agents(org, queues)
+    if verify_cluster(identity.cluster_uuid) != identity.queues:
+        raise OperatorError("HostPanel queue UUIDs changed after provider activation")
+    assert_no_queue_agents(org, identity.queues)
     assert_zero_builds(org)
 
 
@@ -594,36 +631,71 @@ def parser() -> argparse.ArgumentParser:
     top.add_argument("--enable-webhook")
     top.add_argument("--confirm-static-bootstrap-signed", action="store_true")
     top.add_argument("--confirm-public-deploy-key-added", action="store_true")
+    top.add_argument("--pipeline-id")
+    top.add_argument("--cluster-id")
+    top.add_argument("--upload-queue-id")
+    top.add_argument("--ci-queue-id")
+    top.add_argument("--qemu-queue-id")
     return top
 
 
-def validate_args(args: argparse.Namespace) -> None:
+def activation_identity(args: argparse.Namespace) -> ActivationIdentity:
+    fields = {
+        "pipeline_uuid": args.pipeline_id,
+        "cluster_uuid": args.cluster_id,
+        "upload_queue_uuid": args.upload_queue_id,
+        "ci_queue_uuid": args.ci_queue_id,
+        "qemu_queue_uuid": args.qemu_queue_id,
+    }
+    missing = [name for name, value in fields.items() if value is None]
+    if missing:
+        raise OperatorError("activation requires exact created resource UUIDs: " + ", ".join(missing))
+    return ActivationIdentity(
+        pipeline_uuid=canonical_uuid(fields["pipeline_uuid"], "--pipeline-id"),
+        cluster_uuid=canonical_uuid(fields["cluster_uuid"], "--cluster-id"),
+        upload_queue_uuid=canonical_uuid(fields["upload_queue_uuid"], "--upload-queue-id"),
+        ci_queue_uuid=canonical_uuid(fields["ci_queue_uuid"], "--ci-queue-id"),
+        qemu_queue_uuid=canonical_uuid(fields["qemu_queue_uuid"], "--qemu-queue-id"),
+    )
+
+
+def validate_args(args: argparse.Namespace) -> ActivationIdentity | None:
     if ORG_RE.fullmatch(args.org) is None:
         raise OperatorError("invalid --org")
+    identity_values = (
+        args.pipeline_id,
+        args.cluster_id,
+        args.upload_queue_id,
+        args.ci_queue_id,
+        args.qemu_queue_id,
+    )
     if args.enable_webhook is not None:
         if args.enable_webhook != PIPELINE_SLUG:
             raise OperatorError("--enable-webhook must target the reviewed hostpanel pipeline slug")
         if args.confirm_create:
             raise OperatorError("--confirm-create is not valid with --enable-webhook")
-    else:
-        if args.confirm_static_bootstrap_signed:
-            raise OperatorError("--confirm-static-bootstrap-signed requires --enable-webhook")
-        if args.confirm_public_deploy_key_added:
-            raise OperatorError("--confirm-public-deploy-key-added requires --enable-webhook")
+        return activation_identity(args)
+    if any(value is not None for value in identity_values):
+        raise OperatorError("resource UUID arguments are only valid with --enable-webhook")
+    if args.confirm_static_bootstrap_signed:
+        raise OperatorError("--confirm-static-bootstrap-signed requires --enable-webhook")
+    if args.confirm_public_deploy_key_added:
+        raise OperatorError("--confirm-public-deploy-key-added requires --enable-webhook")
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        validate_args(args)
+        identity = validate_args(args)
         if not args.apply:
-            if args.enable_webhook is not None:
-                print_activation_plan(args.org)
+            if identity is not None:
+                print_activation_plan(args.org, identity)
             else:
                 print_create_plan(args.org)
             return 0
 
-        if args.enable_webhook is None:
+        if identity is None:
             if not args.confirm_create:
                 raise OperatorError("--apply requires --confirm-create")
             resources = create_control_plane(args.org)
@@ -631,17 +703,19 @@ def main(argv: list[str] | None = None) -> int:
             for name, value in resources.__dict__.items():
                 print(f"{name}={value}")
             print("provider_trigger_mode=none")
-            print("MANDATORY STOP: do not connect an agent or activate GitHub triggers yet.")
+            print("MANDATORY STOP: record these UUIDs; do not connect an agent or activate GitHub triggers yet.")
             return 0
 
         if not args.confirm_static_bootstrap_signed:
             raise OperatorError("--enable-webhook with --apply requires --confirm-static-bootstrap-signed")
         if not args.confirm_public_deploy_key_added:
             raise OperatorError("--enable-webhook with --apply requires --confirm-public-deploy-key-added")
-        activate_control_plane(args.org)
+        activate_control_plane(args.org, identity)
         print("HostPanel Buildkite pipeline activation verified.")
         print(f"organization={args.org}")
         print(f"pipeline_slug={PIPELINE_SLUG}")
+        print(f"pipeline_uuid={identity.pipeline_uuid}")
+        print(f"cluster_uuid={identity.cluster_uuid}")
         print(f"repository={REPOSITORY}")
         print("provider_trigger_mode=code")
         print("No agents were started.")
