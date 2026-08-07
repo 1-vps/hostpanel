@@ -37,8 +37,8 @@ def canonical_uuid(value: str, label: str) -> str:
     except (ValueError, AttributeError, TypeError) as exc:
         raise OperatorError(f"{label} must be a canonical UUID") from exc
     canonical = str(parsed)
-    if not isinstance(value, str) or value.lower() != canonical:
-        raise OperatorError(f"{label} must use canonical UUID form")
+    if not isinstance(value, str) or value != canonical:
+        raise OperatorError(f"{label} must use canonical lowercase UUID form")
     return canonical
 
 
@@ -161,7 +161,7 @@ def queue_endpoint(cluster_id: str) -> str:
     return f"/clusters/{cluster_id}/queues?per_page={MAX_INVENTORY_ITEMS}"
 
 
-def verify_hostpanel_cluster(cluster_id: str) -> None:
+def verify_hostpanel_cluster_identity(cluster_id: str) -> None:
     cluster = parse_json(
         run_bk(["api", f"/clusters/{cluster_id}"]),
         "HostPanel cluster lookup",
@@ -174,6 +174,10 @@ def verify_hostpanel_cluster(cluster_id: str) -> None:
         raise OperatorError("refusing to manage worker tokens outside the HostPanel cluster")
     if "default_queue_id" not in cluster or cluster["default_queue_id"] is not None:
         raise OperatorError("HostPanel cluster must explicitly have no default queue")
+
+
+def verify_hostpanel_cluster(cluster_id: str) -> None:
+    verify_hostpanel_cluster_identity(cluster_id)
 
     queues = parse_json(run_bk(["api", queue_endpoint(cluster_id)]), "HostPanel queue inventory")
     if not isinstance(queues, list) or not all(isinstance(item, dict) for item in queues):
@@ -543,14 +547,25 @@ def revoke_token(args: argparse.Namespace) -> int:
         parent_fd = open_secure_parent(token_file)
         os.close(parent_fd)
     preflight(args.org)
-    verify_hostpanel_cluster(cluster_id)
+    # Revocation is an incident-cleanup path. Bind it to the exact HostPanel
+    # cluster identity, but do not require the queue topology to still be healthy:
+    # queue drift must never prevent removal of a leaked/stale registration token.
+    verify_hostpanel_cluster_identity(cluster_id)
 
-    raw = run_bk(["api", token_endpoint(cluster_id, token_id)])
-    payload = parse_json(raw, "agent token lookup")
-    if not isinstance(payload, dict):
-        raise OperatorError("agent token lookup did not return a JSON object")
-    if canonical_uuid(payload.get("id"), "looked-up token id") != token_id:
-        raise OperatorError("looked-up token id mismatch")
+    matches = [item for item in list_tokens(cluster_id) if item.get("id") == token_id]
+    if not matches:
+        if token_file:
+            safe_remove_token_file(token_file)
+        print(f"Buildkite agent token {token_id} is already absent; absence verified.")
+        if token_file:
+            print("Removed the local token file if it was still present.")
+        return 0
+    if len(matches) != 1:
+        raise OperatorError("agent token inventory contains duplicate token ids")
+
+    payload = matches[0]
+    if canonical_uuid(payload.get("id"), "listed token id") != token_id:
+        raise OperatorError("listed token id mismatch")
     description = payload.get("description")
     if not isinstance(description, str) or not description.startswith(DESCRIPTION_PREFIX):
         raise OperatorError(
