@@ -18,3 +18,4 @@
 /tests/test_buildkite_agent_token_operator.py @1-vps
 /tests/test_buildkite_agent_token_revoke.py @1-vps
 /tests/test_buildkite_agent_token_ambiguous_create.py @1-vps
+/tests/test_buildkite_agent_token_secrets.py @1-vps
