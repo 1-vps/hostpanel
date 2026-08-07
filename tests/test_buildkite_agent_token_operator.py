@@ -42,13 +42,13 @@ class BuildkiteAgentTokenOperatorTests(unittest.TestCase):
             "--worker-id",
             "ci-01",
             "--allowed-ip",
-            "192.0.2.10",
+            "1.1.1.1",
             "--output-file",
             "/persistent/example/token",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("No Buildkite API writes are performed in plan mode.", result.stdout)
-        self.assertIn("allowed_ip_addresses=192.0.2.10/32", result.stdout)
+        self.assertIn("allowed_ip_addresses=1.1.1.1/32", result.stdout)
         self.assertIn("ttl_minutes=15", result.stdout)
         self.assertIn("root-owned tmpfs", result.stdout)
         self.assertIn("never prints the token value", result.stdout)
@@ -63,9 +63,9 @@ class BuildkiteAgentTokenOperatorTests(unittest.TestCase):
             "--worker-id",
             "ci-01",
             "--allowed-ip",
-            "192.0.2.10",
+            "1.1.1.1",
             "--output-file",
-            "/run/hostpanel-token/token",
+            "/run/hostpanel-buildkite-tokens/ci-01.token",
             "--apply",
         )
         self.assertNotEqual(result.returncode, 0)
@@ -94,11 +94,11 @@ class BuildkiteAgentTokenOperatorTests(unittest.TestCase):
             with self.assertRaises(module.OperatorError):
                 module.require_apply_root()
 
-    def test_allowed_ip_rejects_ranges_and_ipv6(self) -> None:
-        for value in ("192.0.2.0/24", "2001:db8::1"):
+    def test_allowed_ip_requires_one_global_ipv4(self) -> None:
+        for value in ("192.0.2.0/24", "2001:db8::1", "192.0.2.7", "10.0.0.1"):
             with self.assertRaises(module.OperatorError):
                 module.exact_ipv4_cidr(value)
-        self.assertEqual(module.exact_ipv4_cidr("192.0.2.7"), "192.0.2.7/32")
+        self.assertEqual(module.exact_ipv4_cidr("1.1.1.1"), "1.1.1.1/32")
 
     def test_ttl_bounds_are_fail_closed(self) -> None:
         source = TOKEN_TOOL.read_text(encoding="utf-8")
@@ -205,13 +205,31 @@ class BuildkiteAgentTokenOperatorTests(unittest.TestCase):
             finally:
                 os.close(parent_fd)
 
-    def test_secure_parent_requires_root_owned_0700_tmpfs(self) -> None:
+    def test_failed_exclusive_open_never_deletes_preexisting_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o700)
+            parent_fd = os.open(tmp, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            path = pathlib.Path(tmp) / "token"
+            path.write_bytes(b"preexisting-secret")
+            try:
+                with mock.patch.object(
+                    module, "open_secure_parent", side_effect=lambda _p: os.dup(parent_fd)
+                ):
+                    with self.assertRaises(module.OperatorError):
+                        module.write_secret_exclusive(path, "new-secret-token-123456")
+                self.assertEqual(path.read_bytes(), b"preexisting-secret")
+            finally:
+                os.close(parent_fd)
+
+    def test_secure_parent_requires_fixed_root_owned_0700_tmpfs(self) -> None:
         source = TOKEN_TOOL.read_text(encoding="utf-8")
         self.assertIn('stat.S_IMODE(info.st_mode) != 0o700', source)
         self.assertIn('fd_filesystem_type(fd) != "tmpfs"', source)
         self.assertIn("info.st_uid != 0", source)
         self.assertIn("O_NOFOLLOW", source)
         self.assertIn("O_DIRECTORY", source)
+        self.assertIn('TOKEN_ROOT = pathlib.Path("/run/hostpanel-buildkite-tokens")', source)
+        self.assertIn("path.parent != TOKEN_ROOT", source)
 
     def test_hostpanel_cluster_identity_and_queue_shape_are_exact(self) -> None:
         cluster_id = "01234567-89ab-cdef-0123-456789abcdef"
