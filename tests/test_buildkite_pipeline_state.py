@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import copy
 import importlib.util
 import json
 import pathlib
@@ -21,6 +20,7 @@ module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
+PIPELINE_ID = "11111111-2222-3333-4444-555555555555"
 CLUSTER_ID = "01234567-89ab-cdef-0123-456789abcdef"
 
 
@@ -53,7 +53,7 @@ def fixture(*, signed: bool = True, webhook: bool = True) -> dict:
             "value": jws_value(),
         }
     return {
-        "id": "11111111-2222-3333-4444-555555555555",
+        "id": PIPELINE_ID,
         "name": "HostPanel",
         "slug": "hostpanel",
         "repository": "git@github.com:1-vps/hostpanel.git",
@@ -89,6 +89,7 @@ class BuildkitePipelineStateTests(unittest.TestCase):
     def verify(self, payload: dict, *, signed: bool = True, webhook: bool = True) -> None:
         module.verify_pipeline_state(
             payload,
+            expected_pipeline_id=PIPELINE_ID,
             expected_cluster_id=CLUSTER_ID,
             require_signature=signed,
             require_webhook=webhook,
@@ -99,6 +100,12 @@ class BuildkitePipelineStateTests(unittest.TestCase):
 
     def test_unsigned_quarantine_state_passes_without_webhook_requirement(self) -> None:
         self.verify(fixture(signed=False, webhook=False), signed=False, webhook=False)
+
+    def test_pipeline_id_is_bound_exactly(self) -> None:
+        payload = fixture()
+        payload["id"] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        with self.assertRaises(module.VerificationError):
+            self.verify(payload)
 
     def test_provider_repository_is_bound_separately_from_checkout_repository(self) -> None:
         payload = fixture()
@@ -115,6 +122,12 @@ class BuildkitePipelineStateTests(unittest.TestCase):
     def test_archived_pipeline_is_rejected(self) -> None:
         payload = fixture()
         payload["archived_at"] = "2026-08-07T20:00:00Z"
+        with self.assertRaises(module.VerificationError):
+            self.verify(payload)
+
+    def test_missing_lifecycle_field_is_rejected_instead_of_defaulting_safe(self) -> None:
+        payload = fixture()
+        del payload["pipeline_template_uuid"]
         with self.assertRaises(module.VerificationError):
             self.verify(payload)
 
@@ -182,7 +195,7 @@ class BuildkitePipelineStateTests(unittest.TestCase):
             with self.assertRaises(module.VerificationError):
                 self.verify(payload)
 
-    def test_cluster_uuid_must_be_canonical_and_exact(self) -> None:
+    def test_resource_uuids_must_be_canonical_lowercase_and_exact(self) -> None:
         payload = fixture()
         payload["cluster_id"] = CLUSTER_ID.upper()
         with self.assertRaises(module.VerificationError):
@@ -191,7 +204,8 @@ class BuildkitePipelineStateTests(unittest.TestCase):
         with self.assertRaises(module.VerificationError):
             module.verify_pipeline_state(
                 payload,
-                expected_cluster_id="11111111-2222-3333-4444-555555555555",
+                expected_pipeline_id=PIPELINE_ID,
+                expected_cluster_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
                 require_signature=True,
                 require_webhook=True,
             )
