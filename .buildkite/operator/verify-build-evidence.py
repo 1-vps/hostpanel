@@ -12,10 +12,13 @@ if __name__ == "__main__" and not sys.flags.isolated:
     raise SystemExit(2)
 
 import argparse
+import importlib.util
 import json
 import os
+import pathlib
 import re
 import shutil
+import stat
 import subprocess
 import uuid
 
@@ -45,6 +48,7 @@ REQUIRED_JOB_FIELDS = frozenset(
         "id",
         "type",
         "step_key",
+        "step",
         "command",
         "state",
         "soft_failed",
@@ -94,6 +98,26 @@ QEMU_STEP = ("qemu-vm-acceptance", ".buildkite/scripts/run-qemu.sh")
 
 class EvidenceError(RuntimeError):
     pass
+
+
+def load_signature_verifier():
+    path = pathlib.Path(__file__).resolve().parent / "verify-pipeline-state.py"
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise EvidenceError("pipeline signature metadata verifier is unavailable") from exc
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise EvidenceError("pipeline signature metadata verifier must be a regular non-symlink file")
+    spec = importlib.util.spec_from_file_location("hostpanel_evidence_signature_verifier", path)
+    if spec is None or spec.loader is None:
+        raise EvidenceError("cannot load pipeline signature metadata verifier")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+signature_verifier = load_signature_verifier()
 
 
 def canonical_uuid(value: object, label: str) -> str:
@@ -276,6 +300,13 @@ def verify_job(
         raise EvidenceError(f"{step_key}: job type is not script")
     if job["step_key"] != step_key:
         raise EvidenceError(f"{step_key}: step key mismatch")
+    step = job["step"]
+    if not isinstance(step, dict):
+        raise EvidenceError(f"{step_key}: step signature metadata is unavailable")
+    try:
+        signature_verifier.verify_signature_metadata(step, required=True)
+    except signature_verifier.VerificationError as exc:
+        raise EvidenceError(f"{step_key}: signed step metadata rejected: {exc}") from exc
     if job["command"] != expected_command:
         raise EvidenceError(f"{step_key}: command mismatch")
     if job["state"] != "passed":
@@ -331,8 +362,6 @@ def verify_jobs_page(
     if not isinstance(payload, dict):
         raise EvidenceError("jobs response is not a JSON object")
     if set(payload).difference({"items", "links"}):
-        # Extra top-level metadata is not security-sensitive, but fail closed so
-        # an API shape change is explicitly reviewed before merge evidence is trusted.
         raise EvidenceError("jobs response contains unreviewed top-level fields")
     items = payload.get("items")
     links = payload.get("links")
