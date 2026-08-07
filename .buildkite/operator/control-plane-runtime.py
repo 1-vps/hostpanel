@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import sys
+
+if __name__ == "__main__" and not sys.flags.isolated:
+    print(
+        "HostPanel Buildkite control-plane runtime requires isolated Python; "
+        "use .buildkite/operator/bootstrap-control-plane.sh or python3 -I.",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
 import importlib.util
 import json
 import os
 import pathlib
 import stat
-import sys
 
 
 class RuntimeErrorSafe(RuntimeError):
@@ -318,7 +327,7 @@ def activate_control_plane(org: str, identity) -> None:
             raise base.OperatorError("HostPanel queue UUIDs changed after provider activation")
         base.assert_no_queue_agents(org, identity.queues)
         base.assert_zero_builds(org)
-    except Exception as exc:
+    except Exception:
         if active_patch_sent:
             try:
                 verify_full_patch_response(
@@ -340,7 +349,7 @@ def activate_control_plane(org: str, identity) -> None:
                     "provider activation verification failed and automatic quarantine rollback "
                     "could not be proven; immediately set trigger_mode=none manually"
                 ) from rollback_exc
-        raise exc
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:
