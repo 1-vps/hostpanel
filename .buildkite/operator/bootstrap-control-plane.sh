@@ -17,8 +17,9 @@ Usage:
   bootstrap-control-plane.sh --org ORGANIZATION --enable-webhook PIPELINE_SLUG [--apply --confirm-static-bootstrap-signed --confirm-public-deploy-key-added]
 
 Default behavior is plan-only and performs no Buildkite API writes.
-Creation mode creates the cluster, queues, and a pipeline containing the reviewed
-static no-checkout bootstrap, but deliberately does not create a GitHub webhook.
+Creation mode creates the isolated cluster, three queues, and a pipeline containing
+the reviewed static no-checkout bootstrap plus explicit GitHub provider policy.
+It deliberately does not create a GitHub webhook.
 Webhook mode is a separate activation phase and requires explicit confirmation
 that Pipeline Settings have been statically signed and the public checkout deploy
 key has been added to GitHub.
@@ -120,15 +121,22 @@ No GitHub webhook is created in this phase.
    bk cluster list -o json
    bk pipeline list --repository '$repository' -o json
 
-3. Create the isolated cluster and queues:
-   bk cluster create --name '$cluster_name' --description 'Disposable hardened HostPanel CI' -o json
-   bk queue create '<cluster-uuid>' --key '$queue_upload' --description 'Trusted no-checkout pipeline signer/uploader' -o json
-   bk queue create '<cluster-uuid>' --key '$queue_ci' --description 'Disposable repository CI workers' -o json
-   bk queue create '<cluster-uuid>' --key '$queue_qemu' --description 'Disposable KVM post-merge acceptance workers' -o json
+3. Create the isolated cluster and exactly these queues:
+   $queue_upload
+   $queue_ci
+   $queue_qemu
 
-4. Create the pipeline through the Buildkite REST API with the reviewed static
-   no-checkout bootstrap already present in its configuration. Do not create a
-   webhook yet.
+4. Verify the cluster has no default queue and exactly those three queue keys.
+
+5. Create the pipeline through the Buildkite REST API with:
+   - exact repository '$repository'
+   - the reviewed static no-checkout bootstrap
+   - PR builds enabled
+   - fork PR builds disabled
+   - commit-status publishing enabled
+   - /bk issue-comment retrigger enabled
+   - exact-head PR builds (merge-commit builds disabled)
+   - no webhook yet
 
 STOP: generate signing/verification JWKS, statically sign Pipeline Settings, and
 add only the public checkout deploy key to GitHub. Then use --enable-webhook in
@@ -149,14 +157,15 @@ No agents are started by this tool.
 Preconditions:
 - Pipeline Settings contain the reviewed static no-checkout bootstrap.
 - Pipeline Settings have been statically signed with the reviewed signing key.
+- The GitHub provider policy still matches the reviewed fail-closed settings.
 - The public half of the read-only checkout deploy key has been added to GitHub.
 - No build has ever been created for this pipeline.
 - No agent is connected to this HostPanel cluster.
 
-Apply mode verifies the pipeline identity, signed static bootstrap, zero-build
-history, and empty connected-agent set; then it creates the GitHub webhook through
-the Buildkite REST API, verifies webhook processing is enabled, and stops before
-any worker provisioning.
+Apply mode verifies those conditions, creates the standard GitHub App webhook
+with POST /pipelines/<slug>/webhook, then verifies the pipeline exposes the
+Buildkite webhook URL. It does not require the optional expanded-webhook-triggers
+API and stops before any worker provisioning.
 EOF
 }
 
@@ -220,7 +229,7 @@ PY
 if [[ -n "$enable_webhook_slug" ]]; then
   pipeline_json="$(bk pipeline view "$org/$enable_webhook_slug" -o json)"
   build_list="$(bk build list --pipeline "$org/$enable_webhook_slug" --limit 1 -o json)"
-  agent_list="$(bk agent list -o json)"
+  agent_list="$(bk agent list --limit 1000 -o json)"
 
   python3 - \
     "$enable_webhook_slug" \
@@ -251,6 +260,33 @@ if pipeline.get("repository") != repository:
 cluster_id = pipeline.get("cluster_id")
 if not isinstance(cluster_id, str) or not cluster_id:
     raise SystemExit("pipeline is not assigned to the reviewed isolated cluster")
+
+expected_provider = {
+    "build_branches": True,
+    "build_pull_requests": True,
+    "build_pull_request_forks": False,
+    "build_tags": False,
+    "publish_commit_status": True,
+    "publish_commit_status_per_step": False,
+    "build_issue_comment_created": True,
+    "issue_comment_command_word": "/bk",
+    "issue_comment_match_mode": "exact",
+    "build_pull_request_ready_for_review": True,
+    "build_pull_request_merge_commits": False,
+    "skip_builds_for_existing_commits": False,
+    "skip_pull_request_builds_for_existing_commits": False,
+    "separate_pull_request_statuses": True,
+    "trigger_mode": "code",
+}
+provider = pipeline.get("provider")
+if not isinstance(provider, dict) or provider.get("id") != "github":
+    raise SystemExit("pipeline is not using the GitHub provider")
+settings = provider.get("settings")
+if not isinstance(settings, dict):
+    raise SystemExit("pipeline GitHub provider settings are unavailable")
+for key, expected in expected_provider.items():
+    if settings.get(key) != expected:
+        raise SystemExit(f"pipeline GitHub provider setting mismatch: {key}")
 
 configuration = pipeline.get("configuration")
 if not isinstance(configuration, str):
@@ -312,7 +348,7 @@ elif isinstance(builds, dict) and isinstance(builds.get("builds"), list):
 else:
     raise SystemExit("bk build list returned an unrecognized JSON shape")
 if count != 0:
-    raise SystemExit("pipeline already has build history; inspect it before enabling webhook processing")
+    raise SystemExit("pipeline already has build history; inspect it before creating the webhook")
 
 agents = load("bk agent list", agents_raw)
 if isinstance(agents, list):
@@ -321,11 +357,11 @@ elif isinstance(agents, dict) and isinstance(agents.get("agents"), list):
     agent_items = agents["agents"]
 else:
     raise SystemExit("bk agent list returned an unrecognized JSON shape")
+if len(agent_items) >= 1000:
+    raise SystemExit("agent inventory reached the query limit; cannot prove the target cluster is empty")
 for agent in agent_items:
     if not isinstance(agent, dict):
         raise SystemExit("bk agent list contained a non-object agent")
-    if agent.get("cluster_id") == cluster_id:
-        raise SystemExit("an agent is already connected to the HostPanel cluster")
     web_url = agent.get("web_url")
     if isinstance(web_url, str) and f"/clusters/{cluster_id}/" in web_url:
         raise SystemExit("an agent is already connected to the HostPanel cluster")
@@ -333,37 +369,51 @@ PY
 
   bk api --method POST "/pipelines/$enable_webhook_slug/webhook" >/dev/null
 
-  webhook_state="$(bk api "/pipelines/$enable_webhook_slug/github-webhooks")"
-  enabled="$(
-    python3 - "$webhook_state" <<'PY'
+  post_webhook_pipeline="$(bk pipeline view "$org/$enable_webhook_slug" -o json)"
+  python3 - "$repository" "$post_webhook_pipeline" <<'PY'
 import json
 import sys
+
+repository, raw = sys.argv[1:]
 try:
-    payload = json.loads(sys.argv[1])
+    pipeline = json.loads(raw)
 except json.JSONDecodeError as exc:
-    raise SystemExit("GitHub webhook processing state was not valid JSON") from exc
-if not isinstance(payload, dict) or not isinstance(payload.get("enabled"), bool):
-    raise SystemExit("GitHub webhook processing state did not contain enabled=true/false")
-print("true" if payload["enabled"] else "false")
+    raise SystemExit("post-webhook pipeline view did not return valid JSON") from exc
+if not isinstance(pipeline, dict) or pipeline.get("repository") != repository:
+    raise SystemExit("post-webhook pipeline identity mismatch")
+provider = pipeline.get("provider")
+if not isinstance(provider, dict) or provider.get("id") != "github":
+    raise SystemExit("post-webhook pipeline is not using the GitHub provider")
+webhook_url = provider.get("webhook_url")
+if not isinstance(webhook_url, str) or not webhook_url.startswith("https://webhook.buildkite.com/deliver/"):
+    raise SystemExit("Buildkite did not expose the expected GitHub webhook URL")
+expected = {
+    "build_branches": True,
+    "build_pull_requests": True,
+    "build_pull_request_forks": False,
+    "build_tags": False,
+    "publish_commit_status": True,
+    "publish_commit_status_per_step": False,
+    "build_issue_comment_created": True,
+    "issue_comment_command_word": "/bk",
+    "issue_comment_match_mode": "exact",
+    "build_pull_request_ready_for_review": True,
+    "build_pull_request_merge_commits": False,
+    "skip_builds_for_existing_commits": False,
+    "skip_pull_request_builds_for_existing_commits": False,
+    "separate_pull_request_statuses": True,
+    "trigger_mode": "code",
+}
+settings = provider.get("settings")
+if not isinstance(settings, dict):
+    raise SystemExit("post-webhook GitHub provider settings are unavailable")
+for key, value in expected.items():
+    if settings.get(key) != value:
+        raise SystemExit(f"post-webhook GitHub provider setting mismatch: {key}")
 PY
-  )"
-  if [[ "$enabled" != "true" ]]; then
-    bk api --method PUT "/pipelines/$enable_webhook_slug/github-webhooks" >/dev/null
-    webhook_state="$(bk api "/pipelines/$enable_webhook_slug/github-webhooks")"
-    python3 - "$webhook_state" <<'PY'
-import json
-import sys
-try:
-    payload = json.loads(sys.argv[1])
-except json.JSONDecodeError as exc:
-    raise SystemExit("GitHub webhook processing state was not valid JSON") from exc
-if not isinstance(payload, dict) or payload.get("enabled") is not True:
-    raise SystemExit("GitHub webhook processing did not become enabled")
-PY
-  fi
 
   cat <<EOF
-HostPanel Buildkite GitHub webhook activated.
+HostPanel Buildkite GitHub webhook created and verified.
 
 organization=$org
 pipeline_slug=$enable_webhook_slug
@@ -462,6 +512,36 @@ qemu_queue_json="$(bk queue create "$cluster_uuid" \
   -o json)"
 qemu_queue_uuid="$(top_uuid "$qemu_queue_json" 'bk queue create hostpanel-qemu')"
 
+cluster_view="$(bk cluster view "$cluster_uuid" -o json)"
+queue_list="$(bk queue list "$cluster_uuid" -o json)"
+python3 - "$cluster_uuid" "$cluster_view" "$queue_list" <<'PY'
+import json
+import sys
+
+cluster_id, cluster_raw, queues_raw = sys.argv[1:]
+try:
+    cluster = json.loads(cluster_raw)
+    queues = json.loads(queues_raw)
+except json.JSONDecodeError as exc:
+    raise SystemExit("cluster/queue verification did not return valid JSON") from exc
+if not isinstance(cluster, dict) or cluster.get("id") != cluster_id:
+    raise SystemExit("created cluster identity mismatch")
+if cluster.get("default_queue_id") is not None:
+    raise SystemExit("created HostPanel cluster unexpectedly has a default queue")
+if not isinstance(queues, list):
+    if isinstance(queues, dict) and isinstance(queues.get("queues"), list):
+        queues = queues["queues"]
+    else:
+        raise SystemExit("bk queue list returned an unrecognized JSON shape")
+keys = []
+for queue in queues:
+    if not isinstance(queue, dict) or not isinstance(queue.get("key"), str):
+        raise SystemExit("bk queue list contained an invalid queue object")
+    keys.append(queue["key"])
+if sorted(keys) != ["hostpanel-ci", "hostpanel-qemu", "hostpanel-upload"]:
+    raise SystemExit("HostPanel cluster does not contain exactly the reviewed queue keys")
+PY
+
 pipeline_payload="$(
   python3 - "$pipeline_name" "$cluster_uuid" "$repository" "$static_bootstrap" <<'PY'
 import json
@@ -472,6 +552,23 @@ print(json.dumps({
     "cluster_id": cluster_id,
     "repository": repository,
     "configuration": configuration,
+    "provider_settings": {
+        "build_branches": True,
+        "build_pull_requests": True,
+        "build_pull_request_forks": False,
+        "build_tags": False,
+        "publish_commit_status": True,
+        "publish_commit_status_per_step": False,
+        "build_issue_comment_created": True,
+        "issue_comment_command_word": "/bk",
+        "issue_comment_match_mode": "exact",
+        "build_pull_request_ready_for_review": True,
+        "build_pull_request_merge_commits": False,
+        "skip_builds_for_existing_commits": False,
+        "skip_pull_request_builds_for_existing_commits": False,
+        "separate_pull_request_statuses": True,
+        "trigger_mode": "code",
+    },
 }))
 PY
 )"
@@ -487,13 +584,13 @@ import yaml
 
 cluster_id, repository, expected_configuration, raw = sys.argv[1:]
 try:
-    payload = json.loads(raw)
+    pipeline = json.loads(raw)
 except json.JSONDecodeError as exc:
     raise SystemExit("pipeline creation did not return valid JSON") from exc
-if not isinstance(payload, dict):
+if not isinstance(pipeline, dict):
     raise SystemExit("pipeline creation did not return a JSON object")
-pipeline_id = payload.get("id")
-slug = payload.get("slug")
+pipeline_id = pipeline.get("id")
+slug = pipeline.get("slug")
 if not isinstance(pipeline_id, str):
     raise SystemExit("pipeline creation did not return a top-level id")
 try:
@@ -502,11 +599,11 @@ except ValueError as exc:
     raise SystemExit("pipeline id is not a UUID") from exc
 if not isinstance(slug, str) or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,99}", slug) is None:
     raise SystemExit("pipeline creation returned an unsafe slug")
-if payload.get("repository") != repository:
+if pipeline.get("repository") != repository:
     raise SystemExit("created pipeline repository mismatch")
-if payload.get("cluster_id") != cluster_id:
+if pipeline.get("cluster_id") != cluster_id:
     raise SystemExit("created pipeline cluster mismatch")
-configuration = payload.get("configuration")
+configuration = pipeline.get("configuration")
 if not isinstance(configuration, str):
     raise SystemExit("created pipeline configuration is unavailable")
 try:
@@ -516,6 +613,37 @@ except yaml.YAMLError as exc:
     raise SystemExit("created pipeline configuration is not valid YAML") from exc
 if actual != expected:
     raise SystemExit("created pipeline configuration is not the reviewed static bootstrap")
+
+expected_provider = {
+    "build_branches": True,
+    "build_pull_requests": True,
+    "build_pull_request_forks": False,
+    "build_tags": False,
+    "publish_commit_status": True,
+    "publish_commit_status_per_step": False,
+    "build_issue_comment_created": True,
+    "issue_comment_command_word": "/bk",
+    "issue_comment_match_mode": "exact",
+    "build_pull_request_ready_for_review": True,
+    "build_pull_request_merge_commits": False,
+    "skip_builds_for_existing_commits": False,
+    "skip_pull_request_builds_for_existing_commits": False,
+    "separate_pull_request_statuses": True,
+    "trigger_mode": "code",
+}
+provider = pipeline.get("provider")
+if not isinstance(provider, dict) or provider.get("id") != "github":
+    raise SystemExit("created pipeline is not using the GitHub provider")
+settings = provider.get("settings")
+if not isinstance(settings, dict):
+    raise SystemExit("created pipeline GitHub provider settings are unavailable")
+for key, value in expected_provider.items():
+    if settings.get(key) != value:
+        raise SystemExit(f"created pipeline GitHub provider setting mismatch: {key}")
+
+webhook_url = provider.get("webhook_url")
+if isinstance(webhook_url, str) and webhook_url:
+    raise SystemExit("created pipeline unexpectedly exposes a webhook before activation")
 print(pipeline_id, slug)
 PY
 )
