@@ -20,6 +20,7 @@ EXPECTED_SIGNED_FIELDS = frozenset(
 WEBHOOK_PATH_RE = re.compile(r"^/deliver/[A-Za-z0-9._~-]+$")
 REQUIRED_PIPELINE_STATE_FIELDS = frozenset(
     {
+        "id",
         "name",
         "slug",
         "repository",
@@ -126,6 +127,7 @@ def verify_signature_metadata(step: dict, *, required: bool) -> None:
 def verify_pipeline_state(
     pipeline: object,
     *,
+    expected_pipeline_id: str,
     expected_cluster_id: str,
     require_signature: bool,
     require_webhook: bool,
@@ -135,7 +137,10 @@ def verify_pipeline_state(
     missing = sorted(REQUIRED_PIPELINE_STATE_FIELDS.difference(pipeline))
     if missing:
         raise VerificationError("pipeline response is missing required state fields: " + ", ".join(missing))
+    expected_pipeline_id = canonical_uuid(expected_pipeline_id, "expected pipeline id")
     expected_cluster_id = canonical_uuid(expected_cluster_id, "expected cluster id")
+    if canonical_uuid(pipeline["id"], "pipeline id") != expected_pipeline_id:
+        raise VerificationError("pipeline id mismatch")
     if pipeline["name"] != EXPECTED_NAME or pipeline["slug"] != EXPECTED_SLUG:
         raise VerificationError("pipeline name or slug mismatch")
     if pipeline["repository"] != EXPECTED_REPOSITORY:
@@ -204,6 +209,7 @@ def verify_pipeline_state(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fail-closed HostPanel Buildkite pipeline state verifier")
+    parser.add_argument("--pipeline-id", required=True)
     parser.add_argument("--cluster-id", required=True)
     parser.add_argument("--require-signature", action="store_true")
     parser.add_argument("--require-webhook", action="store_true")
@@ -213,6 +219,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
+        pipeline_id = canonical_uuid(args.pipeline_id, "--pipeline-id")
         cluster_id = canonical_uuid(args.cluster_id, "--cluster-id")
         raw = sys.stdin.read(4 * 1024 * 1024 + 1)
         if not raw or len(raw) > 4 * 1024 * 1024:
@@ -223,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
             raise VerificationError("pipeline JSON input is invalid") from exc
         verify_pipeline_state(
             payload,
+            expected_pipeline_id=pipeline_id,
             expected_cluster_id=cluster_id,
             require_signature=args.require_signature,
             require_webhook=args.require_webhook,
