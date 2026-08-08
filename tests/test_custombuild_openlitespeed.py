@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import importlib
+import importlib.util
 import pathlib
 import subprocess
 import sys
@@ -9,218 +9,254 @@ import types
 import unittest
 from unittest import mock
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-TOOLS = ROOT / 'tools'
-sys.path.insert(0, str(TOOLS))
+_IMPL_PATH = pathlib.Path(__file__).with_name(
+    '_custombuild_openlitespeed_tests_impl.py'
+)
+_SPEC = importlib.util.spec_from_file_location(
+    '_custombuild_openlitespeed_tests_impl', _IMPL_PATH
+)
+if _SPEC is None or _SPEC.loader is None:
+    raise ImportError(f'cannot load OpenLiteSpeed test implementation: {_IMPL_PATH}')
 
-import hostpanel_build_config as config
-import hostpanel_build_operations as operations
+_ISOLATED_MODULES = (
+    'store', 'modules', 'hostpanel_build_web',
+    '_hostpanel_build_web_impl',
+)
+_SAVED_MODULES = {name: sys.modules.get(name) for name in _ISOLATED_MODULES}
+_SAVED_SYS_PATH = list(sys.path)
+for _name in _ISOLATED_MODULES:
+    sys.modules.pop(_name, None)
+_IMPL = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = _IMPL
+try:
+    _SPEC.loader.exec_module(_IMPL)
+finally:
+    sys.path[:] = _SAVED_SYS_PATH
+    for _name, _module in _SAVED_MODULES.items():
+        if _module is None:
+            sys.modules.pop(_name, None)
+        else:
+            sys.modules[_name] = _module
 
-store = types.ModuleType('store')
-store.connect = lambda: None
-modules = types.ModuleType('modules')
-webserver_stub = types.SimpleNamespace()
-modules.webserver = webserver_stub
-sys.modules['store'] = store
-sys.modules['modules'] = modules
-web = importlib.import_module('hostpanel_build_web')
+
+def _apache_mode_reads_runtime_implementation(self) -> None:
+    options = dict(_IMPL.config.DEFAULT_OPTIONS)
+    options['webserver'] = 'apache'
+    self.assertEqual(
+        _IMPL.config.web_components(options),
+        ['nginx', 'apache', 'php'],
+    )
+    patcher = (
+        _IMPL.TOOLS / 'patch_custombuild_runtime_impl.py'
+    ).read_text(encoding='utf-8')
+    self.assertIn('# HostPanel Apache-only edge', patcher)
+    self.assertIn('proxy_pass http://127.0.0.1:{port}', patcher)
+    self.assertIn('APACHE_EDGE_REDIRECT_VHOST', patcher)
+    self.assertIn('nginx rejected the Apache edge configuration', patcher)
 
 
-class CustomBuildOpenLiteSpeedTests(unittest.TestCase):
-    def test_base_mode_is_nginx_apache(self):
-        self.assertEqual(config.DEFAULT_OPTIONS['webserver'], 'nginx_apache')
-        self.assertEqual(
-            config.web_components(config.DEFAULT_OPTIONS),
-            ['nginx', 'apache', 'php'],
-        )
+def _prepare_tree(directory: str, versions: tuple[str, ...]):
+    root = pathlib.Path(directory) / 'lsws'
+    (root / 'bin').mkdir(parents=True)
+    (root / 'conf').mkdir(parents=True)
+    (root / 'admin/conf').mkdir(parents=True)
+    (root / 'bin/openlitespeed').write_text('#!/bin/sh\nexit 0\n')
+    (root / 'bin/openlitespeed').chmod(0o755)
+    main = root / 'conf/httpd_config.conf'
+    admin = root / 'admin/conf/admin_config.conf'
+    main.write_text('address *:8088\n')
+    admin.write_text('address *:7080\n')
+    for version in versions:
+        binary = root / f'lsphp{version}/bin/lsphp'
+        binary.parent.mkdir(parents=True)
+        binary.write_text('#!/bin/sh\nexit 0\n')
+        binary.chmod(0o755)
+    return root, main, admin
 
-    def test_apache_mode_keeps_the_public_nginx_edge(self):
-        options = dict(config.DEFAULT_OPTIONS)
-        options['webserver'] = 'apache'
-        self.assertEqual(
-            config.web_components(options),
-            ['nginx', 'apache', 'php'],
-        )
-        patcher = (TOOLS / 'patch_custombuild_runtime.py').read_text(encoding='utf-8')
-        self.assertIn('# HostPanel Apache-only edge', patcher)
-        self.assertIn('proxy_pass http://127.0.0.1:{port}', patcher)
-        self.assertIn('APACHE_EDGE_REDIRECT_VHOST', patcher)
-        self.assertIn('nginx rejected the Apache edge configuration', patcher)
 
-    def test_openlitespeed_includes_versioned_lsphp_runtime_packages(self):
-        options = dict(config.DEFAULT_OPTIONS)
+def _prepare_openlitespeed_writes_private_global_configuration(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root, main, admin = _prepare_tree(directory, ('85', '84'))
+        options = dict(_IMPL.config.DEFAULT_OPTIONS)
         options['webserver'] = 'openlitespeed'
         options['php_versions'] = '8.5,8.4'
-        packages = config.component_packages(
-            'openlitespeed', options, config.Platform('debian', 'ubuntu', '24.04')
+        commands: list[list[str]] = []
+        state = pathlib.Path(directory) / 'lsphp-versions'
+        with mock.patch.object(_IMPL.web.os, 'geteuid', return_value=0), \
+             mock.patch.object(
+                 _IMPL.web, 'trusted_root_file',
+                 side_effect=lambda path: path.lstat(),
+             ), mock.patch.object(_IMPL.web.os, 'fchown'), \
+             mock.patch.object(_IMPL.web.os, 'chown'), \
+             mock.patch.object(
+                 _IMPL.web, 'group_gid',
+                 side_effect=lambda name, required=False: 0,
+             ), mock.patch.object(_IMPL.web, 'OLS_ROOT', root), \
+             mock.patch.object(_IMPL.web, 'OLS_MAIN', main), \
+             mock.patch.object(_IMPL.web, 'OLS_ADMIN', admin), \
+             mock.patch.object(
+                 _IMPL.web, 'OLS_HOSTPANEL', root / 'conf/hostpanel'
+             ), mock.patch.object(
+                 _IMPL.web, 'OLS_VHOSTS', root / 'conf/vhosts'
+             ), mock.patch.object(
+                 _IMPL.web, 'OLS_REGISTRY',
+                 root / 'conf/hostpanel/hostpanel.conf',
+             ), mock.patch.object(
+                 _IMPL.web, 'OLS_STATE_ROOT', pathlib.Path(directory) / 'state'
+             ), mock.patch.object(
+                 _IMPL.web, 'OLS_MARKERS',
+                 pathlib.Path(directory) / 'state/domains',
+             ), mock.patch.object(
+                 _IMPL.web, 'OLS_LOGS', pathlib.Path(directory) / 'logs'
+             ), mock.patch.object(_IMPL.web, 'LSPHP_STATE', state), \
+             mock.patch.object(
+                 _IMPL.web, 'run',
+                 side_effect=lambda command, check=True: commands.append(command)
+                 or subprocess.CompletedProcess(command, 0, '', ''),
+             ):
+            _IMPL.web.prepare_openlitespeed(options)
+        self.assertIn(_IMPL.web.OLS_INCLUDE, main.read_text())
+        self.assertIn('127.0.0.1:7080', admin.read_text())
+        self.assertIn(
+            '127.0.0.1:8088',
+            (root / 'conf/hostpanel/hostpanel.conf').read_text(),
         )
-        for package in (
-            'openlitespeed', 'lsphp85', 'lsphp85-common', 'lsphp85-mysql',
-            'lsphp85-opcache', 'lsphp84', 'lsphp84-common', 'lsphp84-mysql',
-        ):
-            self.assertIn(package, packages)
-        rhel_packages = config.component_packages(
-            'openlitespeed', options, config.Platform('rhel', 'rocky', '9')
+        self.assertEqual(
+            (root / 'fcgi-bin/lsphp').resolve(),
+            root / 'lsphp85/bin/lsphp',
         )
-        self.assertIn('lsphp85-mysqlnd', rhel_packages)
-        self.assertIn('lsphp85-pdo', rhel_packages)
-        self.assertNotIn('lsphp85-mysql', rhel_packages)
+        self.assertEqual(commands, [[str(root / 'bin/openlitespeed'), '-t']])
+        self.assertFalse(
+            any('enable' in command or 'unmask' in command for command in commands)
+        )
 
-    def test_missing_lsphp_fails_before_service_mutation(self):
-        options = dict(config.DEFAULT_OPTIONS)
+
+def _prepare_openlitespeed_restores_configs_on_validation_failure(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root, main, admin = _prepare_tree(directory, ('85',))
+        options = dict(_IMPL.config.DEFAULT_OPTIONS)
         options['webserver'] = 'openlitespeed'
-        platform = config.Platform('debian', 'ubuntu', '26.04')
-        with mock.patch.object(operations, 'candidate_version', return_value=None):
-            with self.assertRaisesRegex(config.BuildError, 'no services were changed'):
-                operations.preflight_packages(
-                    config.web_components(options), options, platform
-                )
+        options['php_versions'] = '8.5'
+        state_root = pathlib.Path(directory) / 'state'
+        with mock.patch.object(_IMPL.web.os, 'geteuid', return_value=0), \
+             mock.patch.object(
+                 _IMPL.web, 'trusted_root_file',
+                 side_effect=lambda path: path.lstat(),
+             ), mock.patch.object(_IMPL.web.os, 'fchown'), \
+             mock.patch.object(_IMPL.web.os, 'chown'), \
+             mock.patch.object(
+                 _IMPL.web, 'group_gid',
+                 side_effect=lambda name, required=False: 0,
+             ), mock.patch.object(_IMPL.web, 'OLS_ROOT', root), \
+             mock.patch.object(_IMPL.web, 'OLS_MAIN', main), \
+             mock.patch.object(_IMPL.web, 'OLS_ADMIN', admin), \
+             mock.patch.object(
+                 _IMPL.web, 'OLS_HOSTPANEL', root / 'conf/hostpanel'
+             ), mock.patch.object(
+                 _IMPL.web, 'OLS_VHOSTS', root / 'conf/vhosts'
+             ), mock.patch.object(
+                 _IMPL.web, 'OLS_REGISTRY',
+                 root / 'conf/hostpanel/hostpanel.conf',
+             ), mock.patch.object(_IMPL.web, 'OLS_STATE_ROOT', state_root), \
+             mock.patch.object(
+                 _IMPL.web, 'OLS_MARKERS', state_root / 'domains'
+             ), mock.patch.object(
+                 _IMPL.web, 'OLS_LOGS', pathlib.Path(directory) / 'logs'
+             ), mock.patch.object(
+                 _IMPL.web, 'LSPHP_STATE',
+                 pathlib.Path(directory) / 'lsphp-versions',
+             ), mock.patch.object(
+                 _IMPL.web, 'run',
+                 side_effect=_IMPL.config.BuildError('test failed'),
+             ):
+            with self.assertRaisesRegex(_IMPL.config.BuildError, 'test failed'):
+                _IMPL.web.prepare_openlitespeed(options)
+        self.assertEqual(main.read_text(), 'address *:8088\n')
+        self.assertEqual(admin.read_text(), 'address *:7080\n')
+        self.assertFalse((root / 'conf/hostpanel/hostpanel.conf').exists())
 
-    def test_main_config_moves_example_listener_and_adds_private_include(self):
-        original = '''listener Default {\n  address *:8088\n}\n'''
-        updated = web.rewrite_main_config(original)
-        self.assertIn('address 127.0.0.1:8099', updated)
-        self.assertIn('useIpInProxyHeader 1', updated)
-        self.assertIn(web.OLS_INCLUDE, updated)
-        self.assertEqual(web.rewrite_main_config(updated), updated)
 
-    def test_main_config_rejects_custom_8088_collision(self):
-        with self.assertRaisesRegex(config.BuildError, 'custom listener'):
-            web.rewrite_main_config('address 192.0.2.9:8088\n')
+def _activation_happens_after_domain_reconciliation(self) -> None:
+    wrapper = (_IMPL.TOOLS / 'hostpanel_build_web.py').read_text(
+        encoding='utf-8'
+    )
+    implementation = (
+        _IMPL.TOOLS / 'hostpanel_build_web_impl.py'
+    ).read_text(encoding='utf-8')
+    main_body = wrapper.split('def main(', 1)[1]
+    snapshots = main_body.index('_preparation_snapshots()')
+    prepare = main_body.index('prepare_openlitespeed(options)', snapshots)
+    switch = main_body.index('webserver.set_mode(domain, target, admin)', prepare)
+    validate = main_body.index("if mismatches:", switch)
+    activate = main_body.index('activate_openlitespeed()', validate)
+    self.assertLess(snapshots, prepare)
+    self.assertLess(prepare, switch)
+    self.assertLess(switch, validate)
+    self.assertLess(validate, activate)
+    prepare_body = implementation.split('def prepare_openlitespeed', 1)[1].split(
+        'def _command_text', 1
+    )[0]
+    self.assertNotIn("'enable', '--now'", prepare_body)
+    self.assertNotIn("'unmask', '--runtime'", prepare_body)
 
-    def test_webadmin_is_forced_to_loopback(self):
-        updated = web.rewrite_admin_config('address *:7080\n')
-        self.assertEqual(updated, 'address 127.0.0.1:7080\n')
-        self.assertEqual(web.rewrite_admin_config(updated), updated)
 
-    def test_openlitespeed_is_runtime_masked_until_reconciliation(self):
-        source = (TOOLS / 'hostpanel_build_operations.py').read_text(encoding='utf-8')
-        mask = source.index("mask_openlitespeed(log_path)")
-        reinstall = source.index('reinstall_packages(', mask)
-        reconcile = source.index('reconcile_webserver(', reinstall)
-        services = source.index('reconcile_webserver_services(', reconcile)
-        unmask = source.index('unmask_openlitespeed(log_path)', services)
-        self.assertLess(mask, reinstall)
-        self.assertLess(reinstall, reconcile)
-        self.assertLess(reconcile, services)
-        self.assertLess(services, unmask)
-        self.assertIn("if item != 'openlitespeed':", source)
+def _activation_rolls_back_service_state_on_failure(self) -> None:
+    calls: list[list[str]] = []
 
-    def test_unused_backends_are_disabled_after_success(self):
-        options = dict(config.DEFAULT_OPTIONS)
-        platform = config.Platform('debian', 'ubuntu', '24.04')
-        log = pathlib.Path('/tmp/hostpanel-build-test.log')
-        cases = {
-            'nginx_apache': {'disable': {'lsws.service'}},
-            'apache': {'disable': {'lsws.service'}},
-            'nginx': {'disable': {'apache2.service', 'lsws.service'}},
-            'openlitespeed': {'disable': {'apache2.service'}},
-        }
-        for mode, expected in cases.items():
-            options['webserver'] = mode
-            commands: list[list[str]] = []
-            with mock.patch.object(
-                operations, 'run_command',
-                side_effect=lambda command, **kwargs: commands.append(command)
-                or subprocess.CompletedProcess(command, 0, '', ''),
-            ):
-                operations.reconcile_webserver_services(options, platform, log)
-            flattened = [' '.join(command) for command in commands]
-            for service in expected['disable']:
-                self.assertTrue(
-                    any(f'disable --now {service}' in line for line in flattened),
-                    (mode, service, flattened),
-                )
+    def run(command, check=True):
+        calls.append(command)
+        joined = ' '.join(command)
+        if 'is-active' in joined:
+            return subprocess.CompletedProcess(command, 3, 'inactive\n', '')
+        if 'is-enabled' in joined:
+            return subprocess.CompletedProcess(command, 1, 'disabled\n', '')
+        if 'enable --now' in joined:
+            raise _IMPL.config.BuildError('injected activation failure')
+        return subprocess.CompletedProcess(command, 0, '', '')
 
-    def test_domain_switch_has_reverse_rollback(self):
-        source = (TOOLS / 'hostpanel_build_web.py').read_text(encoding='utf-8')
-        self.assertIn('for domain in reversed(changed):', source)
-        self.assertIn("webserver.set_mode(domain, previous[domain], admin)", source)
-        self.assertIn('webserver switch failed and was rolled back', source)
+    with mock.patch.object(_IMPL.web, 'run', side_effect=run):
+        with self.assertRaisesRegex(
+            _IMPL.config.BuildError, 'injected activation failure'
+        ):
+            _IMPL.web.activate_openlitespeed()
+    self.assertEqual(
+        calls,
+        [
+            ['systemctl', 'is-enabled', 'lsws.service'],
+            ['systemctl', 'is-active', 'lsws.service'],
+            ['systemctl', 'enable', '--now', 'lsws.service'],
+            ['systemctl', 'disable', 'lsws.service'],
+            ['systemctl', 'stop', 'lsws.service'],
+            ['systemctl', 'is-enabled', 'lsws.service'],
+            ['systemctl', 'is-active', 'lsws.service'],
+        ],
+    )
 
-    def test_prepare_openlitespeed_writes_private_global_configuration(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory) / 'lsws'
-            (root / 'bin').mkdir(parents=True)
-            (root / 'conf').mkdir(parents=True)
-            (root / 'admin/conf').mkdir(parents=True)
-            (root / 'bin/openlitespeed').write_text('#!/bin/sh\nexit 0\n')
-            (root / 'bin/openlitespeed').chmod(0o755)
-            (root / 'conf/httpd_config.conf').write_text('address *:8088\n')
-            (root / 'admin/conf/admin_config.conf').write_text('address *:7080\n')
-            for version in ('85', '84'):
-                binary = root / f'lsphp{version}/bin/lsphp'
-                binary.parent.mkdir(parents=True)
-                binary.write_text('#!/bin/sh\nexit 0\n')
-                binary.chmod(0o755)
-            options = dict(config.DEFAULT_OPTIONS)
-            options['webserver'] = 'openlitespeed'
-            options['php_versions'] = '8.5,8.4'
-            commands: list[list[str]] = []
-            state = pathlib.Path(directory) / 'lsphp-versions'
-            with mock.patch.object(web, 'group_gid', side_effect=lambda name, required=False: 0), \
-                 mock.patch.object(web, 'OLS_ROOT', root), \
-                 mock.patch.object(web, 'OLS_MAIN', root / 'conf/httpd_config.conf'), \
-                 mock.patch.object(web, 'OLS_ADMIN', root / 'admin/conf/admin_config.conf'), \
-                 mock.patch.object(web, 'OLS_HOSTPANEL', root / 'conf/hostpanel'), \
-                 mock.patch.object(web, 'OLS_VHOSTS', root / 'conf/vhosts'), \
-                 mock.patch.object(web, 'OLS_REGISTRY', root / 'conf/hostpanel/hostpanel.conf'), \
-                 mock.patch.object(web, 'OLS_STATE_ROOT', pathlib.Path(directory) / 'state'), \
-                 mock.patch.object(web, 'OLS_MARKERS', pathlib.Path(directory) / 'state/domains'), \
-                 mock.patch.object(web, 'OLS_LOGS', pathlib.Path(directory) / 'logs'), \
-                 mock.patch.object(web, 'LSPHP_STATE', state), \
-                 mock.patch.object(web, 'run', side_effect=lambda command, check=True: commands.append(command) or types.SimpleNamespace(returncode=0, stdout='', stderr='')):
-                web.prepare_openlitespeed(options)
-            self.assertIn(web.OLS_INCLUDE, (root / 'conf/httpd_config.conf').read_text())
-            self.assertIn('127.0.0.1:7080', (root / 'admin/conf/admin_config.conf').read_text())
-            self.assertIn('127.0.0.1:8088', (root / 'conf/hostpanel/hostpanel.conf').read_text())
-            self.assertEqual((root / 'fcgi-bin/lsphp').resolve(), root / 'lsphp85/bin/lsphp')
-            self.assertIn(['systemctl', 'enable', '--now', 'lsws.service'], commands)
 
-    def test_prepare_openlitespeed_restores_configs_on_validation_failure(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory) / 'lsws'
-            (root / 'bin').mkdir(parents=True)
-            (root / 'conf').mkdir(parents=True)
-            (root / 'admin/conf').mkdir(parents=True)
-            (root / 'bin/openlitespeed').write_text('#!/bin/sh\nexit 0\n')
-            (root / 'bin/openlitespeed').chmod(0o755)
-            main = root / 'conf/httpd_config.conf'
-            admin = root / 'admin/conf/admin_config.conf'
-            main.write_text('address *:8088\n')
-            admin.write_text('address *:7080\n')
-            binary = root / 'lsphp85/bin/lsphp'
-            binary.parent.mkdir(parents=True)
-            binary.write_text('#!/bin/sh\nexit 0\n')
-            binary.chmod(0o755)
-            options = dict(config.DEFAULT_OPTIONS)
-            options['webserver'] = 'openlitespeed'
-            options['php_versions'] = '8.5'
-            state_root = pathlib.Path(directory) / 'state'
-            with mock.patch.object(web, 'group_gid', side_effect=lambda name, required=False: 0), \
-                 mock.patch.object(web, 'OLS_ROOT', root), \
-                 mock.patch.object(web, 'OLS_MAIN', main), \
-                 mock.patch.object(web, 'OLS_ADMIN', admin), \
-                 mock.patch.object(web, 'OLS_HOSTPANEL', root / 'conf/hostpanel'), \
-                 mock.patch.object(web, 'OLS_VHOSTS', root / 'conf/vhosts'), \
-                 mock.patch.object(web, 'OLS_REGISTRY', root / 'conf/hostpanel/hostpanel.conf'), \
-                 mock.patch.object(web, 'OLS_STATE_ROOT', state_root), \
-                 mock.patch.object(web, 'OLS_MARKERS', state_root / 'domains'), \
-                 mock.patch.object(web, 'OLS_LOGS', pathlib.Path(directory) / 'logs'), \
-                 mock.patch.object(web, 'LSPHP_STATE', pathlib.Path(directory) / 'lsphp-versions'), \
-                 mock.patch.object(web, 'run', side_effect=config.BuildError('test failed')):
-                with self.assertRaisesRegex(config.BuildError, 'test failed'):
-                    web.prepare_openlitespeed(options)
-            self.assertEqual(main.read_text(), 'address *:8088\n')
-            self.assertEqual(admin.read_text(), 'address *:7080\n')
-            self.assertFalse((root / 'conf/hostpanel/hostpanel.conf').exists())
+_IMPL.CustomBuildOpenLiteSpeedTests.test_apache_mode_keeps_the_public_nginx_edge = (
+    _apache_mode_reads_runtime_implementation
+)
+_IMPL.CustomBuildOpenLiteSpeedTests.test_prepare_openlitespeed_writes_private_global_configuration = (
+    _prepare_openlitespeed_writes_private_global_configuration
+)
+_IMPL.CustomBuildOpenLiteSpeedTests.test_prepare_openlitespeed_restores_configs_on_validation_failure = (
+    _prepare_openlitespeed_restores_configs_on_validation_failure
+)
+_IMPL.CustomBuildOpenLiteSpeedTests.test_activation_happens_after_domain_reconciliation = (
+    _activation_happens_after_domain_reconciliation
+)
+_IMPL.CustomBuildOpenLiteSpeedTests.test_activation_rolls_back_service_state_on_failure = (
+    _activation_rolls_back_service_state_on_failure
+)
 
-    def test_check_path_does_not_write_lsphp_state(self):
-        source = (TOOLS / 'hostpanel_build_web.py').read_text(encoding='utf-8')
-        check_body = source.split('def check_openlitespeed', 1)[1].split('def rollback_domains', 1)[0]
-        self.assertIn('validate_lsphp_runtimes(options)', check_body)
-        self.assertNotIn('ensure_lsphp_runtimes(options)', check_body)
-        self.assertNotIn('write_new_root_file', check_body)
+for _name in dir(_IMPL):
+    _value = getattr(_IMPL, _name)
+    if (
+        isinstance(_value, type)
+        and issubclass(_value, unittest.TestCase)
+        and _value is not unittest.TestCase
+    ):
+        globals()[_name] = _value
 
 
 if __name__ == '__main__':

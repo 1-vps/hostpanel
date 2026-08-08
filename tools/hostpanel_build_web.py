@@ -1,159 +1,116 @@
 #!/usr/bin/env python3
-"""Apply one HostPanel webserver mode to every managed domain."""
+"""Transactional public entrypoint for HostPanel webserver reconciliation."""
 from __future__ import annotations
 
 import argparse
-import grp
+import ctypes
+import ctypes.util
+import importlib.util
 import os
 import pathlib
-import re
 import stat
-import subprocess
 import sys
+import types
 
-TOOL_ROOT = pathlib.Path(__file__).resolve().parent
-if str(TOOL_ROOT) not in sys.path:
-    sys.path.insert(0, str(TOOL_ROOT))
+_IMPL_PATH = pathlib.Path(__file__).with_name('hostpanel_build_web_impl.py')
+_SPEC = importlib.util.spec_from_file_location(
+    '_hostpanel_build_web_impl', _IMPL_PATH
+)
+if _SPEC is None or _SPEC.loader is None:
+    raise ImportError(f'cannot load webserver implementation: {_IMPL_PATH}')
+_IMPL = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = _IMPL
+_SPEC.loader.exec_module(_IMPL)
 
-from hostpanel_build_config import BuildError, DEFAULT_CONFIG, php_versions, read_config
-
-APP_ROOT = pathlib.Path('/opt/hostpanel/app')
-if str(APP_ROOT) not in sys.path:
-    sys.path.insert(0, str(APP_ROOT))
-
-import store  # type: ignore  # noqa: E402
-from modules import webserver  # type: ignore  # noqa: E402
-
-MODE_MAP = {
-    'nginx_apache': 'hybrid',
-    'nginx': 'nginx',
-    'apache': 'apache',
-    'openlitespeed': 'openlitespeed',
+_PUBLIC_OVERRIDES = {
+    'main', 'activate_openlitespeed', '_restore_service_state',
+    '_service_enabled', '_service_enablement_state',
+    '_replace_atomic', '_apply_expected_selinux_context',
+    '_preparation_snapshots', '_restore_preparation',
 }
-OLS_ROOT = pathlib.Path('/usr/local/lsws')
-OLS_MAIN = OLS_ROOT / 'conf/httpd_config.conf'
-OLS_ADMIN = OLS_ROOT / 'admin/conf/admin_config.conf'
-OLS_HOSTPANEL = OLS_ROOT / 'conf/hostpanel'
-OLS_VHOSTS = OLS_ROOT / 'conf/vhosts'
-OLS_REGISTRY = OLS_HOSTPANEL / 'hostpanel.conf'
-OLS_STATE_ROOT = pathlib.Path('/etc/hostpanel/openlitespeed')
-OLS_MARKERS = OLS_STATE_ROOT / 'domains'
-OLS_LOGS = pathlib.Path('/var/log/hostpanel/openlitespeed')
-LSPHP_STATE = pathlib.Path('/etc/hostpanel/lsphp-versions')
-OLS_INCLUDE = 'include $SERVER_ROOT/conf/hostpanel/*.conf'
+for _name in dir(_IMPL):
+    if _name not in _PUBLIC_OVERRIDES and _name not in globals():
+        globals()[_name] = getattr(_IMPL, _name)
 
 
-def managed_domains() -> list[str]:
-    with store.connect() as database:
-        rows = database.execute(
-            "SELECT name FROM resources WHERE kind='domain' ORDER BY name"
-        ).fetchall()
-    return [str(row['name']) for row in rows]
+_ENABLED_STATES = {'enabled', 'enabled-runtime'}
+_NON_ENABLED_STATES = {
+    'disabled', 'static', 'indirect', 'generated', 'transient',
+    'alias', 'linked', 'linked-runtime', 'masked', 'masked-runtime',
+    'not-found',
+}
+_RESTORABLE_ENABLEMENT_STATES = {'enabled', 'enabled-runtime', 'disabled'}
 
 
-def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
-    environment = os.environ.copy()
-    for name in ('PYTHONPATH', 'PYTHONHOME', 'BASH_ENV', 'ENV', 'LD_PRELOAD', 'LD_LIBRARY_PATH'):
-        environment.pop(name, None)
-    environment['PATH'] = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
-    completed = subprocess.run(
-        command, env=environment, text=True, capture_output=True, check=False
-    )
-    if check and completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout).strip()[-500:]
-        raise BuildError(f"command failed ({completed.returncode}): {' '.join(command)}: {detail}")
-    return completed
-
-
-def rewrite_main_config(text: str) -> str:
-    address_pattern = re.compile(r'(?m)^([ \t]*address[ \t]+)(\S+):8088[ \t]*$')
-    matches = list(address_pattern.finditer(text))
-    if len(matches) > 1:
-        raise BuildError('OpenLiteSpeed main configuration has multiple port 8088 listeners')
-    if matches:
-        host = matches[0].group(2)
-        if host not in {'*', '0.0.0.0', '[::]', '127.0.0.1'}:
-            raise BuildError('OpenLiteSpeed port 8088 is already assigned to a custom listener')
-        text = address_pattern.sub(r'\g<1>127.0.0.1:8099', text, count=1)
-
-    proxy_pattern = re.compile(r'(?m)^[ \t]*useIpInProxyHeader[ \t]+\S+[ \t]*$')
-    proxy_matches = proxy_pattern.findall(text)
-    if len(proxy_matches) > 1:
-        raise BuildError('OpenLiteSpeed has multiple useIpInProxyHeader directives')
-    if proxy_matches:
-        text = proxy_pattern.sub('useIpInProxyHeader 1', text, count=1)
-    else:
-        text = text.rstrip() + '\n\nuseIpInProxyHeader 1\n'
-
-    if OLS_INCLUDE not in text:
-        text = text.rstrip() + f'\n\n# HostPanel managed virtual hosts\n{OLS_INCLUDE}\n'
-    return text
-
-
-def rewrite_admin_config(text: str) -> str:
-    pattern = re.compile(r'(?m)^([ \t]*address[ \t]+)(\S+):7080[ \t]*$')
-    matches = list(pattern.finditer(text))
-    if len(matches) != 1:
-        raise BuildError('OpenLiteSpeed WebAdmin must contain exactly one port 7080 listener')
-    host = matches[0].group(2)
-    if host not in {'*', '0.0.0.0', '[::]', '127.0.0.1'}:
-        raise BuildError('OpenLiteSpeed WebAdmin uses an unsupported custom address')
-    return pattern.sub(r'\g<1>127.0.0.1:7080', text, count=1)
-
-
-def trusted_root_file(path: pathlib.Path) -> os.stat_result:
-    try:
-        metadata = path.lstat()
-    except OSError as exc:
-        raise BuildError(f'missing OpenLiteSpeed configuration file: {path}') from exc
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or stat.S_ISLNK(metadata.st_mode)
-        or metadata.st_uid != 0
-        or metadata.st_nlink != 1
-        or stat.S_IMODE(metadata.st_mode) & 0o022
-    ):
-        raise BuildError(f'unsafe OpenLiteSpeed configuration file: {path}')
-    return metadata
-
-
-def write_atomic(path: pathlib.Path, text: str) -> None:
-    metadata = trusted_root_file(path)
-    temporary = path.with_name(f'.{path.name}.hostpanel-build.{os.getpid()}')
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
-    if hasattr(os, 'O_NOFOLLOW'):
-        flags |= os.O_NOFOLLOW
-    fd = os.open(temporary, flags, stat.S_IMODE(metadata.st_mode))
-    try:
-        os.fchown(fd, metadata.st_uid, metadata.st_gid)
-        payload = text.encode('utf-8')
-        view = memoryview(payload)
-        while view:
-            written = os.write(fd, view)
-            if written <= 0:
-                raise BuildError(f'could not write {temporary}')
-            view = view[written:]
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    os.replace(temporary, path)
-
-
-def write_new_root_file(path: pathlib.Path, text: str, mode: int, gid: int = 0) -> None:
-    if os.path.lexists(path):
-        trusted_root_file(path)
-        write_atomic(path, text)
-        os.chmod(path, mode)
-        os.chown(path, 0, gid)
+def _apply_expected_selinux_context(
+    fd: int, path: pathlib.Path, mode: int
+) -> None:
+    """Apply the policy context for the final pathname to a new temporary inode."""
+    library_name = ctypes.util.find_library('selinux')
+    selinuxfs = pathlib.Path('/sys/fs/selinux/enforce')
+    if not library_name:
+        if selinuxfs.exists():
+            raise BuildError(
+                'SELinux is enabled but libselinux could not be loaded'
+            )
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f'.{path.name}.hostpanel-build.{os.getpid()}')
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
-    if hasattr(os, 'O_NOFOLLOW'):
-        flags |= os.O_NOFOLLOW
-    fd = os.open(temporary, flags, mode)
     try:
-        os.fchown(fd, 0, gid)
+        library = ctypes.CDLL(library_name, use_errno=True)
+    except OSError as exc:
+        if selinuxfs.exists():
+            raise BuildError('could not load libselinux') from exc
+        return
+
+    library.is_selinux_enabled.argtypes = []
+    library.is_selinux_enabled.restype = ctypes.c_int
+    enabled = library.is_selinux_enabled()
+    if enabled < 0:
+        raise BuildError('could not determine whether SELinux is enabled')
+    if enabled == 0:
+        return
+
+    library.matchpathcon.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_uint,
+        ctypes.POINTER(ctypes.c_char_p),
+    ]
+    library.matchpathcon.restype = ctypes.c_int
+    library.fsetfilecon.argtypes = [ctypes.c_int, ctypes.c_char_p]
+    library.fsetfilecon.restype = ctypes.c_int
+    library.freecon.argtypes = [ctypes.c_void_p]
+    library.freecon.restype = None
+
+    context = ctypes.c_char_p()
+    expected_mode = stat.S_IFREG | stat.S_IMODE(mode)
+    if library.matchpathcon(
+        os.fsencode(path), expected_mode, ctypes.byref(context)
+    ) != 0:
+        error = ctypes.get_errno()
+        raise BuildError(
+            f'could not determine SELinux context for {path}: '
+            f'{os.strerror(error)}'
+        )
+    try:
+        if not context.value:
+            raise BuildError(f'empty SELinux context for {path}')
+        if library.fsetfilecon(fd, context) != 0:
+            error = ctypes.get_errno()
+            raise BuildError(
+                f'could not apply SELinux context for {path}: '
+                f'{os.strerror(error)}'
+            )
+    finally:
+        library.freecon(ctypes.cast(context, ctypes.c_void_p))
+
+
+def _replace_atomic(
+    path: pathlib.Path, text: str, mode: int, uid: int, gid: int,
+    xattrs: dict[str, bytes] | None,
+) -> None:
+    fd, temporary = _open_temporary(path, mode)
+    active_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
+    try:
         view = memoryview(text.encode('utf-8'))
         while view:
             written = os.write(fd, view)
@@ -161,149 +118,353 @@ def write_new_root_file(path: pathlib.Path, text: str, mode: int, gid: int = 0) 
                 raise BuildError(f'could not write {temporary}')
             view = view[written:]
         os.fsync(fd)
-    finally:
-        os.close(fd)
-    os.replace(temporary, path)
-
-
-def group_gid(name: str, *, required: bool = False) -> int:
-    try:
-        return grp.getgrnam(name).gr_gid
-    except KeyError as exc:
-        if required:
-            raise BuildError(f'required service group is missing: {name}') from exc
-        return 0
-
-
-def ensure_root_directory(path: pathlib.Path, mode: int, gid: int = 0) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-    metadata = path.lstat()
-    if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
-        raise BuildError(f'unsafe OpenLiteSpeed directory: {path}')
-    os.chown(path, 0, gid)
-    os.chmod(path, mode)
-
-
-def validate_lsphp_runtimes(options: dict[str, str]) -> tuple[str, ...]:
-    versions = php_versions(options)
-    missing: list[str] = []
-    for version in versions:
-        binary = OLS_ROOT / f"lsphp{version.replace('.', '')}/bin/lsphp"
-        if not binary.is_file() or not os.access(binary, os.X_OK):
-            missing.append(version)
-    if missing:
-        raise BuildError('missing installed LSPHP runtimes: ' + ', '.join(missing))
-    return versions
-
-
-def ensure_lsphp_runtimes(options: dict[str, str]) -> None:
-    versions = validate_lsphp_runtimes(options)
-    default_binary = OLS_ROOT / f"lsphp{versions[0].replace('.', '')}/bin/lsphp"
-    fcgi_dir = OLS_ROOT / 'fcgi-bin'
-    fcgi_dir.mkdir(parents=True, exist_ok=True)
-    link = fcgi_dir / 'lsphp'
-    temporary = fcgi_dir / f'.lsphp.hostpanel-build.{os.getpid()}'
-    temporary.unlink(missing_ok=True)
-    os.symlink(default_binary, temporary)
-    os.replace(temporary, link)
-    write_new_root_file(LSPHP_STATE, '\n'.join(v.replace('.', '') for v in versions) + '\n', 0o644)
-
-
-def prepare_openlitespeed(options: dict[str, str]) -> None:
-    if os.geteuid() != 0:
-        raise BuildError('OpenLiteSpeed preparation must run as root')
-    binary = OLS_ROOT / 'bin/openlitespeed'
-    if not binary.is_file() or not os.access(binary, os.X_OK):
-        raise BuildError('OpenLiteSpeed binary is missing after package installation')
-    trusted_root_file(OLS_MAIN)
-    trusted_root_file(OLS_ADMIN)
-    ensure_lsphp_runtimes(options)
-
-    gid = group_gid('lsadm')
-    hostpanel_gid = group_gid('hostpanel', required=True)
-    ensure_root_directory(OLS_HOSTPANEL, 0o750, gid)
-    ensure_root_directory(OLS_VHOSTS, 0o750, gid)
-    ensure_root_directory(OLS_STATE_ROOT, 0o750, hostpanel_gid)
-    ensure_root_directory(OLS_MARKERS, 0o750, hostpanel_gid)
-    ensure_root_directory(OLS_LOGS, 0o750, 0)
-
-    main_text = OLS_MAIN.read_text(encoding='utf-8')
-    admin_text = OLS_ADMIN.read_text(encoding='utf-8')
-    registry_existed = OLS_REGISTRY.exists()
-    registry_text = ''
-    if registry_existed:
-        trusted_root_file(OLS_REGISTRY)
-        registry_text = OLS_REGISTRY.read_text(encoding='utf-8')
-
-    updated_main = rewrite_main_config(main_text)
-    updated_admin = rewrite_admin_config(admin_text)
-    try:
-        if updated_main != main_text:
-            write_atomic(OLS_MAIN, updated_main)
-        if updated_admin != admin_text:
-            write_atomic(OLS_ADMIN, updated_admin)
-
-        if not registry_existed:
-            write_new_root_file(
-                OLS_REGISTRY,
-                '# Managed by HostPanel — domains are added by app/hostpanel-root\n'
-                'listener HostPanel {\n'
-                '  address 127.0.0.1:8088\n'
-                '  secure 0\n'
-                '}\n',
-                0o640,
-                gid,
-            )
-
-        run([str(binary), '-t'])
-        run(['systemctl', 'unmask', '--runtime', 'lsws.service'], check=False)
-        run(['systemctl', 'enable', '--now', 'lsws.service'])
-        run(['systemctl', 'is-active', '--quiet', 'lsws.service'])
-    except Exception:
-        if updated_main != main_text:
-            write_atomic(OLS_MAIN, main_text)
-        if updated_admin != admin_text:
-            write_atomic(OLS_ADMIN, admin_text)
-        if registry_existed:
-            write_atomic(OLS_REGISTRY, registry_text)
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, mode)
+        if xattrs is not None:
+            _apply_xattrs(temporary, xattrs)
         else:
-            OLS_REGISTRY.unlink(missing_ok=True)
+            _apply_expected_selinux_context(fd, path, mode)
+        os.fsync(fd)
+        descriptor, fd = fd, -1
+        os.close(descriptor)
+        os.replace(temporary, path)
+        _fsync_parent(path)
+    except BaseException as exc:
+        active_error = exc
+        raise
+    finally:
+        if fd >= 0:
+            descriptor, fd = fd, -1
+            try:
+                os.close(descriptor)
+            except BaseException as exc:
+                cleanup_error = exc
+        try:
+            temporary.unlink(missing_ok=True)
+        except BaseException as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if active_error is None and cleanup_error is not None:
+            raise cleanup_error
+
+
+def _service_enablement_state(name: str) -> str:
+    completed = run(['systemctl', 'is-enabled', name], check=False)
+    state = _command_text(completed.stdout).lower()
+    error = _command_text(completed.stderr)
+    if completed.returncode == 0 and state in _ENABLED_STATES and not error:
+        return state
+    if (
+        completed.returncode in {0, 1, 3, 4}
+        and state in _NON_ENABLED_STATES
+        and not error
+    ):
+        return state
+    detail = error or state or str(completed.returncode)
+    raise BuildError(f'could not determine enabled state for {name}: {detail}')
+
+
+def _service_enabled(name: str) -> bool:
+    return _service_enablement_state(name) in _ENABLED_STATES
+
+
+def _restore_service_state(
+    name: str, was_active: bool, enablement_state: str,
+    *, was_runtime_masked: bool = False,
+) -> list[str]:
+    """Attempt every boot, runtime, verification, and mask restoration phase."""
+    errors: list[str] = []
+
+    def attempt(label: str, function, *args):
+        try:
+            return function(*args)
+        except Exception as exc:
+            errors.append(f'{label}: {exc}')
+            return None
+
+    if enablement_state == 'enabled':
+        attempt(
+            f'systemctl enable {name}',
+            run, ['systemctl', 'enable', name],
+        )
+    elif enablement_state == 'enabled-runtime':
+        attempt(
+            f'systemctl disable {name}',
+            run, ['systemctl', 'disable', name],
+        )
+        attempt(
+            f'systemctl enable --runtime {name}',
+            run, ['systemctl', 'enable', '--runtime', name],
+        )
+    elif enablement_state == 'disabled':
+        attempt(
+            f'systemctl disable {name}',
+            run, ['systemctl', 'disable', name],
+        )
+    else:
+        errors.append(
+            f'unsupported original enablement state for {name}: '
+            f'{enablement_state}'
+        )
+
+    activity_action = 'start' if was_active else 'stop'
+    attempt(
+        f'systemctl {activity_action} {name}',
+        run, ['systemctl', activity_action, name],
+    )
+
+    observed_enablement = attempt(
+        f'verify enablement state for {name}',
+        _service_enablement_state, name,
+    )
+    if (
+        observed_enablement is not None
+        and observed_enablement != enablement_state
+    ):
+        errors.append(
+            f'enablement state for {name} is {observed_enablement}; '
+            f'expected {enablement_state}'
+        )
+    observed_activity = attempt(
+        f'verify active state for {name}', _service_active, name
+    )
+    if observed_activity is not None and observed_activity != was_active:
+        errors.append(
+            f'active state for {name} is {observed_activity}; '
+            f'expected {was_active}'
+        )
+
+    if was_runtime_masked:
+        attempt(
+            f'systemctl mask --runtime {name}',
+            run, ['systemctl', 'mask', '--runtime', name],
+        )
+        observed_mask = attempt(
+            f'verify runtime mask for {name}',
+            _service_enablement_state, name,
+        )
+        if observed_mask is not None and observed_mask != 'masked-runtime':
+            errors.append(
+                f'enablement state for {name} is {observed_mask}; '
+                'expected masked-runtime'
+            )
+    return errors
+
+
+def activate_openlitespeed() -> None:
+    name = 'lsws.service'
+    initial_enablement = _service_enablement_state(name)
+    if initial_enablement == 'masked':
+        raise BuildError(
+            'OpenLiteSpeed is persistently masked; unmask it explicitly before activation'
+        )
+
+    was_runtime_masked = initial_enablement == 'masked-runtime'
+    was_active: bool | None = None
+    previous_enablement: str | None = None
+    try:
+        if was_runtime_masked:
+            run(['systemctl', 'unmask', '--runtime', name])
+            previous_enablement = _service_enablement_state(name)
+        else:
+            previous_enablement = initial_enablement
+        if previous_enablement not in _RESTORABLE_ENABLEMENT_STATES:
+            raise BuildError(
+                f'OpenLiteSpeed has unsupported enablement state: '
+                f'{previous_enablement}'
+            )
+        was_active = _service_active(name)
+        run(['systemctl', 'enable', '--now', name])
+        if not _service_active(name):
+            raise BuildError('OpenLiteSpeed did not become active')
+        if _service_enablement_state(name) != 'enabled':
+            raise BuildError('OpenLiteSpeed did not become persistently enabled')
+    except Exception as original_error:
+        rollback_errors: list[str] = []
+        if was_active is not None and previous_enablement is not None:
+            rollback_errors.extend(
+                _restore_service_state(
+                    name,
+                    was_active,
+                    previous_enablement,
+                    was_runtime_masked=was_runtime_masked,
+                )
+            )
+        elif was_runtime_masked:
+            try:
+                run(['systemctl', 'mask', '--runtime', name])
+            except Exception as exc:
+                rollback_errors.append(
+                    f'systemctl mask --runtime {name}: {exc}'
+                )
+        if rollback_errors:
+            raise BuildError(
+                'OpenLiteSpeed activation failed and service rollback also failed: '
+                + '; '.join(rollback_errors)
+            ) from original_error
         raise
 
 
-def check_openlitespeed(options: dict[str, str]) -> None:
-    binary = OLS_ROOT / 'bin/openlitespeed'
-    if not binary.is_file() or not os.access(binary, os.X_OK):
-        raise BuildError('OpenLiteSpeed is not installed')
-    validate_lsphp_runtimes(options)
-    trusted_root_file(OLS_MAIN)
-    trusted_root_file(OLS_ADMIN)
-    trusted_root_file(OLS_REGISTRY)
-    main = OLS_MAIN.read_text(encoding='utf-8')
-    admin = OLS_ADMIN.read_text(encoding='utf-8')
-    registry = OLS_REGISTRY.read_text(encoding='utf-8')
-    if OLS_INCLUDE not in main or not re.search(r'(?m)^[ \t]*useIpInProxyHeader[ \t]+1[ \t]*$', main):
-        raise BuildError('OpenLiteSpeed main configuration is missing HostPanel proxy controls')
-    if re.search(r'(?m)^[ \t]*address[ \t]+(?!127\.0\.0\.1:8099[ \t]*$)\S+:8088[ \t]*$', main):
-        raise BuildError('OpenLiteSpeed main configuration exposes port 8088')
-    if not re.search(r'(?m)^[ \t]*address[ \t]+127\.0\.0\.1:7080[ \t]*$', admin):
-        raise BuildError('OpenLiteSpeed WebAdmin is not loopback-only')
-    if not re.search(r'(?m)^[ \t]*address[ \t]+127\.0\.0\.1:8088[ \t]*$', registry):
-        raise BuildError('HostPanel OpenLiteSpeed listener is not loopback-only')
-    run([str(binary), '-t'])
-    run(['systemctl', 'is-active', '--quiet', 'lsws.service'])
+_IMPL._replace_atomic = _replace_atomic
+_IMPL._apply_expected_selinux_context = _apply_expected_selinux_context
+_IMPL._service_enablement_state = _service_enablement_state
+_IMPL._service_enabled = _service_enabled
+_IMPL._restore_service_state = _restore_service_state
+_IMPL.activate_openlitespeed = activate_openlitespeed
 
 
-def rollback_domains(
-    changed: list[str], previous: dict[str, str], admin: dict[str, object]
+def _trusted_directory(path: pathlib.Path) -> os.stat_result:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise BuildError(f'cannot inspect OpenLiteSpeed directory: {path}') from exc
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != 0
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise BuildError(f'unsafe OpenLiteSpeed directory: {path}')
+    return metadata
+
+
+def _trusted_directory_chain(path: pathlib.Path) -> None:
+    current = path
+    while True:
+        _trusted_directory(current)
+        if current.parent == current:
+            return
+        current = current.parent
+
+
+def _snapshot_directory(path: pathlib.Path) -> tuple[object, ...]:
+    if not os.path.lexists(path):
+        return ('missing',)
+    metadata = _trusted_directory(path)
+    return (
+        'directory', stat.S_IMODE(metadata.st_mode),
+        metadata.st_uid, metadata.st_gid, _capture_xattrs(path),
+    )
+
+
+def _fsync_directory(path: pathlib.Path) -> None:
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, 'O_DIRECTORY'):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _restore_directory(
+    path: pathlib.Path, snapshot: tuple[object, ...]
+) -> None:
+    kind = snapshot[0]
+    if kind == 'missing':
+        if not os.path.lexists(path):
+            return
+        metadata = path.lstat()
+        if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+            raise BuildError(
+                f'cannot remove non-directory created during preparation: {path}'
+            )
+        path.rmdir()
+        _fsync_parent(path)
+        return
+    if kind != 'directory':
+        raise BuildError(f'invalid directory snapshot for {path}')
+
+    created = False
+    if not os.path.lexists(path):
+        path.mkdir(mode=int(snapshot[1]))
+        created = True
+    metadata = path.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        raise BuildError(f'cannot restore unsafe OpenLiteSpeed directory: {path}')
+    if metadata.st_uid != int(snapshot[2]) or metadata.st_gid != int(snapshot[3]):
+        os.chown(path, int(snapshot[2]), int(snapshot[3]))
+    if stat.S_IMODE(metadata.st_mode) != int(snapshot[1]):
+        os.chmod(path, int(snapshot[1]))
+    _apply_xattrs(path, dict(snapshot[4]))
+    _fsync_directory(path)
+    if created:
+        _fsync_parent(path)
+
+
+def _directory_snapshot_paths() -> list[pathlib.Path]:
+    targets = (
+        OLS_ROOT / 'fcgi-bin',
+        OLS_HOSTPANEL,
+        OLS_VHOSTS,
+        OLS_STATE_ROOT,
+        OLS_MARKERS,
+        OLS_LOGS,
+    )
+    paths: set[pathlib.Path] = set()
+    for target in targets:
+        current = target
+        paths.add(current)
+        while not os.path.lexists(current):
+            if current.parent == current:
+                raise BuildError(
+                    f'cannot resolve trusted parent for OpenLiteSpeed path: {target}'
+                )
+            current = current.parent
+            if not os.path.lexists(current):
+                paths.add(current)
+        _trusted_directory_chain(current)
+    return sorted(paths, key=lambda item: (len(item.parts), str(item)))
+
+
+def _preparation_snapshots() -> list[tuple[str, pathlib.Path, tuple[object, ...]]]:
+    snapshots: list[tuple[str, pathlib.Path, tuple[object, ...]]] = []
+    for path in _directory_snapshot_paths():
+        snapshots.append(('directory', path, _snapshot_directory(path)))
+
+    lsphp_link = OLS_ROOT / 'fcgi-bin/lsphp'
+    paths = (
+        (OLS_MAIN, False),
+        (OLS_ADMIN, False),
+        (OLS_REGISTRY, False),
+        (lsphp_link, True),
+        (LSPHP_STATE, False),
+    )
+    for path, allow_symlink in paths:
+        snapshots.append(
+            ('path', path, _snapshot_path(path, allow_symlink=allow_symlink))
+        )
+    return snapshots
+
+
+def _fsync_preparation_directories(
+    snapshots: list[tuple[str, pathlib.Path, tuple[object, ...]]]
+) -> None:
+    for kind, path, _snapshot in snapshots:
+        if kind != 'directory':
+            continue
+        _fsync_directory(path)
+        _fsync_parent(path)
+
+
+def _restore_preparation(
+    snapshots: list[tuple[str, pathlib.Path, tuple[object, ...]]]
 ) -> list[str]:
-    failures: list[str] = []
-    for domain in reversed(changed):
+    errors: list[str] = []
+    for kind, path, snapshot in reversed(snapshots):
         try:
-            webserver.set_mode(domain, previous[domain], admin)
-        except Exception as exc:  # pragma: no cover - only reached on host rollback failure
-            failures.append(f'{domain}: {exc}')
-    return failures
+            if kind == 'path':
+                _restore_path(path, snapshot)
+            elif kind == 'directory':
+                _restore_directory(path, snapshot)
+            else:
+                raise BuildError(f'invalid preparation snapshot kind: {kind}')
+        except Exception as exc:
+            errors.append(f'{path}: {exc}')
+    return errors
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -327,8 +488,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f'All {len(domains)} managed domains use {args.mode}.')
         return 0
 
+    preparation: list[tuple[str, pathlib.Path, tuple[object, ...]]] | None = None
     if args.mode == 'openlitespeed':
-        prepare_openlitespeed(options)
+        preparation = _preparation_snapshots()
+        try:
+            prepare_openlitespeed(options)
+            _fsync_preparation_directories(preparation)
+        except Exception as original_error:
+            rollback_errors = _restore_preparation(preparation)
+            if rollback_errors:
+                raise BuildError(
+                    f'OpenLiteSpeed preparation failed ({original_error}); '
+                    'outer rollback also failed: ' + '; '.join(rollback_errors)
+                ) from original_error
+            raise BuildError(
+                f'OpenLiteSpeed preparation failed and was rolled back: '
+                f'{original_error}'
+            ) from original_error
 
     admin: dict[str, object] = {'role': 'admin', 'user_id': 0, 'username': 'root'}
     previous = {domain: webserver.mode_of(domain) for domain in domains}
@@ -340,17 +516,43 @@ def main(argv: list[str] | None = None) -> int:
                 changed.append(domain)
         mismatches = [name for name in domains if webserver.mode_of(name) != target]
         if mismatches:
-            raise BuildError('post-switch validation failed for: ' + ', '.join(mismatches[:10]))
-    except Exception as exc:
-        failures = rollback_domains(changed, previous, admin)
-        if failures:
             raise BuildError(
-                f'webserver switch failed ({exc}); rollback also failed: ' + '; '.join(failures)
-            ) from exc
-        raise BuildError(f'webserver switch failed and was rolled back: {exc}') from exc
+                'post-switch validation failed for: ' + ', '.join(mismatches[:10])
+            )
+        if args.mode == 'openlitespeed':
+            activate_openlitespeed()
+    except Exception as original_error:
+        rollback_errors = rollback_domains(changed, previous, admin)
+        if preparation is not None:
+            rollback_errors.extend(_restore_preparation(preparation))
+        if rollback_errors:
+            raise BuildError(
+                f'webserver switch failed ({original_error}); rollback also failed: '
+                + '; '.join(rollback_errors)
+            ) from original_error
+        raise BuildError(
+            f'webserver switch failed and was rolled back: {original_error}'
+        ) from original_error
 
     print(f'Applied {args.mode} to {len(domains)} domains ({len(changed)} changed).')
     return 0
+
+
+class _ForwardingModule(types.ModuleType):
+    """Keep test/runtime monkeypatches visible inside the preserved implementation."""
+
+    def __setattr__(self, name: str, value) -> None:
+        super().__setattr__(name, value)
+        if name in _PUBLIC_OVERRIDES:
+            return
+        implementation = super().__getattribute__('_IMPL')
+        if hasattr(implementation, name):
+            setattr(implementation, name, value)
+
+
+_module = sys.modules.get(__name__)
+if _module is not None:
+    _module.__class__ = _ForwardingModule
 
 
 if __name__ == '__main__':

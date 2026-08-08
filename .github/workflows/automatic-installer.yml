@@ -8,23 +8,48 @@ on:
       - install-one-line.sh
       - SETUP.md
       - CUSTOMBUILD.md
+      - CUSTOMBUILD-EXTRAS.md
       - examples/cloud-init-hostpanel.yaml
       - tools/harden_install.py
+      - tools/harden_install_driver.py
       - tools/hostpanel-build.py
       - tools/hostpanel_build_config.py
       - tools/hostpanel_build_packages.py
       - tools/hostpanel_build_operations.py
+      - tools/hostpanel_build_operations_adapter.py
+      - tools/hostpanel_build_optional_postcheck_adapter.py
       - tools/hostpanel_build_cli.py
       - tools/hostpanel_build_ssl.py
+      - tools/hostpanel_build_extras.py
+      - tools/hostpanel_build_extras_state.py
+      - tools/hostpanel_build_entry.py
+      - tools/hostpanel_build_powerdns_adapter.py
+      - tools/hostpanel_build_mongodb_adapter.py
       - tools/hostpanel_build_web.py
+      - tools/hostpanel_build_web_state.py
+      - tools/hostpanel_build_web_transaction_adapter.py
+      - 'tools/*_impl.py'
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
+      - tools/patch_powerdns_runtime.py
+      - tools/patch_varnish_runtime.py
+      - tools/patch_extras_doctor.py
+      - tools/validate-production-vm.sh
       - tests/test_auto_install.py
       - tests/test_one_line_install.py
       - tests/test_hostpanel_build.py
+      - 'tests/test_custombuild*.py'
+      - 'tests/_custombuild*.py'
       - tests/test_custombuild_openlitespeed.py
       - tests/test_custombuild_ssl.py
       - tests/test_custombuild_review_fixes.py
+      - tests/test_custombuild_powerdns.py
+      - tests/test_custombuild_extras.py
+      - tests/test_custombuild_extras_state.py
+      - tests/test_custombuild_platform_guards.py
+      - tests/test_custombuild_powerdns_adapter.py
+      - tests/test_custombuild_powerdns_runtime.py
+      - tests/test_custombuild_deep_regressions.py
       - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   push:
@@ -35,23 +60,48 @@ on:
       - install-one-line.sh
       - SETUP.md
       - CUSTOMBUILD.md
+      - CUSTOMBUILD-EXTRAS.md
       - examples/cloud-init-hostpanel.yaml
       - tools/harden_install.py
+      - tools/harden_install_driver.py
       - tools/hostpanel-build.py
       - tools/hostpanel_build_config.py
       - tools/hostpanel_build_packages.py
       - tools/hostpanel_build_operations.py
+      - tools/hostpanel_build_operations_adapter.py
+      - tools/hostpanel_build_optional_postcheck_adapter.py
       - tools/hostpanel_build_cli.py
       - tools/hostpanel_build_ssl.py
+      - tools/hostpanel_build_extras.py
+      - tools/hostpanel_build_extras_state.py
+      - tools/hostpanel_build_entry.py
+      - tools/hostpanel_build_powerdns_adapter.py
+      - tools/hostpanel_build_mongodb_adapter.py
       - tools/hostpanel_build_web.py
+      - tools/hostpanel_build_web_state.py
+      - tools/hostpanel_build_web_transaction_adapter.py
+      - 'tools/*_impl.py'
       - tools/install-hostpanel-build.sh
       - tools/patch_custombuild_runtime.py
+      - tools/patch_powerdns_runtime.py
+      - tools/patch_varnish_runtime.py
+      - tools/patch_extras_doctor.py
+      - tools/validate-production-vm.sh
       - tests/test_auto_install.py
       - tests/test_one_line_install.py
       - tests/test_hostpanel_build.py
+      - 'tests/test_custombuild*.py'
+      - 'tests/_custombuild*.py'
       - tests/test_custombuild_openlitespeed.py
       - tests/test_custombuild_ssl.py
       - tests/test_custombuild_review_fixes.py
+      - tests/test_custombuild_powerdns.py
+      - tests/test_custombuild_extras.py
+      - tests/test_custombuild_extras_state.py
+      - tests/test_custombuild_platform_guards.py
+      - tests/test_custombuild_powerdns_adapter.py
+      - tests/test_custombuild_powerdns_runtime.py
+      - tests/test_custombuild_deep_regressions.py
       - tests/test_openlitespeed_fallback.py
       - .github/workflows/automatic-installer.yml
   workflow_dispatch:
@@ -73,24 +123,44 @@ jobs:
           bash -n quick-install.sh
           bash -n install-one-line.sh
           bash -n tools/install-hostpanel-build.sh
+          bash -n tools/validate-production-vm.sh
           python3 -m py_compile \
             tools/hostpanel-build.py \
             tools/hostpanel_build_config.py \
             tools/hostpanel_build_packages.py \
             tools/hostpanel_build_operations.py \
+            tools/hostpanel_build_operations_adapter.py \
+            tools/hostpanel_build_optional_postcheck_adapter.py \
             tools/hostpanel_build_cli.py \
             tools/hostpanel_build_ssl.py \
+            tools/hostpanel_build_extras.py \
+            tools/hostpanel_build_extras_state.py \
+            tools/hostpanel_build_entry.py \
+            tools/hostpanel_build_powerdns_adapter.py \
+            tools/hostpanel_build_mongodb_adapter.py \
             tools/hostpanel_build_web.py \
-            tools/patch_custombuild_runtime.py
-      - name: Run installer and CustomBuild regressions
+            tools/hostpanel_build_web_state.py \
+            tools/hostpanel_build_web_transaction_adapter.py \
+            tools/patch_custombuild_runtime.py \
+            tools/patch_powerdns_runtime.py \
+            tools/patch_varnish_runtime.py \
+            tools/patch_extras_doctor.py
+          python3 -m compileall -q tools tests
+      - name: Run every CustomBuild regression
+        run: |
+          # Discovery covers these historical explicit contracts:
+          # tests.test_custombuild_openlitespeed
+          # tests.test_custombuild_ssl
+          # tests.test_custombuild_review_fixes
+          # tests.test_custombuild_deep_regressions
+          # tests.test_custombuild_platform_guards
+          python3 -m unittest discover -v -s tests -p 'test_custombuild*.py'
+      - name: Run installer and fallback regressions
         run: |
           python3 -m unittest -v \
             tests.test_auto_install \
             tests.test_one_line_install \
             tests.test_hostpanel_build \
-            tests.test_custombuild_openlitespeed \
-            tests.test_custombuild_ssl \
-            tests.test_custombuild_review_fixes \
             tests.test_openlitespeed_fallback
       - name: ShellCheck installer chain
         run: |
@@ -98,4 +168,4 @@ jobs:
           sudo apt-get install -y -qq shellcheck
           shellcheck -S error \
             auto-install.sh quick-install.sh install-one-line.sh \
-            tools/install-hostpanel-build.sh
+            tools/install-hostpanel-build.sh tools/validate-production-vm.sh

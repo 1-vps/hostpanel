@@ -80,7 +80,20 @@ config_value(){
   printf '%s\n' "$value"
 }
 
+dns_mode(){
+  local value=bind path=/etc/hostpanel/dns-mode
+  if [[ -r "$path" ]]; then
+    value="$(tr -d '[:space:]' <"$path")"
+  fi
+  case "$value" in
+    bind|powerdns) printf '%s\n' "$value" ;;
+    *) return 1 ;;
+  esac
+}
+
 unit_exists(){ systemctl list-unit-files "$1.service" --no-legend 2>/dev/null | grep -q .; }
+full_unit_exists(){ systemctl list-unit-files "$1" --no-legend 2>/dev/null | grep -q .; }
+dns_present(){ unit_exists bind9 || unit_exists named || unit_exists pdns; }
 check_unit(){
   local unit="$1" state=""
   unit_exists "$unit" || return 0
@@ -91,15 +104,60 @@ check_unit(){
     *) warn "$unit.service boot state: ${state:-unknown}" ;;
   esac
 }
+check_full_unit(){
+  local unit="$1" state=""
+  full_unit_exists "$unit" || { fail "$unit is missing"; return; }
+  systemctl is-active --quiet "$unit" && pass "$unit is active" || fail "$unit is not active"
+  state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+  case "$state" in
+    enabled|static|indirect|generated|alias|linked|linked-runtime|transient) pass "$unit boot state: $state" ;;
+    *) warn "$unit boot state: ${state:-unknown}" ;;
+  esac
+}
+
+check_dns_systemd(){
+  local mode="" bind_unit=""
+  if ! dns_present; then
+    pass 'DNS role is not installed'
+    return
+  fi
+  if unit_exists bind9; then bind_unit=bind9; elif unit_exists named; then bind_unit=named; fi
+  mode="$(dns_mode 2>/dev/null || true)"
+  case "$mode" in
+    bind)
+      if [[ -z "$bind_unit" ]]; then
+        fail 'selected Bind DNS service unit is missing'
+      else
+        check_unit "$bind_unit"
+      fi
+      if unit_exists pdns && systemctl is-active --quiet pdns.service; then
+        fail 'pdns.service is active while dns=bind'
+      else
+        pass 'PowerDNS does not own port 53 in Bind mode'
+      fi
+      ;;
+    powerdns)
+      unit_exists pdns && check_unit pdns || fail 'pdns.service is missing while dns=powerdns'
+      check_full_unit hostpanel-pdns-zones.path
+      if [[ -n "$bind_unit" ]] && systemctl is-active --quiet "$bind_unit.service"; then
+        fail "$bind_unit.service is active while dns=powerdns"
+      else
+        pass 'Bind does not own port 53 in PowerDNS mode'
+      fi
+      ;;
+    *) fail 'invalid or unreadable /etc/hostpanel/dns-mode' ;;
+  esac
+}
 
 check_systemd(){
   local failed="" unit=""
   [[ "$(cat /proc/1/comm 2>/dev/null || true)" == systemd ]] && pass 'systemd is PID 1' || fail 'systemd is not PID 1'
   failed="$(systemctl --failed --no-legend --plain 2>/dev/null || true)"
   if [[ -z "$failed" ]]; then pass 'no failed systemd units'; else fail 'systemd has failed units'; printf '%s\n' "$failed"; fi
-  for unit in hostpanel nginx apache2 httpd lsws postgresql redis-server redis dovecot rspamd postfix exim4 named bind9 fail2ban firewalld; do
+  for unit in hostpanel nginx apache2 httpd lsws postgresql redis-server redis dovecot rspamd postfix exim4 fail2ban firewalld; do
     check_unit "$unit"
   done
+  check_dns_systemd
   if [[ -x /usr/local/lsws/bin/openlitespeed ]] && ! unit_exists lsws; then
     fail 'OpenLiteSpeed is installed but lsws.service is missing'
   fi
@@ -156,16 +214,38 @@ check_doctor(){
 }
 
 check_configs(){
+  local mode=""
   command -v nginx >/dev/null 2>&1 && run_required 'nginx configuration is valid' nginx -t
   command -v apache2ctl >/dev/null 2>&1 && run_required 'Apache configuration is valid' apache2ctl configtest
   if ! command -v apache2ctl >/dev/null 2>&1 && command -v httpd >/dev/null 2>&1; then run_required 'Apache configuration is valid' httpd -t; fi
   command -v postfix >/dev/null 2>&1 && run_required 'Postfix configuration is valid' postfix check
   command -v dovecot >/dev/null 2>&1 && run_required 'Dovecot configuration is readable' dovecot -n
   command -v rspamadm >/dev/null 2>&1 && run_required 'Rspamd configuration is valid' rspamadm configtest
-  command -v named-checkconf >/dev/null 2>&1 && run_required 'DNS configuration is valid' named-checkconf
+  if ! dns_present; then
+    pass 'DNS configuration is not installed on this node'
+    return
+  fi
+  mode="$(dns_mode 2>/dev/null || true)"
+  case "$mode" in
+    bind)
+      command -v named-checkconf >/dev/null 2>&1 \
+        && run_required 'Bind DNS configuration is valid' named-checkconf \
+        || fail 'named-checkconf is unavailable while dns=bind'
+      ;;
+    powerdns)
+      command -v pdns_server >/dev/null 2>&1 \
+        && run_required 'PowerDNS configuration is valid' pdns_server --config=check \
+        || fail 'pdns_server is unavailable while dns=powerdns'
+      command -v pdns_control >/dev/null 2>&1 \
+        && run_required 'PowerDNS control channel responds' pdns_control ping \
+        || fail 'pdns_control is unavailable while dns=powerdns'
+      ;;
+    *) fail 'DNS configuration mode is invalid' ;;
+  esac
 }
 
 listener(){ local port="$1"; ss -lntH 2>/dev/null | awk -v wanted=":$port" '$4 ~ wanted "$" {found=1} END {exit !found}'; }
+udp_listener(){ local port="$1"; ss -lnuH 2>/dev/null | awk -v wanted=":$port" '$4 ~ wanted "$" {found=1} END {exit !found}'; }
 check_listeners(){
   local panel_port="${HP_PANEL_PORT:-}" panel_host="${HP_PANEL_HOST:-}" ssh_ports="" port=""
   [[ -n "$panel_port" ]] || panel_port="$(config_value HP_PANEL_PORT 2>/dev/null || true)"
@@ -174,6 +254,18 @@ check_listeners(){
   [[ -n "$panel_host" ]] || panel_host="$(config_value HP_PANEL_HOST 2>/dev/null || true)"
   [[ -n "$panel_host" ]] || panel_host="$(config_value PANEL_HOST 2>/dev/null || true)"
   listener "$panel_port" && pass "panel port $panel_port is listening" || fail "panel port $panel_port is not listening"
+  if dns_present; then
+    listener 53 && pass 'authoritative DNS TCP port 53 is listening' || fail 'authoritative DNS TCP port 53 is not listening'
+    udp_listener 53 && pass 'authoritative DNS UDP port 53 is listening' || fail 'authoritative DNS UDP port 53 is not listening'
+    if command -v dig >/dev/null 2>&1; then
+      run_required 'authoritative DNS responds locally over UDP' \
+        dig @127.0.0.1 . SOA +time=2 +tries=1 +noall +comments
+      run_required 'authoritative DNS responds locally over TCP' \
+        dig @127.0.0.1 . SOA +tcp +time=2 +tries=1 +noall +comments
+    else
+      fail 'dig is unavailable for local authoritative DNS probes'
+    fi
+  fi
   ssh_ports="$(sshd -T 2>/dev/null | awk '$1=="port" {print $2}' | sort -u || true)"; [[ -n "$ssh_ports" ]] || ssh_ports=22
   while IFS= read -r port; do [[ -n "$port" ]] || continue; listener "$port" && pass "SSH port $port is listening" || fail "SSH port $port is not listening"; done <<<"$ssh_ports"
   if command -v curl >/dev/null 2>&1; then
@@ -266,7 +358,8 @@ check_reboot(){
 
 run_checks(){ check_os; check_systemd; check_version; check_files; check_doctor; check_configs; check_listeners; check_firewall; check_redis_acl; check_mail; check_cert; run_hooks; }
 
-printf 'HostPanel production VM validation\nMode: %s\nReport: %s\nUTC start: %s\n\n' "$MODE" "$REPORT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf 'HostPanel production VM validation\nMode: %s\nReport: %s\nUTC start: %s\n\n' \
+  "$MODE" "$REPORT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 [[ "$MODE" != --post-reboot ]] || check_reboot
 run_checks
 if [[ "$MODE" == --prepare-reboot && $FAIL_COUNT -eq 0 ]]; then
@@ -277,5 +370,6 @@ if [[ "$MODE" == --prepare-reboot && $FAIL_COUNT -eq 0 ]]; then
     fail 'pre-reboot boot ID could not be recorded securely'
   fi
 fi
-printf '\nSummary: %d passed, %d warnings, %d failed\nReport saved to %s\n' "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT" "$REPORT"
+printf '\nSummary: %d passed, %d warnings, %d failed\nReport saved to %s\n' \
+  "$PASS_COUNT" "$WARN_COUNT" "$FAIL_COUNT" "$REPORT"
 ((FAIL_COUNT == 0))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import pathlib
 import subprocess
 import sys
@@ -57,6 +58,40 @@ class CustomBuildSslTests(unittest.TestCase):
         (lineage / 'privkey.pem').write_text('key')
         return available, enabled, live, hook
 
+    def test_managed_vhost_rejects_source_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            available, enabled, _live, _hook = self._certificate_tree(root)
+            source = available / 'example.com'
+            victim = root / 'victim.conf'
+            victim.write_text('server { listen 443 ssl; }\n', encoding='utf-8')
+            source.unlink()
+            source.symlink_to(victim)
+
+            with self.assertRaisesRegex(
+                SSL.BuildError, 'unsafe HostPanel nginx vhost'
+            ):
+                SSL.require_managed_vhost(
+                    'example.com', available, enabled
+                )
+
+    def test_managed_vhost_rejects_hardlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            available, enabled, _live, _hook = self._certificate_tree(root)
+            source = available / 'example.com'
+            victim = root / 'victim.conf'
+            victim.write_text('server { listen 443 ssl; }\n', encoding='utf-8')
+            source.unlink()
+            os.link(victim, source)
+
+            with self.assertRaisesRegex(
+                SSL.BuildError, 'unsafe HostPanel nginx vhost'
+            ):
+                SSL.require_managed_vhost(
+                    'example.com', available, enabled
+                )
+
     def test_letsencrypt_issue_uses_nginx_plugin_and_installs_hook(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -77,6 +112,27 @@ class CustomBuildSslTests(unittest.TestCase):
             self.assertIn('www.example.com', certbot)
             deploy.assert_called_once_with(hook)
             self.assertEqual(commands[-1], ['systemctl', 'reload', 'nginx.service'])
+
+    def test_hook_failure_prevents_certificate_issuance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            available, enabled, live, hook = self._certificate_tree(root)
+            with mock.patch.object(
+                SSL, 'ensure_certbot', return_value='/usr/bin/certbot'
+            ), mock.patch.object(
+                SSL, 'install_deploy_hook',
+                side_effect=SSL.BuildError('hook preflight failed'),
+            ), mock.patch.object(SSL, 'run_command') as run:
+                with self.assertRaisesRegex(
+                    SSL.BuildError, 'hook preflight failed'
+                ):
+                    SSL.issue_certificate(
+                        'example.com', 'admin@example.com', False,
+                        root / 'log', available_root=available,
+                        enabled_root=enabled, live_root=live,
+                        hook_path=hook,
+                    )
+            run.assert_not_called()
 
     def test_zerossl_issue_uses_private_config_not_secret_arguments(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -138,11 +194,61 @@ class CustomBuildSslTests(unittest.TestCase):
             hook = pathlib.Path(directory) / 'deploy' / 'hostpanel-reload-nginx'
             SSL.install_deploy_hook(hook)
             first = hook.read_text(encoding='utf-8')
-            SSL.install_deploy_hook(hook)
+            with mock.patch.object(SSL, '_open_hook_temporary') as opened:
+                SSL.install_deploy_hook(hook)
+            opened.assert_not_called()
             self.assertEqual(first, hook.read_text(encoding='utf-8'))
             self.assertEqual(hook.stat().st_mode & 0o777, 0o755)
             self.assertIn('nginx -t', first)
             self.assertIn('systemctl reload nginx.service', first)
+
+    def test_deploy_hook_preserves_xattrs_and_fsyncs_parent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hook = pathlib.Path(directory) / 'deploy' / 'hostpanel-reload-nginx'
+            hook.parent.mkdir()
+            hook.write_text('#!/bin/sh\nexit 1\n', encoding='utf-8')
+            hook.chmod(0o755)
+            applied: list[tuple[pathlib.Path, dict[str, bytes]]] = []
+            with mock.patch.object(
+                SSL, '_capture_xattrs',
+                return_value={'security.selinux': b'certbot-hook'},
+            ), mock.patch.object(
+                SSL, '_apply_xattrs',
+                side_effect=lambda path, values: applied.append(
+                    (path, dict(values))
+                ),
+            ), mock.patch.object(SSL.os, 'fchown'), \
+                 mock.patch.object(SSL, '_fsync_parent') as fsync_parent:
+                SSL.install_deploy_hook(hook)
+            self.assertEqual(hook.read_text(encoding='utf-8'), SSL.HOOK_TEXT)
+            self.assertEqual(hook.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(len(applied), 1)
+            self.assertNotEqual(applied[0][0], hook)
+            self.assertEqual(
+                applied[0][1], {'security.selinux': b'certbot-hook'}
+            )
+            fsync_parent.assert_called_once_with(hook)
+
+    def test_deploy_hook_write_failure_preserves_old_file_and_cleans_temp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hook = pathlib.Path(directory) / 'deploy' / 'hostpanel-reload-nginx'
+            hook.parent.mkdir()
+            original = '#!/bin/sh\nexit 1\n'
+            hook.write_text(original, encoding='utf-8')
+            hook.chmod(0o755)
+            with mock.patch.object(
+                SSL, '_capture_xattrs', return_value={}
+            ), mock.patch.object(
+                SSL.secrets, 'token_hex', return_value='fresh'
+            ), mock.patch.object(SSL.os, 'write', return_value=0):
+                with self.assertRaisesRegex(
+                    SSL.BuildError, 'could not write Certbot deploy hook'
+                ):
+                    SSL.install_deploy_hook(hook)
+            self.assertEqual(hook.read_text(encoding='utf-8'), original)
+            self.assertFalse(
+                (hook.parent / '.hostpanel-reload-nginx.hostpanel-ssl.fresh').exists()
+            )
 
     def test_status_uses_cert_name_filter(self):
         completed = subprocess.CompletedProcess([], 0, stdout='Certificate Name: example.com\n', stderr='')

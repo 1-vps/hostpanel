@@ -16,6 +16,10 @@ from hostpanel_build_config import (
     read_config, read_roles, render_config, selected_components,
     validate_value, write_config,
 )
+from hostpanel_build_extras import (
+    apply_mongodb, apply_varnish, extra_components, validate_mongodb,
+    validate_varnish, varnish_origin_port,
+)
 from hostpanel_build_operations import (
     acquire_lock, apply_build, apply_updates_and_doctor, require_root,
     run_doctor, validate_component, validate_webserver_mode,
@@ -27,11 +31,27 @@ from hostpanel_build_ssl import (
 )
 
 
+def validate_option_compatibility(options: dict[str, str]) -> None:
+    if options.get('varnish') == 'on' and options.get('webserver') == 'nginx':
+        raise BuildError(
+            'varnish=on requires nginx_apache, apache, or openlitespeed webserver mode'
+        )
+
+
+def planned_components(
+    component: str, options: dict[str, str], roles: set[str] | None
+) -> list[str]:
+    components = expand_component(component, options, roles)
+    if component == 'all' and roles is not None:
+        components.extend(extra_components(options, roles))
+    return list(dict.fromkeys(components))
+
+
 def print_plan(
     component: str, options: dict[str, str], platform: Platform,
     roles: set[str] | None = None,
 ) -> None:
-    components = expand_component(component, options, roles)
+    components = planned_components(component, options, roles)
     print('HostPanel build plan')
     print(f'  platform: {platform.family} ({platform.os_id} {platform.version_id})')
     print(f'  target:   {component}')
@@ -40,7 +60,25 @@ def print_plan(
     for item in components:
         packages = component_packages(item, options, platform)
         print(f'  - {item}')
-        if packages:
+        if item == 'mongodb':
+            if options['mongodb'] == 'off':
+                print('      actions: stop and disable mongod; keep packages and data')
+            else:
+                print('      repository: verified official MongoDB 8.0 repository')
+                print(f"      packages: {', '.join(packages)}")
+                print(
+                    '      actions: snapshot, install, localhost bind, '
+                    'authorization, service and listener validation'
+                )
+        elif item == 'varnish':
+            if options['varnish'] == 'off':
+                print('      actions: restore direct nginx backend routing; stop Varnish')
+            else:
+                port = varnish_origin_port(options)
+                print(f"      packages: {', '.join(packages)}")
+                print(f'      topology: nginx -> 127.0.0.1:6081 -> 127.0.0.1:{port}')
+                print('      actions: snapshot, VCL compile, loopback service, nginx validation')
+        elif packages:
             print(f"      packages: {', '.join(packages)}")
             print('      actions: metadata refresh, config snapshot, package reinstall, validation, restart')
         elif item == 'panel':
@@ -53,7 +91,8 @@ def print_versions(
     as_json: bool, roles: set[str],
 ) -> None:
     panel = version_file.read_text(encoding='utf-8').strip() if version_file.is_file() else None
-    states = package_states(selected_components(options, roles), options, platform)
+    components = selected_components(options, roles) + extra_components(options, roles)
+    states = package_states(list(dict.fromkeys(components)), options, platform)
     if as_json:
         print(json.dumps({
             'panel': panel,
@@ -88,6 +127,40 @@ def update_panel(apply: bool, updater: pathlib.Path) -> int:
     if completed.returncode not in {0, 10}:
         raise BuildError(f'signed HostPanel updater failed with exit status {completed.returncode}')
     return completed.returncode
+
+
+def execute_build(
+    component: str, options: dict[str, str], platform: Platform,
+    log_path: pathlib.Path, backup_dir: pathlib.Path,
+    python_path: pathlib.Path, doctor_path: pathlib.Path, roles: set[str],
+    web_helper: pathlib.Path, web_mode_file: pathlib.Path,
+) -> None:
+    """Apply one complete build transaction and run the final doctor once needed."""
+    final_doctor_required = component in {'mongodb', 'varnish'}
+    if component == 'mongodb':
+        apply_mongodb(options, platform, log_path, backup_dir)
+    elif component == 'varnish':
+        apply_varnish(options, platform, log_path, backup_dir)
+    else:
+        if component in {'web', 'all'} and options['varnish'] == 'on':
+            varnish_origin_port(options)
+        apply_build(
+            component, options, platform, log_path,
+            backup_dir, python_path, doctor_path, roles,
+            web_helper, web_mode_file,
+        )
+        if component == 'all' and 'database' in roles \
+                and options['mongodb'] == '8.0':
+            apply_mongodb(options, platform, log_path, backup_dir)
+            final_doctor_required = True
+        if component == 'web' or (component == 'all' and 'web' in roles):
+            apply_varnish(options, platform, log_path, backup_dir)
+            final_doctor_required = True
+    # Core apply_build already runs doctor after its own service transaction.
+    # Re-run only when optional components changed after that checkpoint, or
+    # when the command consisted solely of an optional component.
+    if final_doctor_required:
+        run_doctor(log_path, python_path, doctor_path)
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -166,16 +239,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     try:
         options = read_config(pathlib.Path(args.config))
-        if args.command == 'options':
-            print(render_config(options), end='')
-            return 0
         if args.command == 'set':
             require_root()
             if args.key not in DEFAULT_OPTIONS:
                 raise BuildError(f'unknown option: {args.key}')
-            options[args.key] = validate_value(args.key, args.value)
-            write_config(pathlib.Path(args.config), options)
-            print(f'{args.key}={options[args.key]}')
+            updated = dict(options)
+            updated[args.key] = validate_value(args.key, args.value)
+            validate_option_compatibility(updated)
+            write_config(pathlib.Path(args.config), updated)
+            print(f'{args.key}={updated[args.key]}')
+            return 0
+        validate_option_compatibility(options)
+        if args.command == 'options':
+            print(render_config(options), end='')
             return 0
         if args.command == 'ssl':
             if args.ssl_command == 'status':
@@ -208,6 +284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return update_panel(False, pathlib.Path(args.updater))
 
         log_path = pathlib.Path(args.log_file)
+        backup_dir = pathlib.Path(args.backup_dir)
         python_path = pathlib.Path(args.python_path)
         doctor_path = pathlib.Path(args.doctor)
         with acquire_lock(pathlib.Path(args.lock_file)):
@@ -227,23 +304,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                     return 0
                 if args.ssl_command == 'renew':
                     renew_certificates(args.domain, log_path)
-                    print(f"Certificate renewal completed. Log: {log_path}")
+                    print(f'Certificate renewal completed. Log: {log_path}')
                     return 0
             if args.command == 'build':
-                apply_build(
-                    args.component, options, platform, log_path,
-                    pathlib.Path(args.backup_dir), python_path, doctor_path, roles,
+                execute_build(
+                    args.component, options, platform, log_path, backup_dir,
+                    python_path, doctor_path, roles,
                     pathlib.Path(args.web_helper), pathlib.Path(args.web_mode_file),
                 )
                 print(f'Build completed. Log: {log_path}')
                 return 0
             if args.command == 'validate':
-                for component in expand_component(args.component, options, role_arg):
-                    validate_component(component, options, platform, log_path)
-                if args.component == 'web' or (args.component == 'all' and 'web' in roles):
-                    validate_webserver_mode(
-                        options, pathlib.Path(args.web_helper), python_path, log_path
-                    )
+                if args.component == 'mongodb':
+                    validate_mongodb(log_path)
+                elif args.component == 'varnish':
+                    validate_varnish(options, log_path)
+                else:
+                    for component in expand_component(args.component, options, role_arg):
+                        validate_component(component, options, platform, log_path)
+                    if args.component == 'web' or (args.component == 'all' and 'web' in roles):
+                        validate_webserver_mode(
+                            options, pathlib.Path(args.web_helper), python_path, log_path
+                        )
+                        validate_varnish(options, log_path)
+                    if args.component == 'all' and 'database' in roles:
+                        validate_mongodb(log_path)
                 run_doctor(log_path, python_path, doctor_path)
                 print(f'Validation completed. Log: {log_path}')
                 return 0

@@ -155,7 +155,13 @@ class PanelRedesignTests(unittest.TestCase):
         self.assertIn("function syncPageLinkVisibility()", self.js)
         self.assertIn("control.hidden=!allowed", self.js)
         self.assertIn("if(!page||!pageLinkAllowed(navLink))", self.js)
-        self.assertIn("attributeFilter:['hidden','aria-hidden','class','style']", self.js)
+        self.assertIn("const schedulePageLinkVisibility=scheduleFrame", self.js)
+        self.assertIn("window.getComputedStyle(navLink)", self.js)
+        self.assertIn(
+            "attributeFilter:['hidden','aria-hidden','class','style']",
+            self.js,
+        )
+        self.assertNotIn("attributeFilter:['hidden','aria-hidden']", self.js)
 
     def test_visual_system_covers_responsive_dark_and_accessibility_modes(self):
         for token in (
@@ -175,13 +181,21 @@ class PanelRedesignTests(unittest.TestCase):
             "@media(max-width:1060px)",
             "@media(max-width:900px)",
             "@media(max-width:680px)",
+            "@media(max-width:360px)",
             "@media(prefers-reduced-motion:reduce)",
             "@media(prefers-contrast:more)",
+            "@media(forced-colors:active)",
         ):
             self.assertIn(query, self.css)
         self.assertIn("body.hp-redesign.dark", self.css)
         self.assertIn("left:calc(-1 * min(280px,88vw))", self.css)
         self.assertIn("min-width:44px;min-height:44px", self.css)
+        self.assertIn("height:100dvh", self.css)
+        self.assertIn("env(safe-area-inset-top)", self.css)
+        self.assertIn("env(safe-area-inset-bottom)", self.css)
+        self.assertIn("overflow-wrap:anywhere", self.css)
+        self.assertIn("animation-duration:.01ms!important", self.css)
+        self.assertIn("backdrop-filter:none", self.css)
         self.assertNotIn("@import", self.css)
         self.assertNotRegex(self.css, r"url\(\s*['\"]?https?://")
 
@@ -195,12 +209,18 @@ class PanelRedesignTests(unittest.TestCase):
             "XMLHttpRequest",
             "localStorage",
             "sessionStorage",
+            "setInterval(",
         ):
             self.assertNotIn(unsafe, self.js)
         self.assertIn("MutationObserver", self.js)
         self.assertIn("CSS.escape(page)", self.js)
-        self.assertIn("location.hash = `#/panel/${page}`", self.js)
-        self.assertIn("document.body.dataset.uiVersion = '3.0.0'", self.js)
+        self.assertIn("location.hash=`#/panel/${page}`", self.js)
+        self.assertIn("document.body.dataset.uiVersion='3.0.0'", self.js)
+        self.assertIn("const scheduleFrame=callback=>", self.js)
+        self.assertIn("(?:[.,]\\d+)?", self.js)
+        self.assertIn("normalizeLanguage(document.documentElement.lang)", self.js)
+        self.assertIn("mirrorText('uptime',['dashboardUptime','dashboardUptimeRail'])", self.js)
+        self.assertIn("dataset.hpRedesignBound", self.js)
 
     def test_patcher_fails_closed_for_unsafe_or_unreviewed_targets(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -265,7 +285,9 @@ class PanelRedesignTests(unittest.TestCase):
             self.assertIn(f"      - {path}", self.workflow)
         self.assertIn("test_panel_redesign.py", self.workflow)
         browser = (ROOT / "tests" / "browser" / "panel-redesign.spec.js").read_text(encoding="utf-8")
+        self.assertIn("width: 320, height: 568", browser)
         self.assertIn("width: 390, height: 844", browser)
+        self.assertIn("width: 844, height: 390", browser)
         self.assertIn("width: 1440, height: 900", browser)
         self.assertIn("phone-dashboard.png", browser)
         self.assertIn("desktop-dashboard.png", browser)

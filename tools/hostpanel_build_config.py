@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import contextlib
+import ctypes
+import ctypes.util
 import os
 import pathlib
 import re
@@ -24,6 +26,9 @@ DEFAULT_OPTIONS = {
     'webserver': 'nginx_apache',
     'database': 'both',
     'mta': 'postfix',
+    'dns': 'bind',
+    'mongodb': 'off',
+    'varnish': 'off',
     'php_versions': '8.5,8.4,8.3,8.2',
 }
 OPTION_ORDER = tuple(DEFAULT_OPTIONS)
@@ -31,11 +36,14 @@ CHOICES = {
     'webserver': {'openlitespeed', 'nginx', 'apache', 'nginx_apache'},
     'database': {'mariadb', 'postgresql', 'both'},
     'mta': {'postfix', 'exim'},
+    'dns': {'bind', 'powerdns'},
+    'mongodb': {'off', '8.0'},
+    'varnish': {'off', 'on'},
 }
 VALID_ROLES = {'control', 'web', 'database', 'mail', 'dns', 'backup', 'edge'}
 VALID_COMPONENTS = {
     'panel', 'nginx', 'apache', 'openlitespeed', 'php',
-    'database', 'mail', 'dns', 'redis',
+    'database', 'mongodb', 'mail', 'dns', 'redis', 'varnish',
 }
 PHP_RE = re.compile(r'^(?:7\.4|8\.[0-5])$')
 KEY_RE = re.compile(r'^[a-z][a-z0-9_]{0,63}$')
@@ -141,6 +149,108 @@ def render_config(options: dict[str, str]) -> str:
     return '\n'.join(lines) + '\n'
 
 
+def _capture_xattrs(path: pathlib.Path) -> dict[str, bytes]:
+    required = ('listxattr', 'getxattr', 'setxattr', 'removexattr')
+    if not all(hasattr(os, name) for name in required):
+        raise BuildError('extended-attribute support is unavailable')
+    try:
+        return {
+            name: os.getxattr(path, name, follow_symlinks=False)
+            for name in os.listxattr(path, follow_symlinks=False)
+        }
+    except OSError as exc:
+        raise BuildError(
+            f'could not capture build configuration metadata: {exc}'
+        ) from exc
+
+
+def _apply_xattrs(path: pathlib.Path, values: dict[str, bytes]) -> None:
+    try:
+        existing = set(os.listxattr(path, follow_symlinks=False))
+        desired = set(values)
+        for name in existing - desired:
+            os.removexattr(path, name, follow_symlinks=False)
+        for name, value in values.items():
+            os.setxattr(path, name, value, follow_symlinks=False)
+    except OSError as exc:
+        raise BuildError(
+            f'could not preserve build configuration metadata: {exc}'
+        ) from exc
+
+
+def _apply_expected_selinux_context(
+    fd: int, path: pathlib.Path, mode: int
+) -> None:
+    library_name = ctypes.util.find_library('selinux')
+    selinuxfs = pathlib.Path('/sys/fs/selinux/enforce')
+    if not library_name:
+        if selinuxfs.exists():
+            raise BuildError(
+                'SELinux is enabled but libselinux could not be loaded'
+            )
+        return
+    try:
+        library = ctypes.CDLL(library_name, use_errno=True)
+    except OSError as exc:
+        if selinuxfs.exists():
+            raise BuildError('could not load libselinux') from exc
+        return
+
+    library.is_selinux_enabled.argtypes = []
+    library.is_selinux_enabled.restype = ctypes.c_int
+    enabled = library.is_selinux_enabled()
+    if enabled < 0:
+        raise BuildError('could not determine whether SELinux is enabled')
+    if enabled == 0:
+        return
+
+    library.matchpathcon.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_uint,
+        ctypes.POINTER(ctypes.c_char_p),
+    ]
+    library.matchpathcon.restype = ctypes.c_int
+    library.fsetfilecon.argtypes = [ctypes.c_int, ctypes.c_char_p]
+    library.fsetfilecon.restype = ctypes.c_int
+    library.freecon.argtypes = [ctypes.c_void_p]
+    library.freecon.restype = None
+
+    context = ctypes.c_char_p()
+    expected_mode = stat.S_IFREG | stat.S_IMODE(mode)
+    if library.matchpathcon(
+        os.fsencode(path), expected_mode, ctypes.byref(context)
+    ) != 0:
+        error = ctypes.get_errno()
+        raise BuildError(
+            f'could not determine SELinux context for {path}: '
+            f'{os.strerror(error)}'
+        )
+    try:
+        if not context.value:
+            raise BuildError(f'empty SELinux context for {path}')
+        if library.fsetfilecon(fd, context) != 0:
+            error = ctypes.get_errno()
+            raise BuildError(
+                f'could not apply SELinux context for {path}: '
+                f'{os.strerror(error)}'
+            )
+    finally:
+        library.freecon(ctypes.cast(context, ctypes.c_void_p))
+
+
+def _fsync_parent(path: pathlib.Path) -> None:
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, 'O_DIRECTORY'):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path.parent, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def write_config(path: pathlib.Path, options: dict[str, str]) -> None:
     uid, gid = owner_ids()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,12 +263,27 @@ def write_config(path: pathlib.Path, options: dict[str, str]) -> None:
         or stat.S_IMODE(parent.st_mode) & 0o022
     ):
         raise BuildError(f'unsafe configuration directory: {path.parent}')
+
+    xattrs: dict[str, bytes] | None = None
+    if os.path.lexists(path):
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != uid
+            or metadata.st_gid != gid
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) not in {0o600, 0o640}
+        ):
+            raise BuildError(f'unsafe build configuration: {path}')
+        xattrs = _capture_xattrs(path)
+
     payload = render_config(options).encode('utf-8')
     fd, temporary_name = tempfile.mkstemp(prefix='.build.conf.', dir=path.parent)
     temporary = pathlib.Path(temporary_name)
+    active_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
     try:
-        os.fchmod(fd, 0o600)
-        os.fchown(fd, uid, gid)
         view = memoryview(payload)
         while view:
             written = os.write(fd, view)
@@ -166,16 +291,34 @@ def write_config(path: pathlib.Path, options: dict[str, str]) -> None:
                 raise BuildError('could not write build configuration')
             view = view[written:]
         os.fsync(fd)
-        os.close(fd)
-        fd = -1
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, 0o600)
+        if xattrs is not None:
+            _apply_xattrs(temporary, xattrs)
+        else:
+            _apply_expected_selinux_context(fd, path, 0o600)
+        os.fsync(fd)
+        descriptor, fd = fd, -1
+        os.close(descriptor)
         os.replace(temporary, path)
-        os.chmod(path, 0o600)
-        os.chown(path, uid, gid)
+        _fsync_parent(path)
+    except BaseException as exc:
+        active_error = exc
+        raise
     finally:
         if fd >= 0:
-            os.close(fd)
-        with contextlib.suppress(FileNotFoundError):
-            temporary.unlink()
+            descriptor, fd = fd, -1
+            try:
+                os.close(descriptor)
+            except BaseException as exc:
+                cleanup_error = exc
+        try:
+            temporary.unlink(missing_ok=True)
+        except BaseException as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if active_error is None and cleanup_error is not None:
+            raise cleanup_error
 
 
 def detect_platform(path: pathlib.Path = pathlib.Path('/etc/os-release')) -> Platform:
@@ -252,10 +395,8 @@ def web_components(options: dict[str, str]) -> list[str]:
     if mode == 'nginx':
         return ['nginx', 'php']
     if mode == 'apache':
-        # nginx remains the public TLS edge while Apache handles every request.
         return ['nginx', 'apache', 'php']
     if mode == 'openlitespeed':
-        # nginx remains the public TLS/HTTP edge; OpenLiteSpeed is loopback-only.
         return ['nginx', 'openlitespeed', 'php']
     raise BuildError(f'unsupported webserver option: {mode}')
 
@@ -284,15 +425,22 @@ def component_packages(component: str, options: dict[str, str], platform: Platfo
         if options['database'] in {'postgresql', 'both'}:
             packages.append('postgresql' if platform.family == 'debian' else 'postgresql-server')
         return packages
+    if component == 'mongodb':
+        return ['mongodb-org'] if options['mongodb'] == '8.0' else []
     if component == 'mail':
         mta = 'postfix' if options['mta'] == 'postfix' else ('exim4' if platform.family == 'debian' else 'exim')
         if platform.family == 'debian':
             return [mta, 'dovecot-core', 'rspamd', 'clamav-daemon']
         return [mta, 'dovecot', 'rspamd', 'clamd']
     if component == 'dns':
+        if options['dns'] == 'powerdns':
+            return ['pdns-server', 'pdns-backend-bind'] \
+                if platform.family == 'debian' else ['pdns']
         return ['bind9', 'bind9-utils'] if platform.family == 'debian' else ['bind', 'bind-utils']
     if component == 'redis':
         return ['redis-server'] if platform.family == 'debian' else ['redis']
+    if component == 'varnish':
+        return ['varnish'] if options['varnish'] == 'on' else []
     raise BuildError(f'unsupported component: {component}')
 
 
@@ -323,3 +471,121 @@ def expand_component(
     if component in VALID_COMPONENTS:
         return [component]
     raise BuildError(f'unsupported component: {component}')
+
+
+_STABLE_READ_FIELDS = (
+    'st_dev', 'st_ino', 'st_mode', 'st_uid', 'st_gid', 'st_nlink',
+    'st_size', 'st_mtime_ns', 'st_ctime_ns',
+)
+
+
+def _same_stable_file(left: os.stat_result, right: os.stat_result) -> bool:
+    return all(
+        getattr(left, field) == getattr(right, field)
+        for field in _STABLE_READ_FIELDS
+    )
+
+
+def _read_stable_trusted_file(
+    path: pathlib.Path,
+    *,
+    label: str,
+    maximum: int,
+    valid_mode,
+) -> bytes:
+    try:
+        before = path.lstat()
+    except OSError as exc:
+        raise BuildError(f'cannot inspect {label}: {path}') from exc
+    uid, gid = owner_ids()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or stat.S_ISLNK(before.st_mode)
+        or before.st_uid != uid
+        or before.st_gid != gid
+        or before.st_nlink != 1
+        or not valid_mode(stat.S_IMODE(before.st_mode))
+        or before.st_size < 0
+        or before.st_size > maximum
+    ):
+        raise BuildError(f'unsafe {label}: {path}')
+
+    flags = os.O_RDONLY | os.O_CLOEXEC
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise BuildError(f'cannot open {label}: {path}') from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not _same_stable_file(before, opened):
+            raise BuildError(f'{label} changed before read')
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(64 * 1024, maximum + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum:
+                raise BuildError(f'{label} is too large')
+        after = os.fstat(descriptor)
+        try:
+            current = path.lstat()
+        except OSError as exc:
+            raise BuildError(f'{label} changed during read') from exc
+        if (
+            not _same_stable_file(opened, after)
+            or not _same_stable_file(after, current)
+        ):
+            raise BuildError(f'{label} changed during read')
+        return b''.join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def read_config(path: pathlib.Path) -> dict[str, str]:
+    if not os.path.lexists(path):
+        return dict(DEFAULT_OPTIONS)
+    payload = _read_stable_trusted_file(
+        path,
+        label='build configuration',
+        maximum=MAX_CONFIG_BYTES,
+        valid_mode=lambda mode: mode in {0o600, 0o640},
+    )
+    try:
+        text = payload.decode('utf-8', errors='strict')
+    except UnicodeError as exc:
+        raise BuildError('build configuration is not UTF-8') from exc
+    return parse_config_text(text)
+
+
+def read_roles(path: pathlib.Path) -> set[str]:
+    if not os.path.lexists(path):
+        raise BuildError(f'HostPanel role configuration is missing: {path}')
+    payload = _read_stable_trusted_file(
+        path,
+        label='HostPanel role configuration',
+        maximum=MAX_CONFIG_BYTES,
+        valid_mode=lambda mode: not (mode & 0o022),
+    )
+    try:
+        text = payload.decode('utf-8', errors='strict')
+    except UnicodeError as exc:
+        raise BuildError('HostPanel role configuration is not UTF-8') from exc
+    lines = [
+        line.strip() for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith('#')
+    ]
+    if len(lines) != 1 or not lines[0].startswith('roles='):
+        raise BuildError('roles.conf must contain exactly one roles= line')
+    roles = {
+        item
+        for item in lines[0].split('=', 1)[1].replace(',', ' ').split()
+        if item
+    }
+    if not roles or not roles <= VALID_ROLES:
+        raise BuildError('roles.conf contains unsupported roles')
+    return roles
