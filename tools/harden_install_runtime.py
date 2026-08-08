@@ -285,6 +285,16 @@ if [[ "$REINSTALL" == yes ]]; then
         'prepare_root_log "$LOG"',
         "secure installer log initialization",
     )
+    text = replace_once(
+        text,
+        '''sshd -t >>"$LOG" 2>&1 || die "HostPanel SFTP configuration is invalid"
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true''',
+        '''sshd -t >>"$LOG" 2>&1 || die "HostPanel SFTP configuration is invalid"
+systemctl reload ssh >>"$LOG" 2>&1 \\
+  || systemctl reload sshd >>"$LOG" 2>&1 \\
+  || die "Could not activate the HostPanel SFTP configuration"''',
+        "fail-closed SSH configuration reload",
+    )
     text = text.replace('MTA_SWITCH_BACKUP="$BACKUP_DIR/install/', 'MTA_SWITCH_BACKUP="$INSTALL_SNAPSHOT_DIR/')
     text = text.replace('mkdir -p "$BACKUP_DIR/install"', 'install -d -o root -g root -m 700 "$INSTALL_SNAPSHOT_DIR"')
     text = text.replace('"$BACKUP_DIR/install/firewall-before.txt"', '"$INSTALL_SNAPSHOT_DIR/firewall-before.txt"')
