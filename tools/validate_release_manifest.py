@@ -120,47 +120,38 @@ def read_repository_text(root: Path, name: str, label: str) -> str:
         raise ValidationError(f"{label} is not strict UTF-8: {name}") from exc
 
 
-def sha256_repository_file(root: Path, name: str, label: str) -> str:
-    fd, before = open_regular_fd(root, name, label)
-    try:
-        if before.st_size <= 0 or before.st_size > MAX_ARCHIVE_BYTES:
-            raise ValidationError(f"{label} has an unsafe size: {name}")
-        digest = hashlib.sha256()
-        total = 0
-        while True:
-            chunk = os.read(fd, 1 << 20)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > MAX_ARCHIVE_BYTES:
-                raise ValidationError(f"{label} exceeds the size limit: {name}")
-            digest.update(chunk)
-        after = os.fstat(fd)
-        if total != before.st_size or (
-            before.st_dev,
-            before.st_ino,
-            before.st_size,
-            before.st_mtime_ns,
-        ) != (
-            after.st_dev,
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
-        ):
-            raise ValidationError(f"{label} changed while hashed: {name}")
-        return digest.hexdigest()
-    finally:
-        os.close(fd)
-
-
 def load_json(root: Path, name: str, label: str) -> dict[str, Any]:
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValidationError(f"{label} contains duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
     try:
-        value = json.loads(read_repository_text(root, name, label))
+        value = json.loads(
+            read_repository_text(root, name, label),
+            object_pairs_hook=reject_duplicate_keys,
+        )
     except json.JSONDecodeError as exc:
         raise ValidationError(f"{label} is not valid JSON: {name}") from exc
     if not isinstance(value, dict):
         raise ValidationError(f"{name} must contain one JSON object")
     return value
+
+
+def require_exact_keys(mapping: dict[str, Any], expected: set[str], context: str) -> None:
+    actual = set(mapping)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        unknown = sorted(actual - expected)
+        details = []
+        if missing:
+            details.append("missing " + ", ".join(missing))
+        if unknown:
+            details.append("unknown " + ", ".join(unknown))
+        raise ValidationError(f"{context} has invalid keys ({'; '.join(details)})")
 
 
 def require_text(mapping: dict[str, Any], key: str, context: str) -> str:
@@ -198,6 +189,19 @@ def validate_filename_array(
 def validate_manifest(
     manifest: dict[str, Any],
 ) -> tuple[str, str, str, str, bool, dict[str, Any], tuple[str, ...]]:
+    require_exact_keys(
+        manifest,
+        {
+            "schema_version",
+            "product",
+            "release",
+            "source_artifacts",
+            "platform",
+            "authoritative_documents",
+            "historical_documents",
+        },
+        "manifest",
+    )
     if manifest.get("schema_version") != 1:
         raise ValidationError("schema_version must be 1")
     if manifest.get("product") != "HostPanel":
@@ -206,6 +210,18 @@ def validate_manifest(
     release = manifest.get("release")
     if not isinstance(release, dict):
         raise ValidationError("release must be an object")
+    require_exact_keys(
+        release,
+        {
+            "version",
+            "channel",
+            "status",
+            "signed_base",
+            "production_publish_allowed",
+            "blockers",
+        },
+        "release",
+    )
 
     version = require_text(release, "version", "release")
     signed_base = require_text(release, "signed_base", "release")
@@ -229,6 +245,11 @@ def validate_manifest(
     for index, blocker in enumerate(blockers):
         if not isinstance(blocker, dict):
             raise ValidationError(f"release.blockers[{index}] must be an object")
+        require_exact_keys(
+            blocker,
+            {"id", "description"},
+            f"release.blockers[{index}]",
+        )
         blocker_id = require_text(blocker, "id", f"release.blockers[{index}]")
         require_text(blocker, "description", f"release.blockers[{index}]")
         if blocker_id in blocker_ids:
@@ -247,17 +268,29 @@ def validate_manifest(
     source_artifacts = manifest.get("source_artifacts")
     if not isinstance(source_artifacts, dict):
         raise ValidationError("source_artifacts must be an object")
-    expected_artifact_keys = {"archive", "checksum_manifest", "signature"}
-    if set(source_artifacts) != expected_artifact_keys:
-        raise ValidationError(
-            "source_artifacts must contain exactly archive, checksum_manifest, and signature"
-        )
+    expected_artifact_keys = {
+        "archive",
+        "archive_signature",
+        "checksum_manifest",
+        "checksum_signature",
+    }
+    require_exact_keys(source_artifacts, expected_artifact_keys, "source_artifacts")
     for key in sorted(expected_artifact_keys):
         require_text(source_artifacts, key, "source_artifacts")
 
     platform = manifest.get("platform")
     if not isinstance(platform, dict):
         raise ValidationError("platform must be an object")
+    require_exact_keys(
+        platform,
+        {
+            "architectures",
+            "operating_systems",
+            "minimum_ram_mib",
+            "minimum_root_free_mib",
+        },
+        "platform",
+    )
     for key in ("architectures", "operating_systems"):
         values = platform.get(key)
         if not isinstance(values, list) or not values or not all(
@@ -277,7 +310,15 @@ def validate_manifest(
             "authoritative_documents must match the reviewed maintained set: "
             + ", ".join(sorted(EXPECTED_AUTHORITATIVE_DOCUMENTS))
         )
-    validate_filename_array(manifest, "historical_documents", allow_empty=True)
+    historical_documents = validate_filename_array(
+        manifest, "historical_documents", allow_empty=True
+    )
+    overlap = sorted(set(authoritative_documents) & set(historical_documents))
+    if overlap:
+        raise ValidationError(
+            "authoritative_documents and historical_documents overlap: "
+            + ", ".join(overlap)
+        )
 
     return (
         version,
@@ -290,17 +331,18 @@ def validate_manifest(
     )
 
 
-def verify_checksum_signature(
-    checksum_bytes: bytes,
+def verify_bytes_signature(
+    payload_bytes: bytes,
     signature_bytes: bytes,
     repository_key_bytes: bytes,
     *,
     trusted_release_public_key: bytes,
+    label: str,
 ) -> None:
     if repository_key_bytes != trusted_release_public_key:
         raise ValidationError("release public key does not match the embedded trust root")
     if len(signature_bytes) != 64:
-        raise ValidationError("checksum signature must be the reviewed 64-byte raw signature")
+        raise ValidationError(f"{label} must be the reviewed 64-byte raw signature")
     openssl = shutil.which("openssl")
     if not openssl:
         raise ValidationError("openssl is required for release signature verification")
@@ -309,13 +351,13 @@ def verify_checksum_signature(
             work = Path(directory)
             os.chmod(work, 0o700)
             key_path = work / "trusted-release.pub"
-            checksums_path = work / "SHA256SUMS"
-            signature_path = work / "SHA256SUMS.sig"
+            payload_path = work / "payload"
+            signature_path = work / "payload.sig"
             key_path.write_bytes(trusted_release_public_key)
-            checksums_path.write_bytes(checksum_bytes)
+            payload_path.write_bytes(payload_bytes)
             signature_path.write_bytes(signature_bytes)
             os.chmod(key_path, 0o600)
-            os.chmod(checksums_path, 0o600)
+            os.chmod(payload_path, 0o600)
             os.chmod(signature_path, 0o600)
             result = subprocess.run(
                 [
@@ -327,7 +369,7 @@ def verify_checksum_signature(
                     str(key_path),
                     "-rawin",
                     "-in",
-                    str(checksums_path),
+                    str(payload_path),
                     "-sigfile",
                     str(signature_path),
                 ],
@@ -340,7 +382,100 @@ def verify_checksum_signature(
     except OSError as exc:
         raise ValidationError("cannot execute release signature verification") from exc
     if result.returncode != 0:
-        raise ValidationError("checksum manifest signature verification failed")
+        raise ValidationError(f"{label} verification failed")
+
+
+def verify_archive_signature_and_sha256(
+    root: Path,
+    archive_name: str,
+    signature_bytes: bytes,
+    trusted_release_public_key: bytes,
+) -> str:
+    if len(signature_bytes) != 64:
+        raise ValidationError(
+            "archive signature must be the reviewed 64-byte raw signature"
+        )
+    openssl = shutil.which("openssl")
+    if not openssl:
+        raise ValidationError("openssl is required for release signature verification")
+
+    fd, before = open_regular_fd(root, archive_name, "signed source archive")
+    try:
+        if before.st_size <= 0 or before.st_size > MAX_ARCHIVE_BYTES:
+            raise ValidationError(
+                f"signed source archive has an unsafe size: {archive_name}"
+            )
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="hostpanel-archive-verify-"
+            ) as directory:
+                work = Path(directory)
+                os.chmod(work, 0o700)
+                key_path = work / "trusted-release.pub"
+                signature_path = work / "archive.sig"
+                key_path.write_bytes(trusted_release_public_key)
+                signature_path.write_bytes(signature_bytes)
+                os.chmod(key_path, 0o600)
+                os.chmod(signature_path, 0o600)
+                result = subprocess.run(
+                    [
+                        openssl,
+                        "pkeyutl",
+                        "-verify",
+                        "-pubin",
+                        "-inkey",
+                        str(key_path),
+                        "-rawin",
+                        "-in",
+                        f"/proc/self/fd/{fd}",
+                        "-sigfile",
+                        str(signature_path),
+                    ],
+                    pass_fds=(fd,),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    env={"PATH": os.path.dirname(openssl)},
+                )
+        except OSError as exc:
+            raise ValidationError("cannot execute archive signature verification") from exc
+        if result.returncode != 0:
+            raise ValidationError("archive signature verification failed")
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(fd, 1 << 20)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_ARCHIVE_BYTES:
+                raise ValidationError("signed source archive exceeds the size limit")
+            digest.update(chunk)
+        after = os.fstat(fd)
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if total != before.st_size or before_identity != after_identity:
+            raise ValidationError(
+                f"signed source archive changed while verified: {archive_name}"
+            )
+        return digest.hexdigest()
+    finally:
+        os.close(fd)
 
 
 def validate_source_artifacts(
@@ -352,7 +487,19 @@ def validate_source_artifacts(
 ) -> tuple[str, str]:
     archive_name = require_text(source_artifacts, "archive", "source_artifacts")
     checksum_name = require_text(source_artifacts, "checksum_manifest", "source_artifacts")
-    signature_name = require_text(source_artifacts, "signature", "source_artifacts")
+    archive_signature_name = require_text(
+        source_artifacts, "archive_signature", "source_artifacts"
+    )
+    checksum_signature_name = require_text(
+        source_artifacts, "checksum_signature", "source_artifacts"
+    )
+    for artifact_name, label in (
+        (archive_name, "source_artifacts.archive"),
+        (archive_signature_name, "source_artifacts.archive_signature"),
+        (checksum_name, "source_artifacts.checksum_manifest"),
+        (checksum_signature_name, "source_artifacts.checksum_signature"),
+    ):
+        validate_safe_name(artifact_name, label)
 
     expected_archive = f"hostpanel-v{signed_base}-source.tar.gz"
     if archive_name != expected_archive:
@@ -360,19 +507,33 @@ def validate_source_artifacts(
             "source_artifacts.archive must match release.signed_base: "
             f"expected {expected_archive}, got {archive_name}"
         )
-    expected_signature = "SHA256SUMS.sig"
-    if signature_name != expected_signature:
-        raise ValidationError(f"source_artifacts.signature must be {expected_signature}")
+    if archive_signature_name != f"{expected_archive}.sig":
+        raise ValidationError(
+            "source_artifacts.archive_signature must be the installer-required "
+            f"{expected_archive}.sig"
+        )
+    if checksum_name != "SHA256SUMS":
+        raise ValidationError("source_artifacts.checksum_manifest must be SHA256SUMS")
+    if checksum_signature_name != "SHA256SUMS.sig":
+        raise ValidationError(
+            "source_artifacts.checksum_signature must be SHA256SUMS.sig"
+        )
 
     checksum_bytes = read_repository_bytes(root, checksum_name, "checksum manifest")
-    signature_bytes = read_repository_bytes(root, signature_name, "checksum signature")
+    checksum_signature_bytes = read_repository_bytes(
+        root, checksum_signature_name, "checksum signature"
+    )
+    archive_signature_bytes = read_repository_bytes(
+        root, archive_signature_name, "archive signature"
+    )
     release_key_name = f"hostpanel-v{signed_base}-release.pub"
     release_key_bytes = read_repository_bytes(root, release_key_name, "release public key")
-    verify_checksum_signature(
+    verify_bytes_signature(
         checksum_bytes,
-        signature_bytes,
+        checksum_signature_bytes,
         release_key_bytes,
         trusted_release_public_key=trusted_release_public_key,
+        label="checksum manifest signature",
     )
 
     try:
@@ -409,7 +570,12 @@ def validate_source_artifacts(
             f"found {len(matches)}"
         )
 
-    actual = sha256_repository_file(root, archive_name, "signed source archive")
+    actual = verify_archive_signature_and_sha256(
+        root,
+        archive_name,
+        archive_signature_bytes,
+        trusted_release_public_key,
+    )
     if actual != matches[0]:
         raise ValidationError(
             f"signed source archive checksum mismatch: expected {matches[0]}, got {actual}"
@@ -423,40 +589,71 @@ def validate_version_file(root: Path, version: str) -> None:
         raise ValidationError("RELEASE_VERSION does not match release.version")
 
 
-def require_visible(text: str, name: str, needle: str, label: str) -> None:
-    if needle not in text:
-        raise ValidationError(f"{name} has a conflicting or missing visible {label} declaration")
+def markdown_visible_text(text: str) -> str:
+    without_comments = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    return re.sub(
+        r"(?ms)^[ \t]*(?:```|~~~).*?^[ \t]*(?:```|~~~)[ \t]*$",
+        "",
+        without_comments,
+    )
+
+
+def require_unique_visible_line(
+    text: str,
+    name: str,
+    pattern: re.Pattern[str],
+    expected: str,
+    label: str,
+) -> None:
+    if pattern.findall(text) != [expected]:
+        raise ValidationError(
+            f"{name} has a conflicting, duplicate, or missing visible {label} declaration"
+        )
+
+
+def require_unique_visible_text(text: str, name: str, needle: str, label: str) -> None:
+    if text.count(needle) != 1:
+        raise ValidationError(
+            f"{name} has a conflicting, duplicate, or missing visible {label} declaration"
+        )
 
 
 def validate_readme_platform(text: str, platform: dict[str, Any]) -> None:
     distro_names = ("Ubuntu", "Debian", "Rocky Linux", "AlmaLinux")
     expected_by_distro: dict[str, list[str]] = {name: [] for name in distro_names}
     for operating_system in platform["operating_systems"]:
-        matched = False
         for distro in distro_names:
             prefix = f"{distro} "
             if operating_system.startswith(prefix):
                 expected_by_distro[distro].append(operating_system[len(prefix):])
-                matched = True
                 break
-        if not matched:
-            require_visible(
-                text, "README.md", operating_system, f"platform OS {operating_system}"
+        else:
+            raise ValidationError(
+                f"README.md has no reviewed visible OS mapping for {operating_system}"
             )
 
+    expected_os_lines: set[str] = set()
     for distro, expected_versions in expected_by_distro.items():
         if not expected_versions:
             continue
-        match = re.search(rf"(?m)^- {re.escape(distro)} (?P<versions>[^\n]+)$", text)
-        if not match:
-            raise ValidationError(
-                f"README.md is missing the visible {distro} platform declaration"
-            )
-        actual_versions = re.findall(r"[0-9]+(?:\.[0-9]+)?", match.group("versions"))
-        if actual_versions != expected_versions:
-            raise ValidationError(
-                f"README.md {distro} platform versions do not match the manifest"
-            )
+        if len(expected_versions) == 1:
+            versions = expected_versions[0]
+        elif len(expected_versions) == 2:
+            versions = " or ".join(expected_versions)
+        else:
+            versions = ", ".join(expected_versions[:-1]) + f", or {expected_versions[-1]}"
+        expected_os_lines.add(f"- {distro} {versions}")
+
+    visible_os_lines = {
+        match.group(0)
+        for match in re.finditer(
+            r"(?m)^- [A-Z][A-Za-z ]* [0-9]+(?:\.[0-9]+)?"
+            r"(?:,? (?:or )?[0-9]+(?:\.[0-9]+)?)*$",
+            text,
+        )
+    }
+    if visible_os_lines != expected_os_lines:
+        raise ValidationError("README.md visible operating-system list does not match the manifest")
 
     architecture_tokens = {
         "x86_64": "x86-64/AMD64",
@@ -470,16 +667,23 @@ def validate_readme_platform(text: str, platform: dict[str, Any]) -> None:
         raise ValidationError(
             f"README.md has no reviewed visible architecture mapping for {exc.args[0]}"
         ) from exc
-    require_visible(text, "README.md", f"- {architecture_display}", "architecture list")
+    require_unique_visible_line(
+        text,
+        "README.md",
+        re.compile(r"(?m)^- (?P<value>.*(?:AMD64|AArch64).*)$"),
+        architecture_display,
+        "architecture list",
+    )
 
     ram = platform["minimum_ram_mib"]
     root_free = platform["minimum_root_free_mib"]
     ram_text = f"{ram // 1024} GiB" if ram % 1024 == 0 else f"{ram} MiB"
     root_text = f"{root_free // 1024} GiB" if root_free % 1024 == 0 else f"{root_free} MiB"
-    require_visible(
+    require_unique_visible_line(
         text,
         "README.md",
-        f"- at least {ram_text} RAM and {root_text} free on `/`",
+        re.compile(r"(?m)^- (?P<value>at least .* RAM and .* free on `/`)$"),
+        f"at least {ram_text} RAM and {root_text} free on `/`",
         "resource minimums",
     )
 
@@ -504,14 +708,19 @@ def validate_docs(
     for name in markdown_docs:
         text = read_repository_text(root, name, "authoritative document")
         for marker, expected in required_tokens.items():
-            declaration = f"{marker}={expected}"
-            if declaration not in text:
-                raise ValidationError(f"{name} is missing authoritative marker {declaration}")
+            values = re.findall(rf"{re.escape(marker)}=([^\s<]+)", text)
+            if values != [expected]:
+                raise ValidationError(
+                    f"{name} has a conflicting, duplicate, or missing authoritative marker "
+                    f"{marker}={expected}"
+                )
+
+        visible = markdown_visible_text(text)
 
         stale_installed = re.findall(
             r"(?:installed(?: application)? version|/opt/hostpanel/VERSION)"
             r"[^0-9]{0,80}([0-9]+\.[0-9]+\.[0-9]+)",
-            text,
+            re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL),
             flags=re.IGNORECASE,
         )
         conflicting = sorted({found for found in stale_installed if found != version})
@@ -521,39 +730,76 @@ def validate_docs(
             )
 
         if name == "README.md":
-            require_visible(text, name, f"Current deployable release: **{version}**", "release version")
-            require_visible(text, name, f"Authenticated signed base: **{signed_base}**", "signed base")
-            require_visible(text, name, f"Release channel: **{channel}**", "release channel")
+            require_unique_visible_line(
+                visible,
+                name,
+                re.compile(
+                    r"(?m)^- Current deployable release: \*\*(?P<value>[^*]+)\*\*$"
+                ),
+                version,
+                "release version",
+            )
+            require_unique_visible_line(
+                visible,
+                name,
+                re.compile(
+                    r"(?m)^- Authenticated signed base: \*\*(?P<value>[^*]+)\*\*$"
+                ),
+                signed_base,
+                "signed base",
+            )
+            require_unique_visible_line(
+                visible,
+                name,
+                re.compile(r"(?m)^- Release channel: \*\*(?P<value>[^*]+)\*\*$"),
+                channel,
+                "release channel",
+            )
             publication = "allowed" if publish_allowed else "blocked"
-            require_visible(text, name, f"Production publication: **{publication}**", "publication")
+            require_unique_visible_line(
+                visible,
+                name,
+                re.compile(
+                    r"(?m)^- Production publication: \*\*(?P<value>[^*]+)\*\*$"
+                ),
+                publication,
+                "publication",
+            )
             if status != "deployable-not-publishable":
                 raise ValidationError(
                     "README.md visible release-status contract must be updated before "
                     f"using manifest status {status}"
                 )
-            require_visible(
-                text,
+            require_unique_visible_text(
+                visible,
                 name,
                 "A deployable build is not the same as an approved production publication.",
                 "release status",
             )
-            validate_readme_platform(text, platform)
+            validate_readme_platform(visible, platform)
         elif name == "CONFIGURATION.md":
             pattern = re.compile(
-                rf"HostPanel `{re.escape(version)}`,\s*derived from signed base \*\*{re.escape(signed_base)}\*\*",
+                r"HostPanel `(?P<version>[0-9]+\.[0-9]+\.[0-9]+)`,\s*"
+                r"derived from signed base \*\*(?P<base>[0-9.]+-hardened-r[0-9]+)\*\*",
                 flags=re.IGNORECASE,
             )
-            if not pattern.search(text):
+            if pattern.findall(visible) != [(version, signed_base)]:
                 raise ValidationError(f"{name} has conflicting visible release/base declarations")
         elif name == "PRODUCTION_READINESS.md":
             pattern = re.compile(
-                rf"deployable HostPanel release \*\*{re.escape(version)}\*\*,\s*derived from\s*signed base \*\*{re.escape(signed_base)}\*\*",
+                r"deployable HostPanel release \*\*(?P<version>[0-9]+\.[0-9]+\.[0-9]+)\*\*,\s*"
+                r"derived from\s*signed base \*\*(?P<base>[0-9.]+-hardened-r[0-9]+)\*\*",
                 flags=re.IGNORECASE,
             )
-            if not pattern.search(text):
+            if pattern.findall(visible) != [(version, signed_base)]:
                 raise ValidationError(f"{name} has conflicting visible release/base declarations")
             if not publish_allowed:
-                require_visible(text, name, "It does not itself authorize production", "publication")
+                require_unique_visible_text(
+                    visible,
+                    name,
+                    "It does not itself authorize production",
+                    "publication",
+                )
 
 
 def validate_repository(
