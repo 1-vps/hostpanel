@@ -19,26 +19,59 @@ class ApiAuditWorkflowTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", self.workflow)
         self.assertNotIn("pull_request_target", self.workflow)
         self.assertNotIn("secrets.", self.workflow)
+        self.assertIn("persist-credentials: false", self.workflow)
         reviewed = "${{ github.event.pull_request.head.sha || github.sha }}"
         self.assertIn(f"ref: {reviewed}", self.workflow)
         self.assertIn(f"EXPECTED_SHA: {reviewed}", self.workflow)
         uses = re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s#]+)", self.workflow)
-        self.assertEqual(uses, ["actions/checkout@11d5960a326750d5838078e36cf38b85af677262"])
+        self.assertEqual(
+            uses,
+            ["actions/checkout@11d5960a326750d5838078e36cf38b85af677262"],
+        )
 
-    def test_path_filters_cover_every_contract_input_twice(self):
-        paths = (
+    def test_complete_prerequisite_chain_runs_before_audit(self):
+        step = "Validate complete release and API prerequisite chain"
+        self.assertIn(step, self.workflow)
+        for phrase in (
+            "tools/validate_release_manifest.py",
+            "tests.test_release_manifest",
+            "tools/hostpanel_api_tokens/*.py",
+            "tests.test_hostpanel_api_tokens",
+            "tools/hostpanel_api_control/*.py",
+            "tests.test_hostpanel_api_control_core",
+            "tools/hostpanel_api_rbac/*.py",
+            "tests.test_hostpanel_api_rbac_policy",
+            "tools/hostpanel_api_http/*.py",
+            "tests.test_hostpanel_api_http_routing",
+            "tools/hostpanel_api_worker/*.py",
+            "tests.test_hostpanel_api_worker_registry",
+            "tools/hostpanel_api_webhooks/*.py",
+            "tests.test_hostpanel_api_webhook_delivery",
+            "Verify prerequisite OpenAPI is deterministic",
+        ):
+            self.assertIn(phrase, self.workflow)
+        self.assertLess(
+            self.workflow.index(step),
+            self.workflow.index("Run audit regressions"),
+        )
+
+    def test_path_filters_cover_every_layer(self):
+        for path in (
+            "RELEASE-MANIFEST.json",
+            "tools/validate_release_manifest.py",
+            "tools/hostpanel_api_tokens/**",
+            "tools/hostpanel_api_control/**",
+            "tools/hostpanel_api_rbac/**",
+            "tools/hostpanel_api_http/**",
+            "tools/hostpanel_api_worker/**",
+            "tools/hostpanel_api_webhooks/**",
             ".github/workflows/api-audit-foundation.yml",
             "API-AUDIT-FOUNDATION.md",
             "tools/hostpanel_api_audit/**",
             "tests/audit_test_support.py",
-            "tests/test_hostpanel_api_audit_append.py",
-            "tests/test_hostpanel_api_audit_query.py",
-            "tests/test_hostpanel_api_audit_export.py",
-            "tests/test_hostpanel_api_audit_security.py",
-            "tests/test_hostpanel_api_audit_retention.py",
+            "tests/test_hostpanel_api_audit_*.py",
             "tests/test_api_audit_foundation_workflow.py",
-        )
-        for path in paths:
+        ):
             self.assertGreaterEqual(self.workflow.count(f"- {path}"), 2, path)
 
     def test_workflow_runs_all_regressions_and_stacked_smoke(self):
@@ -61,9 +94,15 @@ class ApiAuditWorkflowTests(unittest.TestCase):
 
     def test_workflow_forbids_mutation_network_and_process_surfaces(self):
         for phrase in (
-            '"subprocess"', '"socket."', '"urllib"', '"requests"',
-            '"importlib"', '"os.system"', '"def delete_event"',
-            '"def purge"', '"DELETE FROM hp_api_audit_events"',
+            '"subprocess"',
+            '"socket."',
+            '"urllib"',
+            '"requests"',
+            '"importlib"',
+            '"os.system"',
+            '"def delete_event"',
+            '"def purge"',
+            '"DELETE FROM hp_api_audit_events"',
         ):
             self.assertIn(phrase, self.workflow)
 

@@ -5,6 +5,37 @@ on:
     paths:
       - .github/workflows/api-worker-foundation.yml
       - API-WORKER-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/hostpanel_api_tokens/**
+      - tests/test_hostpanel_api_tokens.py
+      - tests/test_hostpanel_api_token_snapshot.py
+      - tools/hostpanel_api_control/**
+      - tests/api_control_test_support.py
+      - tests/test_hostpanel_api_control_core.py
+      - tests/test_hostpanel_api_control_outbox.py
+      - tests/test_hostpanel_api_control_security.py
+      - tests/test_hostpanel_api_control_concurrency.py
+      - tools/hostpanel_api_rbac/**
+      - tests/rbac_test_support.py
+      - tests/test_hostpanel_api_rbac_policy.py
+      - tests/test_hostpanel_api_rbac_impersonation.py
+      - tests/test_hostpanel_api_rbac_security.py
+      - tools/generate_hostpanel_openapi.py
+      - tools/hostpanel_api_http/**
+      - tests/http_test_support.py
+      - tests/test_hostpanel_api_http_routing.py
+      - tests/test_hostpanel_api_http_security.py
+      - tests/test_hostpanel_api_http_security_requests.py
+      - tests/test_hostpanel_api_http_security_cursor.py
+      - tests/test_hostpanel_api_http_rate_limit.py
+      - tests/test_hostpanel_api_http_openapi.py
+      - tests/test_hostpanel_api_http_wsgi.py
       - tools/hostpanel_api_worker/**
       - tests/worker_test_support.py
       - tests/test_hostpanel_api_worker_registry.py
@@ -18,6 +49,37 @@ on:
     paths:
       - .github/workflows/api-worker-foundation.yml
       - API-WORKER-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/hostpanel_api_tokens/**
+      - tests/test_hostpanel_api_tokens.py
+      - tests/test_hostpanel_api_token_snapshot.py
+      - tools/hostpanel_api_control/**
+      - tests/api_control_test_support.py
+      - tests/test_hostpanel_api_control_core.py
+      - tests/test_hostpanel_api_control_outbox.py
+      - tests/test_hostpanel_api_control_security.py
+      - tests/test_hostpanel_api_control_concurrency.py
+      - tools/hostpanel_api_rbac/**
+      - tests/rbac_test_support.py
+      - tests/test_hostpanel_api_rbac_policy.py
+      - tests/test_hostpanel_api_rbac_impersonation.py
+      - tests/test_hostpanel_api_rbac_security.py
+      - tools/generate_hostpanel_openapi.py
+      - tools/hostpanel_api_http/**
+      - tests/http_test_support.py
+      - tests/test_hostpanel_api_http_routing.py
+      - tests/test_hostpanel_api_http_security.py
+      - tests/test_hostpanel_api_http_security_requests.py
+      - tests/test_hostpanel_api_http_security_cursor.py
+      - tests/test_hostpanel_api_http_rate_limit.py
+      - tests/test_hostpanel_api_http_openapi.py
+      - tests/test_hostpanel_api_http_wsgi.py
       - tools/hostpanel_api_worker/**
       - tests/worker_test_support.py
       - tests/test_hostpanel_api_worker_registry.py
@@ -38,7 +100,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -57,6 +119,65 @@ jobs:
               "$EXPECTED_SHA" "$actual_sha" >&2
             exit 1
           }
+
+      - name: Validate complete API prerequisite chain
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/validate_release_manifest.py \
+            tests/test_release_manifest.py \
+            tools/hostpanel_api_tokens/*.py \
+            tests/test_hostpanel_api_tokens.py \
+            tests/test_hostpanel_api_token_snapshot.py \
+            tools/hostpanel_api_control/*.py \
+            tests/api_control_test_support.py \
+            tests/test_hostpanel_api_control_core.py \
+            tests/test_hostpanel_api_control_outbox.py \
+            tests/test_hostpanel_api_control_security.py \
+            tests/test_hostpanel_api_control_concurrency.py \
+            tools/hostpanel_api_rbac/*.py \
+            tests/rbac_test_support.py \
+            tests/test_hostpanel_api_rbac_policy.py \
+            tests/test_hostpanel_api_rbac_impersonation.py \
+            tests/test_hostpanel_api_rbac_security.py \
+            tools/hostpanel_api_http/*.py \
+            tools/generate_hostpanel_openapi.py \
+            tests/http_test_support.py \
+            tests/test_hostpanel_api_http_routing.py \
+            tests/test_hostpanel_api_http_security.py \
+            tests/test_hostpanel_api_http_security_requests.py \
+            tests/test_hostpanel_api_http_security_cursor.py \
+            tests/test_hostpanel_api_http_rate_limit.py \
+            tests/test_hostpanel_api_http_openapi.py \
+            tests/test_hostpanel_api_http_wsgi.py
+          python3 -m unittest -v \
+            tests.test_release_manifest \
+            tests.test_hostpanel_api_tokens \
+            tests.test_hostpanel_api_token_snapshot \
+            tests.test_hostpanel_api_control_core \
+            tests.test_hostpanel_api_control_outbox \
+            tests.test_hostpanel_api_control_security \
+            tests.test_hostpanel_api_control_concurrency \
+            tests.test_hostpanel_api_rbac_policy \
+            tests.test_hostpanel_api_rbac_impersonation \
+            tests.test_hostpanel_api_rbac_security \
+            tests.test_hostpanel_api_http_routing \
+            tests.test_hostpanel_api_http_security \
+            tests.test_hostpanel_api_http_rate_limit \
+            tests.test_hostpanel_api_http_openapi \
+            tests.test_hostpanel_api_http_wsgi
+          python3 tools/validate_release_manifest.py
+
+      - name: Verify prerequisite OpenAPI is deterministic
+        run: |
+          set -euo pipefail
+          first="$(mktemp)"
+          second="$(mktemp)"
+          trap 'rm -f "$first" "$second"' EXIT
+          python3 tools/generate_hostpanel_openapi.py >"$first"
+          python3 tools/generate_hostpanel_openapi.py >"$second"
+          cmp "$first" "$second"
+          python3 -m json.tool "$first" >/dev/null
 
       - name: Compile worker package and regressions
         run: |

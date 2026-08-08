@@ -36,7 +36,7 @@ class IntegrationSecurityTests(unittest.TestCase):
 
     def test_webhook_secret_reference_is_redacted_in_central_audit(self):
         stack = TestStack(); self.addCleanup(stack.close); app = stack.app()
-        response = app.dispatch(request("POST", "/api/v1/tenants/tenant-a/webhook-destinations", body={"url": "https://hooks.example/path", "secret_reference": "vault:super-secret", "event_types": ["job.failed"]}, idem="key-security-000002"), now=100)
+        response = app.dispatch(request("POST", "/api/v1/tenants/tenant-a/webhook-destinations", body={"url": "https://hooks.example.net/path", "secret_reference": "vault:super-secret", "event_types": ["job.failed"]}, idem="key-security-000002"), now=100)
         self.assertEqual(response.status, 201)
         # Fake store does not implement redaction; ensure API response never returns secret bytes beyond the opaque reference field.
         raw = response.body.decode()

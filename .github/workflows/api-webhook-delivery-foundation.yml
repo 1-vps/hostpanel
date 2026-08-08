@@ -5,32 +5,62 @@ on:
     paths:
       - .github/workflows/api-webhook-delivery-foundation.yml
       - API-WEBHOOK-DELIVERY-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/hostpanel_api_tokens/**
+      - tools/hostpanel_api_control/**
+      - tools/hostpanel_api_rbac/**
+      - tools/hostpanel_api_http/**
+      - tools/generate_hostpanel_openapi.py
+      - tools/hostpanel_api_worker/**
       - tools/hostpanel_api_webhooks/**
+      - tests/api_control_test_support.py
+      - tests/http_test_support.py
+      - tests/rbac_test_support.py
+      - tests/worker_test_support.py
       - tests/webhook_test_support.py
-      - tests/test_hostpanel_api_webhook_url_policy.py
-      - tests/test_hostpanel_api_webhook_store.py
-      - tests/test_hostpanel_api_webhook_store_admin.py
-      - tests/test_hostpanel_api_webhook_store_consistency.py
-      - tests/test_hostpanel_api_webhook_delivery.py
-      - tests/test_hostpanel_api_webhook_delivery_core.py
-      - tests/test_hostpanel_api_webhook_delivery_failures.py
-      - tests/test_hostpanel_api_webhook_security.py
+      - tests/test_hostpanel_api_token*.py
+      - tests/test_hostpanel_api_control_*.py
+      - tests/test_hostpanel_api_rbac_*.py
+      - tests/test_hostpanel_api_http_*.py
+      - tests/test_hostpanel_api_worker_*.py
+      - tests/test_hostpanel_api_webhook_*.py
       - tests/test_api_webhook_delivery_workflow.py
   push:
     branches: [main]
     paths:
       - .github/workflows/api-webhook-delivery-foundation.yml
       - API-WEBHOOK-DELIVERY-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/hostpanel_api_tokens/**
+      - tools/hostpanel_api_control/**
+      - tools/hostpanel_api_rbac/**
+      - tools/hostpanel_api_http/**
+      - tools/generate_hostpanel_openapi.py
+      - tools/hostpanel_api_worker/**
       - tools/hostpanel_api_webhooks/**
+      - tests/api_control_test_support.py
+      - tests/http_test_support.py
+      - tests/rbac_test_support.py
+      - tests/worker_test_support.py
       - tests/webhook_test_support.py
-      - tests/test_hostpanel_api_webhook_url_policy.py
-      - tests/test_hostpanel_api_webhook_store.py
-      - tests/test_hostpanel_api_webhook_store_admin.py
-      - tests/test_hostpanel_api_webhook_store_consistency.py
-      - tests/test_hostpanel_api_webhook_delivery.py
-      - tests/test_hostpanel_api_webhook_delivery_core.py
-      - tests/test_hostpanel_api_webhook_delivery_failures.py
-      - tests/test_hostpanel_api_webhook_security.py
+      - tests/test_hostpanel_api_token*.py
+      - tests/test_hostpanel_api_control_*.py
+      - tests/test_hostpanel_api_rbac_*.py
+      - tests/test_hostpanel_api_http_*.py
+      - tests/test_hostpanel_api_worker_*.py
+      - tests/test_hostpanel_api_webhook_*.py
       - tests/test_api_webhook_delivery_workflow.py
   workflow_dispatch:
 
@@ -44,7 +74,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -59,9 +89,56 @@ jobs:
           set -euo pipefail
           actual_sha="$(git rev-parse HEAD)"
           [[ "$actual_sha" == "$EXPECTED_SHA" ]] || {
-            printf 'Webhook checkout mismatch: expected %s, got %s\n' "$EXPECTED_SHA" "$actual_sha" >&2
+            printf 'Webhook checkout mismatch: expected %s, got %s\n' \
+              "$EXPECTED_SHA" "$actual_sha" >&2
             exit 1
           }
+
+      - name: Validate complete release and API prerequisite chain
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/validate_release_manifest.py \
+            tests/test_release_manifest.py \
+            tools/hostpanel_api_tokens/*.py \
+            tools/hostpanel_api_control/*.py \
+            tools/hostpanel_api_rbac/*.py \
+            tools/hostpanel_api_http/*.py \
+            tools/generate_hostpanel_openapi.py \
+            tools/hostpanel_api_worker/*.py
+          python3 -m unittest -v \
+            tests.test_release_manifest \
+            tests.test_hostpanel_api_tokens \
+            tests.test_hostpanel_api_token_snapshot \
+            tests.test_hostpanel_api_control_core \
+            tests.test_hostpanel_api_control_outbox \
+            tests.test_hostpanel_api_control_security \
+            tests.test_hostpanel_api_control_concurrency \
+            tests.test_hostpanel_api_rbac_policy \
+            tests.test_hostpanel_api_rbac_impersonation \
+            tests.test_hostpanel_api_rbac_security \
+            tests.test_hostpanel_api_http_routing \
+            tests.test_hostpanel_api_http_security \
+            tests.test_hostpanel_api_http_rate_limit \
+            tests.test_hostpanel_api_http_openapi \
+            tests.test_hostpanel_api_http_wsgi \
+            tests.test_hostpanel_api_worker_registry \
+            tests.test_hostpanel_api_worker_runner \
+            tests.test_hostpanel_api_worker_failures \
+            tests.test_hostpanel_api_worker_service \
+            tests.test_hostpanel_api_worker_compatibility
+          python3 tools/validate_release_manifest.py
+
+      - name: Verify prerequisite OpenAPI is deterministic
+        run: |
+          set -euo pipefail
+          first="$(mktemp)"
+          second="$(mktemp)"
+          trap 'rm -f "$first" "$second"' EXIT
+          python3 tools/generate_hostpanel_openapi.py >"$first"
+          python3 tools/generate_hostpanel_openapi.py >"$second"
+          cmp "$first" "$second"
+          python3 -m json.tool "$first" >/dev/null
 
       - name: Compile webhook package and regressions
         run: |
@@ -71,7 +148,11 @@ jobs:
             tests/webhook_test_support.py \
             tests/test_hostpanel_api_webhook_url_policy.py \
             tests/test_hostpanel_api_webhook_store.py \
+            tests/test_hostpanel_api_webhook_store_admin.py \
+            tests/test_hostpanel_api_webhook_store_consistency.py \
             tests/test_hostpanel_api_webhook_delivery.py \
+            tests/test_hostpanel_api_webhook_delivery_core.py \
+            tests/test_hostpanel_api_webhook_delivery_failures.py \
             tests/test_hostpanel_api_webhook_security.py \
             tests/test_api_webhook_delivery_workflow.py
 
@@ -110,11 +191,16 @@ jobs:
           class Transport:
               def __init__(self):
                   self.requests = []
+
               def send(self, request):
                   self.requests.append(request)
                   return DeliveryResponse(
-                      204, {}, "93.184.216.34", True,
-                      ("93.184.216.34",), body_bytes_read=0,
+                      204,
+                      {},
+                      "93.184.216.34",
+                      True,
+                      ("93.184.216.34",),
+                      body_bytes_read=0,
                   )
 
           connection = sqlite3.connect(":memory:")
@@ -139,8 +225,13 @@ jobs:
           ticks = iter(range(2_000_000_001, 2_000_000_100))
           transport = Transport()
           runner = WebhookDeliveryRunner(
-              control, destinations, Secrets(), transport, sign_webhook,
-              worker_id="delivery-ci", clock=lambda: next(ticks),
+              control,
+              destinations,
+              Secrets(),
+              transport,
+              sign_webhook,
+              worker_id="delivery-ci",
+              clock=lambda: next(ticks),
           )
           outcome = runner.run_once()
           if outcome.status != "delivered" or outcome.event_id != creation.event.event_id:
@@ -158,11 +249,23 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          source = "\n".join(path.read_text(encoding="utf-8") for path in Path("tools/hostpanel_api_webhooks").glob("*.py"))
+
+          source = "\n".join(
+              path.read_text(encoding="utf-8")
+              for path in Path("tools/hostpanel_api_webhooks").glob("*.py")
+          )
           forbidden = (
-              "http.client", "urllib.request", "requests", "socket.create_connection",
-              "importlib", "subprocess", "os.system", "eval(", "exec(",
-              "serve_forever", "systemctl",
+              "http.client",
+              "urllib.request",
+              "requests",
+              "socket.create_connection",
+              "importlib",
+              "subprocess",
+              "os.system",
+              "eval(",
+              "exec(",
+              "serve_forever",
+              "systemctl",
           )
           found = [value for value in forbidden if value in source]
           if found:

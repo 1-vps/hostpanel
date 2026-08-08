@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 import tempfile
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+for path in (ROOT / "tools", ROOT):
+    value = str(path)
+    if value not in sys.path:
+        sys.path.insert(0, value)
 
 from hostpanel_api_audit import ApiAuditStore
 from hostpanel_api_control import ApiControlStore
@@ -161,7 +168,7 @@ with tempfile.TemporaryDirectory() as directory:
         webhook, webhook_payload = call(
             'POST', '/api/v1/tenants/tenant-a/webhook-destinations',
             body={
-                'url': 'https://hooks.example/path',
+                'url': 'https://hooks.example.net/path',
                 'secret_reference': 'vault:webhook/primary',
                 'event_types': ['job.succeeded'],
             },

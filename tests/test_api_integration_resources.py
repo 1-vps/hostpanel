@@ -48,7 +48,7 @@ class ResourceIntegrationTests(unittest.TestCase):
     def test_webhook_destination_lifecycle_and_tenant_binding(self):
         created = self.app.dispatch(request(
             "POST", "/api/v1/tenants/tenant-a/webhook-destinations",
-            body={"url": "https://hooks.example/path", "secret_reference": "vault:item", "event_types": ["job.succeeded"]},
+            body={"url": "https://hooks.example.net/path", "secret_reference": "vault:item", "event_types": ["job.succeeded"]},
             idem="key-webhook-000001",
         ), now=100)
         self.assertEqual(created.status, 201)
@@ -62,7 +62,7 @@ class ResourceIntegrationTests(unittest.TestCase):
         self.assertEqual(cross.status, 404)
         updated = self.app.dispatch(request(
             "PUT", f"/api/v1/tenants/tenant-a/webhook-destinations/{destination_id}",
-            body={"url": "https://hooks.example/new", "secret_reference": "vault:new", "event_types": ["job.failed"], "expected_version": 1},
+            body={"url": "https://hooks.example.net/new", "secret_reference": "vault:new", "event_types": ["job.failed"], "expected_version": 1},
             idem="key-webhook-000002",
         ), now=102)
         self.assertEqual(decode(updated)["destination"]["version"], 2)

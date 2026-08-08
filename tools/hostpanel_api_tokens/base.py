@@ -54,7 +54,7 @@ class StoreBase:
             """
             SELECT sequence, event_id, occurred_at, actor_kind, actor_id,
                    action, target_kind, target_id, metadata_json
-            FROM hp_api_audit_events
+            FROM hp_api_token_audit_events
             WHERE sequence > ?
             ORDER BY sequence
             LIMIT ?
@@ -157,7 +157,7 @@ class StoreBase:
             raise ValidationError("audit metadata is too large")
         self.connection.execute(
             """
-            INSERT INTO hp_api_audit_events(
+            INSERT INTO hp_api_token_audit_events(
                 event_id, occurred_at, actor_kind, actor_id, action,
                 target_kind, target_id, metadata_json
             ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)

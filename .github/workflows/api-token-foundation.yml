@@ -5,6 +5,16 @@ on:
     paths:
       - .github/workflows/api-token-foundation.yml
       - API-TOKEN-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - README.md
+      - CONFIGURATION.md
+      - PRODUCTION_READINESS.md
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
       - tools/hostpanel_api_tokens/**
       - tests/test_hostpanel_api_tokens.py
       - tests/test_hostpanel_api_token_snapshot.py
@@ -14,6 +24,16 @@ on:
     paths:
       - .github/workflows/api-token-foundation.yml
       - API-TOKEN-FOUNDATION.md
+      - RELEASE-MANIFEST.json
+      - RELEASE_VERSION
+      - README.md
+      - CONFIGURATION.md
+      - PRODUCTION_READINESS.md
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
       - tools/hostpanel_api_tokens/**
       - tests/test_hostpanel_api_tokens.py
       - tests/test_hostpanel_api_token_snapshot.py
@@ -49,6 +69,15 @@ jobs:
               "$EXPECTED_SHA" "$actual_sha" >&2
             exit 1
           }
+
+      - name: Validate release prerequisite
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/validate_release_manifest.py \
+            tests/test_release_manifest.py
+          python3 -m unittest -v tests.test_release_manifest
+          python3 tools/validate_release_manifest.py
 
       - name: Compile token package and tests
         run: |
