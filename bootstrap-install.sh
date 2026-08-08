@@ -446,9 +446,9 @@ wait "$INSTALLER_PID"
 status=$?
 INSTALLER_PID=""
 set -e
-if ((status != 0)) && [[ -r /var/log/hostpanel-install.log ]]; then
+if ((status != 0)) && [[ -r /var/log/hostpanel-installer/install.log ]]; then
   printf '\n--- Final HostPanel installer log lines ---\n' >&2
-  tail -n 120 /var/log/hostpanel-install.log >&2 || true
+  tail -n 120 /var/log/hostpanel-installer/install.log >&2 || true
   printf '%s\n' '--- end installer log ---' >&2
 fi
 exit "$status"

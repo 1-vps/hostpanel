@@ -52,7 +52,7 @@ Run the reviewed `auto-install.sh` path from [`SETUP.md`](SETUP.md). The normal
 installation path does not accept a moving repository ref. It must complete both
 non-mutating preflight and installation through the pinned object chain.
 
-Preserve `/var/log/hostpanel-install.log` and the snapshot path printed by the
+Preserve `/var/log/hostpanel-installer/install.log` and the snapshot path printed by the
 installer. Confirm:
 
 ```bash

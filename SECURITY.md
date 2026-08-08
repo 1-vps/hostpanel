@@ -117,7 +117,7 @@ requirements.
 If an installation behaves unexpectedly:
 
 1. retain provider-console access and do not repeatedly rerun the installer;
-2. preserve `/var/log/hostpanel-install.log` and validation reports;
+2. preserve `/var/log/hostpanel-installer/install.log` and validation reports;
 3. record the exact Git commit, archive checksum, OS image, and kernel;
 4. inspect `/var/backups/hostpanel-install/` without changing its permissions;
 5. restore the provider snapshot when system integrity is uncertain;

@@ -529,4 +529,4 @@ else
   printf '\nHostPanel %s installed automatically; validation was skipped.\n' "$installed"
 fi
 printf 'Status: %s\n' "$STATUS_FILE"
-printf 'Log: /var/log/hostpanel-install.log\n'
+printf 'Log: /var/log/hostpanel-installer/install.log\n'

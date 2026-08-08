@@ -29,6 +29,16 @@ def regex_once(text: str, pattern: str, replacement: str, label: str) -> str:
 def harden(text: str) -> str:
     text = replace_once(
         text,
+        'LOG="/var/log/hostpanel-install.log"',
+        'LOG="/var/log/hostpanel-installer/install.log"',
+        "root-private installer log path",
+    )
+    text = text.replace(
+        "/var/log/hostpanel-install.log",
+        "/var/log/hostpanel-installer/install.log",
+    )
+    text = replace_once(
+        text,
         'BACKUP_DIR="/var/backups/hostpanel"\nVMAIL_UID="5000"',
         'BACKUP_DIR="/var/backups/hostpanel"\nINSTALL_SNAPSHOT_DIR="/var/backups/hostpanel-install"\nVMAIL_UID="5000"',
         "root-only snapshot directory",
@@ -61,10 +71,30 @@ def harden(text: str) -> str:
 }
 
 prepare_root_log(){
-  local log_path="$1" log_parent canonical_parent parent_owner parent_mode owner mode
+  local log_path="$1" log_parent log_grandparent canonical_parent canonical_grandparent
+  local grandparent_owner grandparent_mode parent_owner parent_mode owner mode
   [[ "$log_path" == /* && "$log_path" != */ ]] \\
     || die "Installer log path must be an absolute file path"
   log_parent="${log_path%/*}"
+  if [[ ! -e "$log_parent" && ! -L "$log_parent" ]]; then
+    log_grandparent="${log_parent%/*}"
+    [[ -d "$log_grandparent" && ! -L "$log_grandparent" ]] \\
+      || die "Installer log parent directory is missing or unsafe: $log_grandparent"
+    canonical_grandparent="$(realpath -e -- "$log_grandparent")" \\
+      || die "Could not resolve installer log parent directory: $log_grandparent"
+    [[ "$canonical_grandparent" == "$log_grandparent" ]] \\
+      || die "Installer log parent directory must not traverse symbolic links: $log_grandparent"
+    grandparent_owner="$(stat -c '%u' -- "$canonical_grandparent")" \\
+      || die "Could not inspect installer log parent owner: $log_grandparent"
+    grandparent_mode="$(stat -c '%a' -- "$canonical_grandparent")" \\
+      || die "Could not inspect installer log parent permissions: $log_grandparent"
+    [[ "$grandparent_owner" == 0 && $((8#$grandparent_mode & 0002)) == 0 ]] \\
+      || die "Installer log parent must be root-owned and not world-writable: $log_grandparent"
+    mkdir -m 700 -- "$log_parent" \\
+      || die "Could not create private installer log directory: $log_parent"
+    chown root:root -- "$log_parent" \\
+      || die "Could not secure installer log directory ownership: $log_parent"
+  fi
   [[ -d "$log_parent" && ! -L "$log_parent" ]] \\
     || die "Installer log directory is missing or unsafe: $log_parent"
   canonical_parent="$(realpath -e -- "$log_parent")" \\

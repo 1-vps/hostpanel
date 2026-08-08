@@ -83,7 +83,7 @@ only the distribution's global `options` block.
 
 ## Logs and backups
 
-- Installer log: `/var/log/hostpanel-install.log`
+- Installer log: `/var/log/hostpanel-installer/install.log`
 - Direct repair log: `/var/log/hostpanel-bind-repair.log`
 - Direct repair backup: `/root/hostpanel-bind-before-repair-*.tar.gz`
 - Reinstall snapshot: path recorded in `/etc/hostpanel/last-reinstall-snapshot`

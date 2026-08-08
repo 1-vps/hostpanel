@@ -311,7 +311,7 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertIn("scoped OpenLiteSpeed managed directives", self.guest_installer)
         self.assertIn("include|listener|address|secure|useIpInProxyHeader", self.guest_installer)
         self.assertIn("grep -Eai '(openlitespeed|litespeed|lsws|httpd_config", self.guest_installer)
-        self.assertNotIn("cat /var/log/hostpanel-install.log", self.guest_installer)
+        self.assertNotIn("cat /var/log/hostpanel-installer/install.log", self.guest_installer)
         self.assertNotIn('cat "$PRIVATE_LOG"', self.guest_installer)
 
     def test_hostpanel_service_failure_evidence_is_scoped_and_redacted(self):
@@ -330,7 +330,7 @@ class QemuVmAcceptanceTests(unittest.TestCase):
         self.assertIn("visudo|sudoers|chown:|chmod:|find:", self.guest_installer)
         self.assertIn("scoped post-rollback sudoers validation", self.guest_installer)
         self.assertIn("visudo -cf /etc/sudoers.d/hostpanel", self.guest_installer)
-        self.assertNotIn("cat /var/log/hostpanel-install.log", self.guest_installer)
+        self.assertNotIn("cat /var/log/hostpanel-installer/install.log", self.guest_installer)
         self.assertNotIn('cat "$PRIVATE_LOG"', self.guest_installer)
 
 

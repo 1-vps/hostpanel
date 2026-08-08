@@ -58,6 +58,10 @@ class InstallerHardeningTests(unittest.TestCase):
         self.assertNotIn('$BACKUP_DIR/install/reinstall-', self.installer)
 
     def test_installer_log_is_validated_before_root_writes(self):
+        self.assertIn(
+            'LOG="/var/log/hostpanel-installer/install.log"',
+            self.installer,
+        )
         self.assertIn('prepare_root_log "$LOG"', self.installer)
         self.assertNotIn('touch "$LOG"; chmod 600 "$LOG"', self.installer)
         helper_start = self.installer.index("prepare_root_log(){")
@@ -81,6 +85,11 @@ class InstallerHardeningTests(unittest.TestCase):
             unsafe_parent.mkdir(mode=0o777)
             unsafe_parent.chmod(0o777)
             unsafe_log = unsafe_parent / "install.log"
+            system_log_parent = root / "var-log"
+            system_log_parent.mkdir(mode=0o775)
+            system_log_parent.chmod(0o775)
+            secure_parent = system_log_parent / "hostpanel-installer"
+            secure_log = secure_parent / "install.log"
 
             command_prefix = []
             restore_owner = False
@@ -94,7 +103,10 @@ class InstallerHardeningTests(unittest.TestCase):
                 if sudo.returncode != 0:
                     self.skipTest("root privileges are required for the root-log runtime test")
                 subprocess.run(
-                    ["sudo", "-n", "chown", "root:root", str(root)],
+                    [
+                        "sudo", "-n", "chown", "root:root",
+                        str(root), str(system_log_parent),
+                    ],
                     check=True,
                 )
                 command_prefix = ["sudo", "-n"]
@@ -115,11 +127,32 @@ class InstallerHardeningTests(unittest.TestCase):
                     stderr=subprocess.STDOUT,
                     check=False,
                 )
+                secure_parent_result = subprocess.run(
+                    command_prefix + ["bash", str(script), str(secure_log)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                secure_parent_stat = subprocess.run(
+                    command_prefix + ["stat", "-c", "%u:%a", str(secure_parent)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                secure_log_stat = subprocess.run(
+                    command_prefix + ["stat", "-c", "%u:%a", str(secure_log)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
             finally:
                 if restore_owner:
                     subprocess.run(
                         [
-                            "sudo", "-n", "chown",
+                            "sudo", "-n", "chown", "-R",
                             f"{os.getuid()}:{os.getgid()}", str(root),
                         ],
                         check=True,
@@ -139,6 +172,9 @@ class InstallerHardeningTests(unittest.TestCase):
                 unsafe_parent_result.stdout,
             )
             self.assertFalse(unsafe_log.exists())
+            self.assertEqual(secure_parent_result.returncode, 0, secure_parent_result.stdout)
+            self.assertEqual(secure_parent_stat.stdout.strip(), "0:700")
+            self.assertEqual(secure_log_stat.stdout.strip(), "0:600")
 
     def test_failure_rollback_tracks_packages_and_managed_paths(self):
         self.assertIn('NEW_PACKAGES=()', self.installer)

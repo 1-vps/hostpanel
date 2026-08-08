@@ -223,7 +223,7 @@ class VPSAcceptanceWorkflowTests(unittest.TestCase):
         self.assertNotIn("path: provider-artifacts/evidence", upload_section)
 
     def test_generated_credentials_stay_on_the_vps(self) -> None:
-        self.assertNotIn("/var/log/hostpanel-install.log", self.text)
+        self.assertNotIn("/var/log/hostpanel-installer/install.log", self.text)
         self.assertIn(
             "PRIVATE_LOG=/root/hostpanel-acceptance-private-install.log",
             self.text,
