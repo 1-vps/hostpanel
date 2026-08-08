@@ -88,6 +88,8 @@ test('desktop keyboard, routing, dark mode and accessibility remain intact', asy
   await page.goBack();
   await expect(page.locator('[data-view="dashboard"]')).toBeVisible();
 
+  const lightResults = await new AxeBuilder({ page }).analyze();
+  expect(lightResults.violations.filter(item => ['critical', 'serious'].includes(item.impact))).toEqual([]);
   await page.locator('#themeToggle').click();
   await expect(page.locator('body')).toHaveClass(/dark/);
   const results = await new AxeBuilder({ page }).analyze();
@@ -119,6 +121,39 @@ test('dashboard actions follow asynchronous permission changes', async ({ page }
   await expect(quickAction).toBeVisible();
   await expect(railLinks).toBeVisible();
   await expect(quickAction).not.toHaveAttribute('aria-disabled', 'true');
+
+  for (const mutation of [
+    element => element.setAttribute('aria-disabled', 'true'),
+    element => element.classList.add('disabled'),
+    element => element.style.pointerEvents = 'none',
+  ]) {
+    await navLink.evaluate(mutation);
+    await expect(quickAction).toBeHidden();
+    await navLink.evaluate(element => {
+      element.removeAttribute('aria-disabled');
+      element.classList.remove('disabled');
+      element.style.removeProperty('pointer-events');
+    });
+    await expect(quickAction).toBeVisible();
+  }
+});
+
+test('degraded health, service actions and dashboard freshness are truthful', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+
+  await expect(page.locator('#dashboardUpdated')).toHaveText('Dashboard data loaded');
+  const inactiveRow = page.locator('#svcBody tr').filter({ has: page.locator('.tag:not(.ok)') }).first();
+  await expect(inactiveRow.locator('td:last-child button')).toHaveText('Start');
+  await expect(page.locator('#hpHealthRing')).not.toHaveAttribute('data-state', 'ok');
+  await expect(page.locator('#hpHealthAlert')).toBeVisible();
+
+  const button = inactiveRow.locator('td:last-child button');
+  await button.click();
+  await expect(page.locator('#hpServiceDialog')).toBeVisible();
+  await page.locator('#hpServiceDialog button[value="cancel"]').click();
+  await expect(page.locator('#hpServiceDialog')).not.toBeVisible();
+  await expect(button).toBeFocused();
 });
 
 test('release-candidate locales update dynamic dashboard copy', async ({ page }) => {
@@ -181,6 +216,12 @@ test('phone layout is touch-safe, drawer-safe and free of viewport overflow', as
   await expect(page.locator('.hp-dashboard-rail')).toBeVisible();
   await expect(page.locator('.hp-quick-action:not([hidden])')).toHaveCount(6);
   await expectNoViewportOverflow(page);
+  const reducedMotion = await page.locator('.hp-meter > span').first().evaluate(element => ({
+    animation: getComputedStyle(element).animationDuration,
+    transition: getComputedStyle(element).transitionDuration,
+  }));
+  expect(parseFloat(reducedMotion.animation) || 0).toBeLessThanOrEqual(0.01);
+  expect(parseFloat(reducedMotion.transition) || 0).toBeLessThanOrEqual(0.01);
 
   const closedDrawer = await page.locator('#sidebar').boundingBox();
   expect(closedDrawer).not.toBeNull();
@@ -219,13 +260,8 @@ test('phone layout is touch-safe, drawer-safe and free of viewport overflow', as
 
   const services = page.locator('.hp-services-card .table-wrap');
   await expect(services).toBeVisible();
-  const tableOverflow = await services.evaluate(element => ({
-    client: element.clientWidth,
-    scroll: element.scrollWidth,
-    overflowX: getComputedStyle(element).overflowX,
-  }));
-  expect(tableOverflow.scroll).toBeGreaterThan(tableOverflow.client);
-  expect(['auto', 'scroll']).toContain(tableOverflow.overflowX);
+  await expect(page.locator('.hp-services-card tbody tr').first()).toHaveCSS('display', 'grid');
+  await expectTouchTargets(page, ['.hp-services-card tbody td:last-child .btn']);
   await expectNoViewportOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('phone-dashboard.png'), fullPage: true });
 
@@ -233,6 +269,19 @@ test('phone layout is touch-safe, drawer-safe and free of viewport overflow', as
   await servicesCard.scrollIntoViewIfNeeded();
   await expect(servicesCard).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath('phone-dashboard-bottom.png') });
+});
+
+test('narrow and zoom-equivalent layout keeps primary controls usable', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 720 });
+  await signIn(page);
+  await expectNoViewportOverflow(page);
+  await expectTouchTargets(page, [
+    '#menuBtn',
+    '#themeToggle',
+    '#jobBell',
+    '.hp-quick-action:not([hidden])',
+    '.hp-services-card tbody td:last-child .btn',
+  ]);
 });
 
 test('tablet transition keeps cards, rail and controls usable', async ({ page }) => {

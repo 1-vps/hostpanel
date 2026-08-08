@@ -28,6 +28,22 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     ...FUTURE_REDESIGN_TRANSLATIONS
   });
 
+  const UX_TRANSLATIONS=Object.freeze({
+    "da":{"serviceHealth":"Tjenestestatus","dataLoaded":"Kontrolpaneldata indlæst","messagesQueued":"{count} beskeder i kø","start":"Start","restart":"Genstart","confirm":"Bekræft","cancel":"Annuller","confirmServiceAction":"Vil du {action} tjenesten {service}?"},
+    "de":{"serviceHealth":"Dienststatus","dataLoaded":"Dashboarddaten geladen","messagesQueued":"{count} Nachrichten in der Warteschlange","start":"Starten","restart":"Neu starten","confirm":"Bestätigen","cancel":"Abbrechen","confirmServiceAction":"Soll der Dienst {service} wirklich {action} werden?"},
+    "en":{"serviceHealth":"Service health","dataLoaded":"Dashboard data loaded","messagesQueued":"{count} messages queued","start":"Start","restart":"Restart","confirm":"Confirm","cancel":"Cancel","confirmServiceAction":"Do you want to {action} the {service} service?"},
+    "es":{"serviceHealth":"Estado de los servicios","dataLoaded":"Datos del panel cargados","messagesQueued":"{count} mensajes en cola","start":"Iniciar","restart":"Reiniciar","confirm":"Confirmar","cancel":"Cancelar","confirmServiceAction":"¿Quieres {action} el servicio {service}?"},
+    "fi":{"serviceHealth":"Palvelujen tila","dataLoaded":"Hallintapaneelin tiedot ladattu","messagesQueued":"{count} viestiä jonossa","start":"Käynnistä","restart":"Käynnistä uudelleen","confirm":"Vahvista","cancel":"Peruuta","confirmServiceAction":"Haluatko suorittaa toiminnon {action} palvelulle {service}?"},
+    "fr":{"serviceHealth":"État des services","dataLoaded":"Données du tableau de bord chargées","messagesQueued":"{count} messages en attente","start":"Démarrer","restart":"Redémarrer","confirm":"Confirmer","cancel":"Annuler","confirmServiceAction":"Voulez-vous utiliser l’action {action} pour le service {service} ?"},
+    "nb":{"serviceHealth":"Tjenestestatus","dataLoaded":"Kontrollpaneldata lastet","messagesQueued":"{count} meldinger i kø","start":"Start","restart":"Start på nytt","confirm":"Bekreft","cancel":"Avbryt","confirmServiceAction":"Vil du utføre {action} for tjenesten {service}?"},
+    "nl":{"serviceHealth":"Servicestatus","dataLoaded":"Dashboardgegevens geladen","messagesQueued":"{count} berichten in de wachtrij","start":"Starten","restart":"Opnieuw starten","confirm":"Bevestigen","cancel":"Annuleren","confirmServiceAction":"Wil je de actie {action} uitvoeren voor de service {service}?"},
+    "pl":{"serviceHealth":"Stan usług","dataLoaded":"Dane panelu zostały załadowane","messagesQueued":"W kolejce: {count}","start":"Uruchom","restart":"Uruchom ponownie","confirm":"Potwierdź","cancel":"Anuluj","confirmServiceAction":"Czy wykonać działanie {action} dla usługi {service}?"},
+    "sv":{"serviceHealth":"Tjänstehälsa","dataLoaded":"Paneldata har lästs in","messagesQueued":"{count} meddelanden i kö","start":"Starta","restart":"Starta om","confirm":"Bekräfta","cancel":"Avbryt","confirmServiceAction":"Vill du {action} tjänsten {service}?"},
+    "ja":{"serviceHealth":"サービスの状態","dataLoaded":"ダッシュボードのデータを読み込みました","messagesQueued":"{count} 件のメッセージがキューにあります","start":"開始","restart":"再起動","confirm":"確認","cancel":"キャンセル","confirmServiceAction":"サービス {service} で {action} を実行しますか？"},
+    "pt":{"serviceHealth":"Estado dos serviços","dataLoaded":"Dados do painel carregados","messagesQueued":"{count} mensagens na fila","start":"Iniciar","restart":"Reiniciar","confirm":"Confirmar","cancel":"Cancelar","confirmServiceAction":"Deseja executar {action} no serviço {service}?"},
+    "zh":{"serviceHealth":"服务状态","dataLoaded":"仪表板数据已加载","messagesQueued":"队列中有 {count} 条消息","start":"启动","restart":"重启","confirm":"确认","cancel":"取消","confirmServiceAction":"是否对服务 {service} 执行“{action}”？"}
+  });
+
   const byId=id=>document.getElementById(id);
   const clamp=value=>Math.max(0,Math.min(100,Number.isFinite(value)?value:0));
   const localizedLiveValues=new Set(Object.values(ALL_REDESIGN_TRANSLATIONS).map(messages=>messages.live));
@@ -38,7 +54,7 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
   };
   const copy=(key,vars={})=>{
     const language=currentLanguage();
-    const message=ALL_REDESIGN_TRANSLATIONS[language][key]??REDESIGN_TRANSLATIONS.en[key]??key;
+    const message=UX_TRANSLATIONS[language]?.[key]??UX_TRANSLATIONS.en[key]??ALL_REDESIGN_TRANSLATIONS[language][key]??REDESIGN_TRANSLATIONS.en[key]??key;
     return String(message).replace(/\{(\w+)\}/g,(_,name)=>Object.hasOwn(vars,name)?String(vars[name]):`{${name}}`);
   };
   const percentFromText=text=>{
@@ -55,12 +71,117 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     update();
   }
 
+  function setLoadMeter(){
+    const load=byId('loadv');
+    const cpuDetail=byId('cpud');
+    const meter=byId('loadMeter');
+    if(!load||!cpuDetail||!meter)return;
+    const update=()=>{
+      const loadValue=Number.parseFloat(load.textContent);
+      const cpuCount=Number.parseFloat(cpuDetail.textContent);
+      const percent=Number.isFinite(loadValue)&&Number.isFinite(cpuCount)&&cpuCount>0
+        ?clamp((loadValue/cpuCount)*100):0;
+      meter.style.setProperty('--hp-value',`${percent}%`);
+    };
+    new MutationObserver(update).observe(load,{childList:true,characterData:true,subtree:true});
+    new MutationObserver(update).observe(cpuDetail,{childList:true,characterData:true,subtree:true});
+    update();
+  }
+
+  function syncDashboardFreshness(){
+    const status=byId('dashboardUpdated');
+    const error=byId('dashboardError');
+    const services=byId('svcBody');
+    if(!status||!services||error&&!error.hidden)return;
+    const metrics=['cpu','ram','disk','loadv'].map(byId);
+    const metricsReady=metrics.every(node=>node&&node.textContent.trim()&&!['—','Loading…'].includes(node.textContent.trim()));
+    const servicesReady=[...services.querySelectorAll('tr')].some(row=>!row.querySelector('.empty'));
+    if(metricsReady&&servicesReady){
+      status.removeAttribute('data-i18n');
+      status.textContent=copy('dataLoaded');
+      status.dataset.state='loaded';
+    }
+  }
+
+  function syncServiceActions(rows){
+    rows=rows||[...(byId('svcBody')?.querySelectorAll('tr')??[])];
+    rows.forEach(row=>{
+      if(row.querySelector('.empty'))return;
+      const button=row.querySelector('td:last-child button');
+      if(!button)return;
+      const action=row.querySelector('.tag.ok')?'restart':'start';
+      button.dataset.hpServiceAction=action;
+      button.removeAttribute('data-i18n');
+      const label=copy(action);
+      if(button.textContent.trim()!==label)button.textContent=label;
+    });
+  }
+
+  function bindServiceConfirmation(){
+    const body=byId('svcBody');
+    if(!body||byId('hpServiceDialog'))return;
+    const dialog=document.createElement('dialog');
+    dialog.id='hpServiceDialog';
+    dialog.className='hp-service-dialog';
+    dialog.setAttribute('aria-labelledby','hpServiceDialogTitle');
+    const form=document.createElement('form');
+    form.method='dialog';
+    const title=document.createElement('h3');
+    title.id='hpServiceDialogTitle';
+    const message=document.createElement('p');
+    const actions=document.createElement('div');
+    actions.className='hp-service-dialog-actions';
+    const cancel=document.createElement('button');
+    cancel.className='btn';
+    cancel.value='cancel';
+    const confirm=document.createElement('button');
+    confirm.className='btn primary';
+    confirm.value='confirm';
+    actions.append(cancel,confirm);
+    form.append(title,message,actions);
+    dialog.append(form);
+    document.body.append(dialog);
+
+    const bypass=new WeakSet();
+    let pending=null;
+    body.addEventListener('click',event=>{
+      const button=event.target.closest('button[data-hp-service-action]');
+      if(!button||!body.contains(button))return;
+      if(bypass.has(button)){
+        bypass.delete(button);
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      pending=button;
+      const action=button.dataset.hpServiceAction;
+      const service=button.closest('tr')?.querySelector('td')?.textContent.trim()||'';
+      title.textContent=copy(action);
+      message.textContent=copy('confirmServiceAction',{action:copy(action).toLocaleLowerCase(currentLanguage()),service});
+      cancel.textContent=copy('cancel');
+      confirm.textContent=copy('confirm');
+      dialog.showModal();
+    },true);
+    dialog.addEventListener('close',()=>{
+      const button=pending;
+      pending=null;
+      if(dialog.returnValue==='confirm'&&button&&button.isConnected){
+        bypass.add(button);
+        button.click();
+      }else if(button&&button.isConnected){
+        button.focus();
+      }
+    });
+  }
+
   function updateServiceHealth(){
     const body=byId('svcBody');
     const count=byId('hpServiceCount');
     const percent=byId('hpHealthPercent');
     const ring=byId('hpHealthRing');
     const summary=byId('hpServiceSummary');
+    const dot=byId('hpServicesDot');
+    const alert=byId('hpHealthAlert');
     if(!body||!count||!percent||!ring||!summary)return;
     const rows=[...body.querySelectorAll('tr')].filter(row=>!row.querySelector('.empty'));
     const running=rows.filter(row=>row.querySelector('.tag.ok')).length;
@@ -68,9 +189,23 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     const healthy=total?Math.round((running/total)*100):0;
     count.textContent=total?`${running} / ${total}`:'—';
     percent.textContent=total?`${healthy}%`:'—';
+    const state=!total?'unknown':running===total?'ok':healthy>=50?'degraded':'critical';
+    const message=!total?copy('waitingForServices'):running===total?copy('runningCount',{running}):copy('runningOf',{running,total});
     ring.style.setProperty('--hp-health-angle',`${healthy*3.6}deg`);
-    summary.textContent=!total?copy('waitingForServices'):running===total?copy('runningCount',{running}):copy('runningOf',{running,total});
-    summary.dataset.state=total&&running===total?'ok':'warn';
+    ring.dataset.state=state;
+    ring.setAttribute('aria-valuenow',String(healthy));
+    ring.setAttribute('aria-valuetext',message);
+    ring.setAttribute('aria-label',message);
+    summary.textContent=message;
+    summary.dataset.state=state;
+    if(dot)dot.dataset.state=state;
+    if(alert){
+      alert.hidden=!total||running===total;
+      alert.dataset.state=state;
+      alert.textContent=alert.hidden?'':message;
+    }
+    syncServiceActions(rows);
+    syncDashboardFreshness();
   }
 
   function mirrorText(sourceId,targetId){
@@ -87,8 +222,8 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     const state=byId('hpMailState');
     if(!count||!state)return;
     const n=Number.parseInt(count.textContent,10);
-    state.textContent=!Number.isFinite(n)?copy('waitingForQueueStatus'):n>0?copy('queueRequiresAttention'):copy('deliveryQueueHealthy');
-    state.dataset.state=!Number.isFinite(n)?'pending':n>0?'warn':'ok';
+    state.textContent=!Number.isFinite(n)?copy('waitingForQueueStatus'):n>0?copy('messagesQueued',{count:n}):copy('deliveryQueueHealthy');
+    state.dataset.state=!Number.isFinite(n)?'pending':n>0?'queued':'ok';
   }
 
   function bindMailState(){
@@ -136,7 +271,10 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
   }
 
   function pageLinkAllowed(navLink){
-    return Boolean(navLink&&!navLink.hidden&&navLink.getAttribute('aria-hidden')!=='true');
+    if(!navLink||navLink.hidden||navLink.getAttribute('aria-hidden')==='true'||navLink.getAttribute('aria-disabled')==='true')return false;
+    if(navLink.matches('[disabled],.disabled')||navLink.closest('[hidden],[aria-hidden="true"],[inert]'))return false;
+    const style=getComputedStyle(navLink);
+    return style.display!=='none'&&style.visibility!=='hidden'&&style.pointerEvents!=='none';
   }
 
   function syncPageLinkVisibility(){
@@ -174,7 +312,7 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
         subtree:true,
         childList:true,
         attributes:true,
-        attributeFilter:['hidden','aria-hidden','class','style']
+        attributeFilter:['hidden','aria-hidden','aria-disabled','disabled','inert','class','style']
       });
     }
     syncPageLinkVisibility();
@@ -192,6 +330,8 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
       refresh.setAttribute('aria-label',copy('refreshDashboardData'));
       refresh.setAttribute('title',copy('refreshDashboardData'));
     }
+    const healthTitle=byId('hpHealthTitle');
+    if(healthTitle)healthTitle.textContent=copy('serviceHealth');
     const open=document.querySelector('.hp-health-row [data-hp-page="security"]');
     if(open)open.textContent=copy('open');
     const overview=document.querySelector('.hp-dashboard-rail');
@@ -199,6 +339,7 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     const live=byId('dashboardUptimeRail');
     if(live&&(!live.textContent||localizedLiveValues.has(live.textContent.trim())))live.textContent=copy('live');
     updateServiceHealth();
+    syncDashboardFreshness();
     renderMailState();
   }
 
@@ -239,6 +380,7 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     setMeter('cpu','cpuMeter');
     setMeter('ram','ramMeter');
     setMeter('disk','diskMeter');
+    setLoadMeter();
     mirrorText('uptime','dashboardUptime');
     mirrorText('uptime','dashboardUptimeRail');
     bindPageLinks();
@@ -250,6 +392,11 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
       new MutationObserver(updateServiceHealth).observe(services,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
       updateServiceHealth();
     }
+    ['cpu','ram','disk','loadv'].forEach(id=>{
+      const value=byId(id);
+      if(value)new MutationObserver(syncDashboardFreshness).observe(value,{childList:true,characterData:true,subtree:true});
+    });
+    bindServiceConfirmation();
     bindMailState();
   }
 
