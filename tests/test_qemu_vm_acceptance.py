@@ -84,9 +84,11 @@ class QemuVmAcceptanceTests(unittest.TestCase):
             "tools/harden_install_impl.py",
             "tools/patch_cli_runtime_env.py",
             "tools/patch_panel_ui.py",
+            "tools/patch_product_fixes.py",
             "app/static/panel-redesign.css",
             "app/static/panel-redesign.js",
             "tests/test_panel_redesign.py",
+            "tests/test_product_fixes.py",
             "tests/test_post_install_health.py",
         ):
             self.assertIn(f"      - {path}", self.workflow)

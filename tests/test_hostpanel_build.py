@@ -249,7 +249,8 @@ NOTES = {
             main = root / 'main.py'
             webserver.write_text(webserver_fixture, encoding='utf-8')
             main.write_text(main_fixture, encoding='utf-8')
-            with mock.patch.object(PATCH, 'trusted_file', return_value=None):
+            with mock.patch.object(PATCH, 'trusted_file', return_value=None), \
+                 mock.patch.object(PATCH.os, 'chown'):
                 PATCH.patch_webserver(webserver)
                 PATCH.patch_main(main)
                 first_web = webserver.read_text()

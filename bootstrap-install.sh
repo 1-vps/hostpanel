@@ -326,6 +326,7 @@ OVERLAY_FILES=(
   tools/harden_install_impl.py
   tools/harden_install_runtime.py
   tools/patch_cli_runtime_env.py
+  tools/patch_product_fixes.py
   tools/patch_panel_ui.py
   tools/hostpanel-update.py
   tools/install-update-agent.sh
@@ -348,6 +349,7 @@ install -m 0755 "$CHECKOUT/tools/harden_install.py" "$SOURCE_ROOT/tools/harden_i
 install -m 0644 "$CHECKOUT/tools/harden_install_impl.py" "$SOURCE_ROOT/tools/harden_install_impl.py"
 install -m 0755 "$CHECKOUT/tools/harden_install_runtime.py" "$SOURCE_ROOT/tools/harden_install_runtime.py"
 install -m 0755 "$CHECKOUT/tools/patch_cli_runtime_env.py" "$SOURCE_ROOT/tools/patch_cli_runtime_env.py"
+install -m 0755 "$CHECKOUT/tools/patch_product_fixes.py" "$SOURCE_ROOT/tools/patch_product_fixes.py"
 install -m 0755 "$CHECKOUT/tools/patch_panel_ui.py" "$SOURCE_ROOT/tools/patch_panel_ui.py"
 install -m 0755 "$CHECKOUT/tools/hostpanel-update.py" "$SOURCE_ROOT/tools/hostpanel-update.py"
 install -m 0755 "$CHECKOUT/tools/install-update-agent.sh" "$SOURCE_ROOT/tools/install-update-agent.sh"
@@ -363,6 +365,8 @@ install -m 0644 "$CHECKOUT/app/static/panel-redesign.js" "$SOURCE_ROOT/app/stati
 install -m 0644 "$CHECKOUT/app/static/hostpanel-brand.css" "$SOURCE_ROOT/app/static/hostpanel-brand.css"
 install -m 0644 "$CHECKOUT/app/static/hostpanel-mark.svg" "$SOURCE_ROOT/app/static/hostpanel-mark.svg"
 install -m 0644 "$CHECKOUT/app/static/hostpanel-logo.svg" "$SOURCE_ROOT/app/static/hostpanel-logo.svg"
+python3 "$SOURCE_ROOT/tools/patch_product_fixes.py" "$SOURCE_ROOT" \
+  || die "Could not apply the reviewed product security and performance fixes"
 python3 "$SOURCE_ROOT/tools/patch_panel_ui.py" "$SOURCE_ROOT/app/templates/panel.html" \
   || die "Could not apply the reviewed control-panel UI overlay"
 

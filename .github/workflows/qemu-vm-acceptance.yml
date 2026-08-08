@@ -35,6 +35,7 @@ on:
       - tools/harden_install_runtime.py
       - tools/patch_cli_runtime_env.py
       - tools/patch_panel_ui.py
+      - tools/patch_product_fixes.py
       - app/static/panel-redesign.css
       - app/static/panel-redesign.js
       - app/static/hostpanel-brand.css
@@ -70,6 +71,7 @@ on:
       - tests/test_hostpanel_brand.py
       - tests/test_panel_future_locales.py
       - tests/test_panel_patcher_section_bounds.py
+      - tests/test_product_fixes.py
       - tests/test_php_runtime_support.py
       - tests/php-runtime-compat.php
 

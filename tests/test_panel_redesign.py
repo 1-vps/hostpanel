@@ -147,12 +147,16 @@ class PanelRedesignTests(unittest.TestCase):
         dashboard = panel.split('class="page hp-dashboard"', 1)[1].split('<template data-page-template="files">', 1)[0]
         self.assertIn('aria-live="polite"', dashboard)
         self.assertIn('role="status"', dashboard)
-        self.assertIn('aria-labelledby="hpHealthTitle"', dashboard)
         self.assertIn('aria-labelledby="hpActionsTitle"', dashboard)
+        self.assertIn('data-admin-only="" aria-labelledby="hpServicesTitle"', dashboard)
+        self.assertNotIn('data-i18n="ui.waiting.for.first.update" id="dashboardUpdated"', dashboard)
+        self.assertNotIn('<strong>3.0</strong>', dashboard)
         self.assertIn('role="region" tabindex="0"', dashboard)
         self.assertNotRegex(dashboard, r"\sstyle=")
         self.assertNotRegex(dashboard, r"\son(?:click|change|input|submit|keydown)=")
         self.assertIn("function syncPageLinkVisibility()", self.js)
+        self.assertIn("function applyRoleVisibility()", self.js)
+        self.assertIn("document.body.dataset.role==='admin'", self.js)
         self.assertIn("control.hidden=!allowed", self.js)
         self.assertIn("if(!page||!pageLinkAllowed(navLink))", self.js)
         self.assertIn("attributeFilter:['hidden','aria-hidden','class','style']", self.js)
@@ -180,6 +184,10 @@ class PanelRedesignTests(unittest.TestCase):
         ):
             self.assertIn(query, self.css)
         self.assertIn("body.hp-redesign.dark", self.css)
+        self.assertIn('body:not([data-role="admin"]) [data-admin-only]', self.css)
+        self.assertIn("--hp-green:#15803d", self.css)
+        self.assertIn("color:#4b5565", self.css)
+        self.assertIn("body.hp-redesign.dark .btn.danger{color:#fb7185}", self.css)
         self.assertIn("left:calc(-1 * min(280px,88vw))", self.css)
         self.assertIn("min-width:44px;min-height:44px", self.css)
         self.assertNotIn("@import", self.css)
@@ -230,12 +238,17 @@ class PanelRedesignTests(unittest.TestCase):
     def test_bootstrap_blob_verifies_and_installs_every_ui_overlay(self):
         for path in (
             "tools/patch_panel_ui.py",
+            "tools/patch_product_fixes.py",
             "app/static/panel-redesign.css",
             "app/static/panel-redesign.js",
         ):
             self.assertIn(path, self.bootstrap)
         self.assertIn(
             'install -m 0755 "$CHECKOUT/tools/patch_panel_ui.py"',
+            self.bootstrap,
+        )
+        self.assertIn(
+            'install -m 0755 "$CHECKOUT/tools/patch_product_fixes.py"',
             self.bootstrap,
         )
         self.assertIn(
@@ -258,6 +271,7 @@ class PanelRedesignTests(unittest.TestCase):
     def test_qemu_acceptance_tracks_and_validates_the_ui_overlay(self):
         for path in (
             "tools/patch_panel_ui.py",
+            "tools/patch_product_fixes.py",
             "app/static/panel-redesign.css",
             "app/static/panel-redesign.js",
             "tests/test_panel_redesign.py",

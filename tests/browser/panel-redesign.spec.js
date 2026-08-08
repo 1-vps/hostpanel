@@ -1,10 +1,10 @@
 const { test, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
 
-async function signIn(page) {
+async function signIn(page, username = 'admin', password = 'browser-password-1234') {
   await page.goto('/login');
-  await page.locator('#login-username').fill('admin');
-  await page.locator('#login-password').fill('browser-password-1234');
+  await page.locator('#login-username').fill(username);
+  await page.locator('#login-password').fill(password);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.locator('[data-view="dashboard"]')).toBeVisible();
   await expect(page.locator('body')).toHaveClass(/hp-redesign/);
@@ -53,11 +53,15 @@ test('desktop dashboard has a stable information hierarchy', async ({ page }, te
   await expect(page.locator('.hp-metric-card')).toHaveCount(4);
   await expect(page.locator('.hp-dashboard-layout')).toBeVisible();
   await expect(page.locator('.hp-dashboard-rail')).toBeVisible();
-  await expect(page.locator('.hp-health-ring')).toBeVisible();
   await expect(page.locator('.hp-quick-action:not([hidden])')).toHaveCount(6);
   await expect(page.locator('.hp-services-card')).toBeVisible();
   await expect(page.locator('#dashboardState')).toBeVisible();
   await expect(page.locator('#dashboardRetry')).toBeVisible();
+  await expect(page.locator('#dashboardUpdated')).toContainText(/Last updated/i);
+  await expect(page.locator('#uptime')).not.toHaveText(/uptime\s+[—-]/i);
+
+  const lightResults = await new AxeBuilder({ page }).analyze();
+  expect(lightResults.violations.filter(item => ['critical', 'serious'].includes(item.impact))).toEqual([]);
 
   const layout = await page.locator('.hp-dashboard-layout').evaluate(element =>
     getComputedStyle(element).gridTemplateColumns.split(' ').length
@@ -137,9 +141,9 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
   await signIn(page);
 
   const cases = [
-    ['ja', 'ダッシュボードのデータを更新', 'ダッシュボードの概要', '開く'],
-    ['pt', 'Atualizar os dados do painel', 'Visão geral do painel', 'Abrir'],
-    ['zh', '刷新仪表板数据', '仪表板概览', '打开'],
+    ['ja', 'ダッシュボードのデータを更新', 'ダッシュボードの概要'],
+    ['pt', 'Atualizar os dados do painel', 'Visão geral do painel'],
+    ['zh', '刷新仪表板数据', '仪表板概览'],
   ];
   await page.locator('#languageSelect').evaluate((select, locales) => {
     for (const locale of locales) {
@@ -156,12 +160,11 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
     window.hpNormalizeLanguage = value => String(value || '').toLowerCase().split('-')[0];
   });
   try {
-    for (const [locale, refresh, overview, open] of cases) {
+    for (const [locale, refresh, overview] of cases) {
       await page.locator('#languageSelect').selectOption(locale);
       await expect(page.locator('#languageSelect')).toHaveValue(locale);
       await expect(page.locator('#dashboardRetry')).toHaveAttribute('aria-label', refresh);
       await expect(page.locator('.hp-dashboard-rail')).toHaveAttribute('aria-label', overview);
-      await expect(page.locator('.hp-health-row [data-hp-page="security"]')).toHaveText(open);
     }
   } finally {
     await page.evaluate(() => {
@@ -169,6 +172,27 @@ test('release-candidate locales update dynamic dashboard copy', async ({ page })
       delete window.__hostpanelOriginalNormalizeLanguage;
     });
   }
+});
+
+test('customer dashboard avoids administrator-only operational APIs', async ({ page }) => {
+  const forbiddenCalls = [];
+  page.on('request', request => {
+    if (/\/api\/(services|mail\/queue)(?:$|\?)/.test(new URL(request.url()).pathname)) {
+      forbiddenCalls.push(request.url());
+    }
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page, 'browseruser', 'browser-user-password-1234');
+  await page.waitForTimeout(11000);
+  await expect(page.locator('.hp-services-card')).toBeHidden();
+  const adminOnly = page.locator('[data-admin-only]');
+  expect(await adminOnly.count()).toBe(2);
+  for (let index = 0; index < await adminOnly.count(); index += 1) {
+    await expect(adminOnly.nth(index)).toBeHidden();
+  }
+  expect(forbiddenCalls).toEqual([]);
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations.filter(item => ['critical', 'serious'].includes(item.impact))).toEqual([]);
 });
 
 test('phone layout is touch-safe, drawer-safe and free of viewport overflow', async ({ page }, testInfo) => {
