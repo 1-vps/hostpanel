@@ -37,6 +37,7 @@ def generate_openapi(
                     },
                 }
             )
+        parameters.extend(dict(parameter) for parameter in route.query_parameters)
         if route.idempotency_required:
             parameters.append(
                 {"$ref": "#/components/parameters/IdempotencyKeyHeader"}

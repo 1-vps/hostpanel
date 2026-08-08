@@ -99,7 +99,7 @@ SCHEMA_STATEMENTS = (
     ) WITHOUT ROWID
     """,
     """
-    CREATE TABLE IF NOT EXISTS hp_api_audit_events (
+    CREATE TABLE IF NOT EXISTS hp_api_token_audit_events (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL UNIQUE,
         occurred_at INTEGER NOT NULL,
@@ -112,15 +112,15 @@ SCHEMA_STATEMENTS = (
     )
     """,
     """
-    CREATE TRIGGER IF NOT EXISTS hp_api_audit_events_no_update
-    BEFORE UPDATE ON hp_api_audit_events
+    CREATE TRIGGER IF NOT EXISTS hp_api_token_audit_events_no_update
+    BEFORE UPDATE ON hp_api_token_audit_events
     BEGIN
       SELECT RAISE(ABORT, 'HostPanel API audit events are append-only');
     END
     """,
     """
-    CREATE TRIGGER IF NOT EXISTS hp_api_audit_events_no_delete
-    BEFORE DELETE ON hp_api_audit_events
+    CREATE TRIGGER IF NOT EXISTS hp_api_token_audit_events_no_delete
+    BEFORE DELETE ON hp_api_token_audit_events
     BEGIN
       SELECT RAISE(ABORT, 'HostPanel API audit events are append-only');
     END

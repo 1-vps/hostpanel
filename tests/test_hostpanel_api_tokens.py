@@ -250,17 +250,17 @@ class ApiTokenStoreTests(unittest.TestCase):
         self.assertNotIn(issued.token.rsplit(".", 1)[1], serialized)
         with self.assertRaises(sqlite3.IntegrityError):
             self.connection.execute(
-                "UPDATE hp_api_audit_events SET action = 'tampered' WHERE sequence = 1"
+                "UPDATE hp_api_token_audit_events SET action = 'tampered' WHERE sequence = 1"
             )
         with self.assertRaises(sqlite3.IntegrityError):
-            self.connection.execute("DELETE FROM hp_api_audit_events WHERE sequence = 1")
+            self.connection.execute("DELETE FROM hp_api_token_audit_events WHERE sequence = 1")
 
     def test_token_and_audit_publication_are_one_transaction(self) -> None:
         account = self.account()
         self.connection.execute(
             """
             CREATE TRIGGER reject_token_audit
-            BEFORE INSERT ON hp_api_audit_events
+            BEFORE INSERT ON hp_api_token_audit_events
             WHEN NEW.action = 'token.issued'
             BEGIN
               SELECT RAISE(ABORT, 'injected audit failure');
@@ -272,7 +272,7 @@ class ApiTokenStoreTests(unittest.TestCase):
         self.assertEqual(self.connection.execute("SELECT count(*) FROM hp_api_tokens").fetchone()[0], 0)
         self.assertEqual(
             self.connection.execute(
-                "SELECT count(*) FROM hp_api_audit_events WHERE action = 'token.issued'"
+                "SELECT count(*) FROM hp_api_token_audit_events WHERE action = 'token.issued'"
             ).fetchone()[0],
             0,
         )
@@ -289,7 +289,7 @@ class ApiTokenStoreTests(unittest.TestCase):
         )
         self.connection.rollback()
         self.assertEqual(self.connection.execute("SELECT count(*) FROM hp_api_service_accounts").fetchone()[0], 0)
-        self.assertEqual(self.connection.execute("SELECT count(*) FROM hp_api_audit_events").fetchone()[0], 0)
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM hp_api_token_audit_events").fetchone()[0], 0)
 
     def test_all_tenant_and_cidr_inheritance_are_explicit(self) -> None:
         account = self.account(
@@ -345,11 +345,11 @@ class ApiTokenStoreTests(unittest.TestCase):
 
     def test_schema_shape_and_trusted_schema_are_fail_closed(self) -> None:
         self.assertEqual(self.connection.execute("PRAGMA trusted_schema").fetchone()[0], 0)
-        self.connection.execute("DROP TRIGGER hp_api_audit_events_no_delete")
+        self.connection.execute("DROP TRIGGER hp_api_token_audit_events_no_delete")
         self.connection.execute(
             """
-            CREATE TRIGGER hp_api_audit_events_no_delete
-            BEFORE DELETE ON hp_api_audit_events
+            CREATE TRIGGER hp_api_token_audit_events_no_delete
+            BEFORE DELETE ON hp_api_token_audit_events
             BEGIN
               SELECT 1;
             END

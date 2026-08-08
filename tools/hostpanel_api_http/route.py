@@ -39,6 +39,7 @@ class Route:
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES
     request_schema: Mapping[str, Any] | None = None
     response_schema: Mapping[str, Any] | None = None
+    query_parameters: tuple[Mapping[str, Any], ...] = ()
     success_status: int = 200
     source_rate_limit: RateLimitPolicy | None = None
     principal_rate_limit: RateLimitPolicy | None = None
@@ -93,6 +94,26 @@ class Route:
             raise ConfigurationError("route success status is invalid")
         if self.request_schema is not None and not self.expects_json_body:
             raise ConfigurationError("request schema requires a JSON request body")
+        if not isinstance(self.query_parameters, tuple):
+            raise TypeError("route query parameters must be a tuple")
+        query_names: set[str] = set()
+        normalized_query_parameters: list[Mapping[str, Any]] = []
+        for parameter in self.query_parameters:
+            if not isinstance(parameter, Mapping):
+                raise TypeError("route query parameter must be a mapping")
+            item = dict(parameter)
+            name = item.get("name")
+            schema = item.get("schema")
+            if (
+                item.get("in") != "query"
+                or not isinstance(name, str)
+                or not name
+                or name in query_names
+                or not isinstance(schema, Mapping)
+            ):
+                raise ConfigurationError("route query parameter is invalid")
+            query_names.add(name)
+            normalized_query_parameters.append(item)
         for policy in (self.source_rate_limit, self.principal_rate_limit):
             if policy is not None and not isinstance(policy, RateLimitPolicy):
                 raise TypeError("route rate limit must be RateLimitPolicy")
@@ -101,6 +122,11 @@ class Route:
         object.__setattr__(self, "summary", summary)
         object.__setattr__(self, "tags", tags)
         object.__setattr__(self, "required_scope", required)
+        object.__setattr__(
+            self,
+            "query_parameters",
+            tuple(normalized_query_parameters),
+        )
 
     @property
     def path_parameter_names(self) -> tuple[str, ...]:

@@ -1,0 +1,107 @@
+name: API integration foundation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/api-integration-foundation.yml'
+      - 'API-INTEGRATION-FOUNDATION.md'
+      - 'tools/hostpanel_api_http/**'
+      - 'tools/hostpanel_api_tokens/store.py'
+      - 'tools/hostpanel_api_control/store.py'
+      - 'tools/hostpanel_api_integration/**'
+      - 'tests/integration_test_*.py'
+      - 'tests/api_integration_exact_stack_smoke.py'
+      - 'tests/test_api_integration_*.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-integration-foundation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact pull-request head
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify exact head
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='${{ github.event.pull_request.head.sha || github.sha }}'
+          test "$(git rev-parse HEAD)" = "$expected"
+          test -z "$(git status --porcelain)"
+
+      - name: Compile reviewed API stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/hostpanel_api_http/*.py \
+            tools/hostpanel_api_tokens/*.py \
+            tools/hostpanel_api_control/*.py \
+            tools/hostpanel_api_rbac/*.py \
+            tools/hostpanel_api_worker/*.py \
+            tools/hostpanel_api_webhooks/*.py \
+            tools/hostpanel_api_audit/*.py \
+            tools/hostpanel_api_integration/*.py \
+            tests/integration_test_*.py \
+            tests/api_integration_exact_stack_smoke.py \
+            tests/test_api_integration_*.py
+
+      - name: Run stacked foundation regressions
+        shell: bash
+        env:
+          PYTHONWARNINGS: error::ResourceWarning
+          PYTHONPATH: tools:tests:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -v -s tests -p 'test_hostpanel_api_*.py'
+          python3 -m unittest discover -v -s tests -p 'test_api_*_workflow.py'
+
+      - name: Run integration regressions
+        shell: bash
+        env:
+          PYTHONWARNINGS: error::ResourceWarning
+          PYTHONPATH: tools:tests:.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -v -s tests -p 'test_api_integration_*.py'
+
+      - name: Run exact-stack SQLite smoke
+        shell: bash
+        env:
+          PYTHONPATH: tools
+        run: |
+          set -euo pipefail
+          python3 tests/api_integration_exact_stack_smoke.py
+
+      - name: Scan forbidden runtime surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+
+          root = Path('tools/hostpanel_api_integration')
+          forbidden_imports = {'importlib', 'socket', 'subprocess'}
+          forbidden_calls = {'__import__', 'compile', 'eval', 'exec'}
+          for path in root.glob('*.py'):
+              tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Import):
+                      assert not any(alias.name.split('.')[0] in forbidden_imports for alias in node.names), path
+                  if isinstance(node, ast.ImportFrom):
+                      assert (node.module or '').split('.')[0] not in forbidden_imports, path
+                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                      assert node.func.id not in forbidden_calls, path
+          PY
