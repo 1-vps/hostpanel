@@ -1,5 +1,8 @@
 /.buildkite/ @1-vps
 /BUILDKITE.md @1-vps
+/.circleci/ @1-vps
+/CIRCLECI.md @1-vps
+/tests/test_circleci_pipeline.py @1-vps
 /tests/test_buildkite_pipeline.py @1-vps
 /tests/test_buildkite_prebootstrap_policy.py @1-vps
 /tests/test_buildkite_ephemeral_service.py @1-vps

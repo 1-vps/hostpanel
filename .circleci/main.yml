@@ -1,0 +1,284 @@
+version: 2.1
+
+commands:
+  trusted-main-checkout:
+    steps:
+      - run:
+          name: Verify immutable main event and config source
+          command: |
+            set -euo pipefail
+            python3 - \<<'PY'
+            import os
+            import re
+
+            def require(name: str, expected: str | None = None) -> str:
+                value = os.environ.get(name, "")
+                if not value:
+                    raise SystemExit(f"CircleCI gate failed: {name} is empty")
+                if expected is not None and value != expected:
+                    raise SystemExit(
+                        f"CircleCI gate failed: {name} expected {expected!r}, got {value!r}"
+                    )
+                return value
+
+            sha = re.compile(r"[0-9a-f]{40}")
+            require("HP_CIRCLECI_INTEGRATION", "github_app")
+            require("HP_CIRCLECI_CONFIG_REPOSITORY", "1-vps/hostpanel")
+            require("HP_CIRCLECI_CONFIG_FILE", ".circleci/main.yml")
+            require("HP_CIRCLECI_CONFIG_REF", "refs/heads/main")
+            require("HP_CIRCLECI_EVENT", "push")
+            require("HP_CIRCLECI_ACTION", "push")
+            require("HP_CIRCLECI_BRANCH", "main")
+            require("HP_CIRCLECI_DEFAULT_BRANCH", "true")
+            require("HP_CIRCLECI_PUSH_REF", "refs/heads/main")
+            require("HP_CIRCLECI_REPOSITORY_OWNER", "1-vps")
+            require("HP_CIRCLECI_REPOSITORY_NAME", "hostpanel")
+            config_sha = require("HP_CIRCLECI_CONFIG_SHA")
+            revision = require("HP_CIRCLECI_REVISION")
+            pushed_sha = require("HP_CIRCLECI_PUSH_SHA")
+            for name, value in (
+                ("config SHA", config_sha),
+                ("checkout revision", revision),
+                ("push SHA", pushed_sha),
+            ):
+                if not sha.fullmatch(value):
+                    raise SystemExit(f"CircleCI gate failed: {name} is not a full SHA")
+            if len({config_sha, revision, pushed_sha}) != 1:
+                raise SystemExit("CircleCI gate failed: config, checkout and push SHAs differ")
+            require("CIRCLE_SHA1", revision)
+            PY
+      - checkout
+      - run:
+          name: Destroy checkout credential and verify exact source
+          command: |
+            set -euo pipefail
+            if command -v ssh-add >/dev/null 2>&1; then
+              ssh-add -D >/dev/null 2>&1 || true
+            fi
+            if [[ -n "${SSH_AGENT_PID:-}" ]] && kill -0 "$SSH_AGENT_PID" 2>/dev/null; then
+              kill "$SSH_AGENT_PID" 2>/dev/null || true
+            fi
+            if [[ -d "$HOME/.ssh" ]]; then
+              find "$HOME/.ssh" -xdev -type f \( \
+                -name 'id_rsa*' -o -name 'id_ed25519*' -o -name 'id_ecdsa*' \
+              \) -delete
+              if grep -RIl -- 'PRIVATE KEY' "$HOME/.ssh" >/dev/null 2>&1; then
+                printf 'CircleCI gate failed: checkout private key remains on worker\n' >&2
+                exit 1
+              fi
+            fi
+            while IFS= read -r key; do
+              git config --local --unset-all "$key" || true
+            done < <(
+              git config --local --name-only --get-regexp \
+                '^(credential\.helper|http\..*\.extraheader)$' || true
+            )
+            rm -f -- "$HOME/.git-credentials" "$HOME/.config/git/credentials"
+            export GIT_CONFIG_NOSYSTEM=1
+            export GIT_CONFIG_GLOBAL=/dev/null
+            export GIT_TERMINAL_PROMPT=0
+            unset GIT_ASKPASS SSH_ASKPASS SSH_AUTH_SOCK SSH_AGENT_PID
+            cat >"$BASH_ENV" \<<'EOF'
+            export GIT_CONFIG_NOSYSTEM=1
+            export GIT_CONFIG_GLOBAL=/dev/null
+            export GIT_TERMINAL_PROMPT=0
+            unset GIT_ASKPASS SSH_ASKPASS SSH_AUTH_SOCK SSH_AGENT_PID
+            EOF
+            chmod 0600 "$BASH_ENV"
+            if git config --local --name-only --get-regexp \
+              '^(credential\.helper|http\..*\.extraheader)$' >/dev/null; then
+              printf 'CircleCI gate failed: HTTPS checkout credential remains in local git config\n' >&2
+              exit 1
+            fi
+            actual="$(git rev-parse HEAD)"
+            [[ "$actual" == "$HP_CIRCLECI_REVISION" ]]
+            [[ "$actual" == "$CIRCLE_SHA1" ]]
+            remote="$(git config --get remote.origin.url)"
+            case "$remote" in
+              git@github.com:1-vps/hostpanel.git|https://github.com/1-vps/hostpanel.git) ;;
+              *) printf 'CircleCI gate failed: unexpected origin %s\n' "$remote" >&2; exit 1 ;;
+            esac
+            [[ -z "$(git status --porcelain --untracked-files=all)" ]]
+
+jobs:
+  pipeline-contract:
+    machine: true
+    resource_class: 1-vps/hostpanel-ci
+    environment: &main-environment
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONDONTWRITEBYTECODE: "1"
+      HP_CIRCLECI_INTEGRATION: << pipeline.integration_source >>
+      HP_CIRCLECI_CONFIG_REPOSITORY: << pipeline.config.repository.name >>
+      HP_CIRCLECI_CONFIG_FILE: << pipeline.config.file_path >>
+      HP_CIRCLECI_CONFIG_REF: << pipeline.config.ref >>
+      HP_CIRCLECI_CONFIG_SHA: << pipeline.config.sha >>
+      HP_CIRCLECI_REVISION: << pipeline.git.revision >>
+      HP_CIRCLECI_BRANCH: << pipeline.git.branch >>
+      HP_CIRCLECI_DEFAULT_BRANCH: << pipeline.git.branch.is_default >>
+      HP_CIRCLECI_EVENT: << pipeline.event.name >>
+      HP_CIRCLECI_ACTION: << pipeline.event.action >>
+      HP_CIRCLECI_PUSH_REF: << pipeline.event.github.ref >>
+      HP_CIRCLECI_PUSH_SHA: << pipeline.event.github.after >>
+      HP_CIRCLECI_REPOSITORY_OWNER: << pipeline.event.github.repository.owner.login >>
+      HP_CIRCLECI_REPOSITORY_NAME: << pipeline.event.github.repository.name >>
+    steps:
+      - trusted-main-checkout
+      - run:
+          name: Validate CircleCI pipeline contract
+          command: timeout --signal=TERM --kill-after=30s 10m .circleci/scripts/run-pipeline-contract.sh
+
+  repository-regressions:
+    machine: true
+    resource_class: 1-vps/hostpanel-ci
+    environment:
+      <<: *main-environment
+      HP_CIRCLECI_CHECK: repository
+    steps:
+      - trusted-main-checkout
+      - run: timeout --signal=TERM --kill-after=30s 75m .circleci/scripts/run-check.sh
+
+  installer-static:
+    machine: true
+    resource_class: 1-vps/hostpanel-ci
+    environment:
+      <<: *main-environment
+      HP_CIRCLECI_CHECK: shell
+    steps:
+      - trusted-main-checkout
+      - run: timeout --signal=TERM --kill-after=30s 30m .circleci/scripts/run-check.sh
+
+  release-metadata:
+    machine: true
+    resource_class: 1-vps/hostpanel-ci
+    environment:
+      <<: *main-environment
+      HP_CIRCLECI_CHECK: metadata
+    steps:
+      - trusted-main-checkout
+      - run: timeout --signal=TERM --kill-after=30s 15m .circleci/scripts/run-check.sh
+
+  production-validator:
+    machine: true
+    resource_class: 1-vps/hostpanel-ci
+    environment:
+      <<: *main-environment
+      HP_CIRCLECI_CHECK: production-validator
+    steps:
+      - trusted-main-checkout
+      - run: timeout --signal=TERM --kill-after=30s 20m .circleci/scripts/run-check.sh
+
+  qemu-contracts:
+    machine: true
+    resource_class: 1-vps/hostpanel-ci
+    environment:
+      <<: *main-environment
+      HP_CIRCLECI_CHECK: qemu-contracts
+    steps:
+      - trusted-main-checkout
+      - run: timeout --signal=TERM --kill-after=30s 35m .circleci/scripts/run-check.sh
+
+  installer-os:
+    parameters:
+      target:
+        type: string
+    machine: true
+    resource_class: 1-vps/hostpanel-ci
+    environment:
+      <<: *main-environment
+      HP_CIRCLECI_CHECK: installer-os
+      HP_CIRCLECI_OS: << parameters.target >>
+    steps:
+      - trusted-main-checkout
+      - run: timeout --signal=TERM --kill-after=30s 90m .circleci/scripts/run-check.sh
+
+  qemu-vm-acceptance:
+    machine: true
+    resource_class: 1-vps/hostpanel-qemu
+    environment:
+      <<: *main-environment
+    steps:
+      - trusted-main-checkout
+      - run:
+          name: Run QEMU acceptance and record its result
+          command: |
+            set +e
+            timeout --signal=TERM --kill-after=30s 180m .circleci/scripts/run-qemu.sh
+            status=$?
+            set -e
+            printf '%s\n' "$status" >/tmp/hostpanel-circleci-qemu-status
+      - store_artifacts:
+          path: artifacts/qemu-vm-acceptance.tar
+          destination: qemu-vm-acceptance.tar
+      - run:
+          name: Enforce QEMU acceptance result
+          command: |
+            set -euo pipefail
+            status="$(cat /tmp/hostpanel-circleci-qemu-status)"
+            [[ "$status" =~ ^[0-9]+$ && "$status" -ge 0 && "$status" -le 255 ]]
+            exit "$status"
+
+workflows:
+  exact-main-head:
+    jobs:
+      - pipeline-contract
+      - repository-regressions:
+          requires: [pipeline-contract]
+      - installer-static:
+          requires: [pipeline-contract]
+      - release-metadata:
+          requires: [pipeline-contract]
+      - production-validator:
+          requires: [pipeline-contract]
+      - qemu-contracts:
+          requires: [pipeline-contract]
+      - installer-os:
+          name: os-ubuntu-2204
+          target: ubuntu-22.04
+          requires: [repository-regressions, installer-static]
+      - installer-os:
+          name: os-ubuntu-2404
+          target: ubuntu-24.04
+          requires: [repository-regressions, installer-static]
+      - installer-os:
+          name: os-ubuntu-2604
+          target: ubuntu-26.04
+          requires: [repository-regressions, installer-static]
+      - installer-os:
+          name: os-debian-12
+          target: debian-12
+          requires: [repository-regressions, installer-static]
+      - installer-os:
+          name: os-debian-13
+          target: debian-13
+          requires: [repository-regressions, installer-static]
+      - installer-os:
+          name: os-rocky-9
+          target: rocky-9
+          requires: [repository-regressions, installer-static]
+      - installer-os:
+          name: os-rocky-10
+          target: rocky-10
+          requires: [repository-regressions, installer-static]
+      - installer-os:
+          name: os-almalinux-9
+          target: almalinux-9
+          requires: [repository-regressions, installer-static]
+      - installer-os:
+          name: os-almalinux-10
+          target: almalinux-10
+          requires: [repository-regressions, installer-static]
+      - qemu-vm-acceptance:
+          requires:
+            - release-metadata
+            - production-validator
+            - qemu-contracts
+            - os-ubuntu-2204
+            - os-ubuntu-2404
+            - os-ubuntu-2604
+            - os-debian-12
+            - os-debian-13
+            - os-rocky-9
+            - os-rocky-10
+            - os-almalinux-9
+            - os-almalinux-10
