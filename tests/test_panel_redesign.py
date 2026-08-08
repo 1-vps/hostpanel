@@ -62,6 +62,17 @@ def read_redesign_catalogs(source: str) -> dict[str, dict[str, str]]:
     return catalogs
 
 
+def read_ux_catalogs(source: str) -> dict[str, dict[str, str]]:
+    match = re.search(
+        r"const UX_TRANSLATIONS=Object\.freeze\((\{.*?\})\);",
+        source,
+        re.DOTALL,
+    )
+    if match is None:
+        raise RuntimeError("UX translation catalog was not found")
+    return json.loads(match.group(1))
+
+
 class PanelRedesignTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -98,6 +109,9 @@ class PanelRedesignTests(unittest.TestCase):
             "dashboardUpdated",
             "dashboardError",
             "dashboardRetry",
+            "loadMeter",
+            "hpHealthAlert",
+            "hpServicesDot",
         ):
             self.assertEqual(panel.count(f'id="{identifier}"'), 1, identifier)
         self.assertIn('class="page hp-dashboard" data-view="dashboard"', panel)
@@ -142,6 +156,19 @@ class PanelRedesignTests(unittest.TestCase):
         self.assertTrue(catalogs["pl"]["runningCount"].startswith("Aktywne:"))
         self.assertIn("E-postkön", catalogs["sv"]["deliveryQueueHealthy"])
 
+        ux_catalogs = read_ux_catalogs(self.js)
+        self.assertEqual(set(ux_catalogs), set(catalogs) | {"ja", "pt", "zh"})
+        ux_keys = set(ux_catalogs["en"])
+        for language, messages in ux_catalogs.items():
+            self.assertEqual(set(messages), ux_keys, language)
+            for key, message in messages.items():
+                self.assertTrue(message.strip(), f"{language}:{key}")
+                self.assertEqual(
+                    set(placeholder.findall(message)),
+                    set(placeholder.findall(ux_catalogs["en"][key])),
+                    f"{language}:{key}",
+                )
+
     def test_dashboard_is_accessible_and_role_aware(self):
         panel = self.patched_template()
         dashboard = panel.split('class="page hp-dashboard"', 1)[1].split('<template data-page-template="files">', 1)[0]
@@ -150,12 +177,17 @@ class PanelRedesignTests(unittest.TestCase):
         self.assertIn('aria-labelledby="hpHealthTitle"', dashboard)
         self.assertIn('aria-labelledby="hpActionsTitle"', dashboard)
         self.assertIn('role="region" tabindex="0"', dashboard)
+        self.assertIn('role="progressbar"', dashboard)
+        self.assertIn('id="hpHealthAlert" role="alert"', dashboard)
         self.assertNotRegex(dashboard, r"\sstyle=")
         self.assertNotRegex(dashboard, r"\son(?:click|change|input|submit|keydown)=")
         self.assertIn("function syncPageLinkVisibility()", self.js)
         self.assertIn("control.hidden=!allowed", self.js)
         self.assertIn("if(!page||!pageLinkAllowed(navLink))", self.js)
-        self.assertIn("attributeFilter:['hidden','aria-hidden','class','style']", self.js)
+        self.assertIn("attributeFilter:['hidden','aria-hidden','aria-disabled','disabled','inert','class','style']", self.js)
+        self.assertIn("navLink.getAttribute('aria-disabled')==='true'", self.js)
+        self.assertIn("bindServiceConfirmation()", self.js)
+        self.assertIn("syncDashboardFreshness()", self.js)
 
     def test_visual_system_covers_responsive_dark_and_accessibility_modes(self):
         for token in (
@@ -182,6 +214,10 @@ class PanelRedesignTests(unittest.TestCase):
         self.assertIn("body.hp-redesign.dark", self.css)
         self.assertIn("left:calc(-1 * min(280px,88vw))", self.css)
         self.assertIn("min-width:44px;min-height:44px", self.css)
+        self.assertIn("--hp-green:#15803d", self.css)
+        self.assertIn("--hp-amber:#92400e", self.css)
+        self.assertIn("transition-duration:.01ms!important", self.css)
+        self.assertNotIn("hp-meter-static", self.patched_template())
         self.assertNotIn("@import", self.css)
         self.assertNotRegex(self.css, r"url\(\s*['\"]?https?://")
 
@@ -269,6 +305,9 @@ class PanelRedesignTests(unittest.TestCase):
         self.assertIn("width: 1440, height: 900", browser)
         self.assertIn("phone-dashboard.png", browser)
         self.assertIn("desktop-dashboard.png", browser)
+        self.assertIn("width: 320, height: 720", browser)
+        self.assertIn("const lightResults = await new AxeBuilder", browser)
+        self.assertIn("#hpServiceDialog", browser)
 
 
 if __name__ == "__main__":
