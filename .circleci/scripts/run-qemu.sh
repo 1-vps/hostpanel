@@ -12,6 +12,12 @@ die() {
   exit 1
 }
 
+qemu_token=""
+cleanup_secret() {
+  unset qemu_token HP_QEMU_REPO_TOKEN
+}
+trap cleanup_secret EXIT
+
 .circleci/scripts/verify-build.sh
 [[ "${HP_CIRCLECI_EVENT:-}" == "push" ]] || die "QEMU requires a push event"
 [[ "${HP_CIRCLECI_BRANCH:-}" == "main" ]] || die "QEMU is restricted to main"
@@ -56,8 +62,11 @@ python3 tools/sanitize-qemu-evidence.py "$artifact_dir"
 python3 tools/seal-qemu-evidence.py "$artifact_dir" "$sealed_archive"
 [[ -f "$sealed_archive" && ! -L "$sealed_archive" ]] || die "sealed evidence is invalid"
 [[ "$(stat -c '%h' -- "$sealed_archive")" == "1" ]] || die "sealed evidence has multiple links"
+archive_size="$(stat -c '%s' -- "$sealed_archive")"
+[[ "$archive_size" =~ ^[0-9]+$ ]] || die "sealed evidence size is invalid"
+((archive_size > 0 && archive_size <= 1073741824)) || die "sealed evidence size is outside bounds"
 sha256sum "$sealed_archive"
 
-# CircleCI artifacts are deliberately forbidden. Evidence remains in the job log
-# and on the disposable worker until the VM is destroyed by the operator.
+# The trusted main pipeline uploads only this sanitized, sealed archive. No raw
+# evidence directory, token, cache, workspace or PR artifact is retained.
 exit "$run_status"

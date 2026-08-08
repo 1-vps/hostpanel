@@ -7,7 +7,7 @@ commands:
           name: Verify immutable PR event and config source
           command: |
             set -euo pipefail
-            python3 - <<'PY'
+            python3 - \<<'PY'
             import os
             import re
 
@@ -74,8 +74,29 @@ commands:
                 exit 1
               fi
             fi
-            printf '%s\n' 'unset SSH_AUTH_SOCK SSH_AGENT_PID' >"$BASH_ENV"
+            while IFS= read -r key; do
+              git config --local --unset-all "$key" || true
+            done < <(
+              git config --local --name-only --get-regexp \
+                '^(credential\.helper|http\..*\.extraheader)$' || true
+            )
+            rm -f -- "$HOME/.git-credentials" "$HOME/.config/git/credentials"
+            export GIT_CONFIG_NOSYSTEM=1
+            export GIT_CONFIG_GLOBAL=/dev/null
+            export GIT_TERMINAL_PROMPT=0
+            unset GIT_ASKPASS SSH_ASKPASS SSH_AUTH_SOCK SSH_AGENT_PID
+            cat >"$BASH_ENV" \<<'EOF'
+            export GIT_CONFIG_NOSYSTEM=1
+            export GIT_CONFIG_GLOBAL=/dev/null
+            export GIT_TERMINAL_PROMPT=0
+            unset GIT_ASKPASS SSH_ASKPASS SSH_AUTH_SOCK SSH_AGENT_PID
+            EOF
             chmod 0600 "$BASH_ENV"
+            if git config --local --name-only --get-regexp \
+              '^(credential\.helper|http\..*\.extraheader)$' >/dev/null; then
+              printf 'CircleCI gate failed: HTTPS checkout credential remains in local git config\n' >&2
+              exit 1
+            fi
             actual="$(git rev-parse HEAD)"
             [[ "$actual" == "$HP_CIRCLECI_PR_HEAD_SHA" ]]
             [[ "$actual" == "$CIRCLE_SHA1" ]]

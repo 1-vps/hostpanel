@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import pathlib
+import os
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -18,9 +22,8 @@ class CircleCiPipelineTests(unittest.TestCase):
         self.assertEqual(payload.get("version"), 2.1)
         return payload
 
-    def test_configs_are_secret_and_artifact_free(self) -> None:
+    def test_configs_exclude_unapproved_data_paths(self) -> None:
         forbidden = (
-            "store_artifacts",
             "store_test_results",
             "persist_to_workspace",
             "attach_workspace",
@@ -36,6 +39,39 @@ class CircleCiPipelineTests(unittest.TestCase):
                 self.assertNotIn(value, text, f"{path.name} contains {value}")
             self.assertIn("PRIVATE KEY", text)
             self.assertIn("refs/heads/main", text)
+            self.assertNotIn("python3 - <<", text)
+            self.assertNotIn('cat >"$BASH_ENV" <<', text)
+
+        pr_text = PR_CONFIG.read_text(encoding="utf-8")
+        main_text = MAIN_CONFIG.read_text(encoding="utf-8")
+        self.assertNotIn("store_artifacts", pr_text)
+        self.assertEqual(main_text.count("store_artifacts"), 1)
+        self.assertIn("path: artifacts/qemu-vm-acceptance.tar", main_text)
+        self.assertIn("/tmp/hostpanel-circleci-qemu-status", main_text)
+        self.assertIn("Enforce QEMU acceptance result", main_text)
+
+    def test_configs_compile_with_circleci_cli_when_available(self) -> None:
+        cli = shutil.which("circleci")
+        if cli is None:
+            self.skipTest("CircleCI CLI is unavailable")
+        with tempfile.TemporaryDirectory() as config_home:
+            env = os.environ.copy()
+            env["XDG_CONFIG_HOME"] = config_home
+            for path in (PR_CONFIG, MAIN_CONFIG):
+                completed = subprocess.run(
+                    [cli, "config", "validate", "--config", str(path)],
+                    check=False,
+                    capture_output=True,
+                    env=env,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertEqual(
+                    completed.returncode,
+                    0,
+                    f"{path.name} failed CircleCI validation:\n"
+                    f"{completed.stdout}{completed.stderr}",
+                )
 
     def test_pr_pipeline_has_exact_job_graph(self) -> None:
         payload = self.load(PR_CONFIG)
@@ -113,9 +149,25 @@ class CircleCiPipelineTests(unittest.TestCase):
         self.assertIn("/run/hostpanel-circleci/qemu-repo-token", script)
         self.assertIn('rm -f -- "$token_file"', script)
         self.assertNotIn("CIRCLE_TOKEN", script)
-        self.assertNotIn("store_artifacts", script)
         self.assertNotIn("circleci-agent artifact", script)
         self.assertNotIn("curl --upload-file", script)
+        self.assertIn("trap cleanup_secret EXIT", script)
+        self.assertIn("archive_size <= 1073741824", script)
+
+    def test_checkout_cleanup_covers_github_app_https_credentials(self) -> None:
+        for path in (PR_CONFIG, MAIN_CONFIG):
+            text = path.read_text(encoding="utf-8")
+            for value in (
+                "credential\\.helper",
+                "http\\..*\\.extraheader",
+                'GIT_CONFIG_GLOBAL=/dev/null',
+                "GIT_CONFIG_NOSYSTEM=1",
+                "GIT_TERMINAL_PROMPT=0",
+                "unset GIT_ASKPASS SSH_ASKPASS SSH_AUTH_SOCK SSH_AGENT_PID",
+                '$HOME/.git-credentials',
+                '$HOME/.config/git/credentials',
+            ):
+                self.assertIn(value, text, f"{path.name} lacks cleanup for {value}")
 
 
 if __name__ == "__main__":
