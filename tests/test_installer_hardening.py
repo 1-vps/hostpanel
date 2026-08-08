@@ -56,6 +56,53 @@ class InstallerHardeningTests(unittest.TestCase):
         self.assertIn('mktemp "$INSTALL_SNAPSHOT_DIR/reinstall-', self.installer)
         self.assertNotIn('$BACKUP_DIR/install/reinstall-', self.installer)
 
+    def test_installer_log_is_validated_before_root_writes(self):
+        self.assertIn('prepare_root_log "$LOG"', self.installer)
+        self.assertNotIn('touch "$LOG"; chmod 600 "$LOG"', self.installer)
+        helper_start = self.installer.index("prepare_root_log(){")
+        helper_end = self.installer.index("\n}\n", helper_start) + 3
+        helper = self.installer[helper_start:helper_end]
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            victim = root / "victim"
+            victim.write_text("do not change", encoding="utf-8")
+            victim.chmod(0o644)
+            log = root / "install.log"
+            log.symlink_to(victim)
+            script = root / "test-log.sh"
+            script.write_text(
+                "#!/usr/bin/env bash\nset -euo pipefail\n"
+                "die(){ printf '%s\\n' \"$*\" >&2; exit 1; }\n"
+                f"{helper}\nprepare_root_log \"$1\"\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(script), str(log)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("regular non-symlink file", result.stdout)
+            self.assertEqual(victim.read_text(encoding="utf-8"), "do not change")
+            self.assertEqual(victim.stat().st_mode & 0o777, 0o644)
+
+            unsafe_parent = root / "unsafe"
+            unsafe_parent.mkdir(mode=0o777)
+            unsafe_parent.chmod(0o777)
+            unsafe_log = unsafe_parent / "install.log"
+            result = subprocess.run(
+                ["bash", str(script), str(unsafe_log)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("root-owned and not group/world-writable", result.stdout)
+            self.assertFalse(unsafe_log.exists())
+
     def test_failure_rollback_tracks_packages_and_managed_paths(self):
         self.assertIn('NEW_PACKAGES=()', self.installer)
         self.assertIn('rollback_new_packages', self.installer)

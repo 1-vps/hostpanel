@@ -46,6 +46,61 @@ def harden(text: str) -> str:
         "rollback state",
     )
 
+    text = replace_once(
+        text,
+        '''config_value(){
+  local key="$1" file="${2:-$PANEL_DIR/config.env}"
+  [[ -r "$file" ]] || return 1
+  awk -v key="$key" 'index($0, key "=") == 1 {sub(/^[^=]*=/, ""); print; exit}' "$file"
+}
+''',
+        '''config_value(){
+  local key="$1" file="${2:-$PANEL_DIR/config.env}"
+  [[ -r "$file" ]] || return 1
+  awk -v key="$key" 'index($0, key "=") == 1 {sub(/^[^=]*=/, ""); print; exit}' "$file"
+}
+
+prepare_root_log(){
+  local log_path="$1" log_parent canonical_parent parent_owner parent_mode owner mode
+  [[ "$log_path" == /* && "$log_path" != */ ]] \\
+    || die "Installer log path must be an absolute file path"
+  log_parent="${log_path%/*}"
+  [[ -d "$log_parent" && ! -L "$log_parent" ]] \\
+    || die "Installer log directory is missing or unsafe: $log_parent"
+  canonical_parent="$(realpath -e -- "$log_parent")" \\
+    || die "Could not resolve installer log directory: $log_parent"
+  [[ "$canonical_parent" == "$log_parent" ]] \\
+    || die "Installer log directory must not traverse symbolic links: $log_parent"
+  parent_owner="$(stat -c '%u' -- "$canonical_parent")" \\
+    || die "Could not inspect installer log directory owner: $log_parent"
+  parent_mode="$(stat -c '%a' -- "$canonical_parent")" \\
+    || die "Could not inspect installer log directory permissions: $log_parent"
+  [[ "$parent_owner" == 0 && $((8#$parent_mode & 0022)) == 0 ]] \\
+    || die "Installer log directory must be root-owned and not group/world-writable: $log_parent"
+  if [[ -e "$log_path" || -L "$log_path" ]]; then
+    [[ -f "$log_path" && ! -L "$log_path" ]] \\
+      || die "Installer log must be a regular non-symlink file: $log_path"
+    owner="$(stat -c '%u' -- "$log_path")" \\
+      || die "Could not inspect installer log owner: $log_path"
+    [[ "$owner" == 0 ]] \\
+      || die "Installer log must already be owned by root: $log_path"
+  else
+    (umask 077; set -o noclobber; : >"$log_path") \\
+      || die "Could not create installer log safely: $log_path"
+  fi
+  chown root:root -- "$log_path" \\
+    || die "Could not secure installer log ownership: $log_path"
+  chmod 600 -- "$log_path" \\
+    || die "Could not secure installer log permissions: $log_path"
+  owner="$(stat -c '%u' -- "$log_path")"
+  mode="$(stat -c '%a' -- "$log_path")"
+  [[ -f "$log_path" && ! -L "$log_path" && "$owner" == 0 && "$mode" == 600 ]] \\
+    || die "Installer log failed final security validation: $log_path"
+}
+''',
+        "secure installer log helper",
+    )
+
     snapshot_block = r'''package_is_installed(){
   local package="$1"
   if [[ "$PKG_FAMILY" == debian ]]; then
@@ -193,6 +248,12 @@ if [[ "$REINSTALL" == yes ]]; then
   say "Preparing safe reinstall"
   if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet hostpanel 2>/dev/null; then''',
         "snapshot every mutating run",
+    )
+    text = replace_once(
+        text,
+        'touch "$LOG"; chmod 600 "$LOG"',
+        'prepare_root_log "$LOG"',
+        "secure installer log initialization",
     )
     text = text.replace('MTA_SWITCH_BACKUP="$BACKUP_DIR/install/', 'MTA_SWITCH_BACKUP="$INSTALL_SNAPSHOT_DIR/')
     text = text.replace('mkdir -p "$BACKUP_DIR/install"', 'install -d -o root -g root -m 700 "$INSTALL_SNAPSHOT_DIR"')
