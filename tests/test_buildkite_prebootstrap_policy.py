@@ -47,6 +47,9 @@ class BuildkitePreBootstrapPolicyTests(unittest.TestCase):
             "BUILDKITE_PLUGINS": "[]",
             "BUILDKITE_CLEAN_CHECKOUT": "true",
             "BUILDKITE_SKIP_CHECKOUT": "false",
+            "BUILDKITE_TIMEOUT": "75",
+            "BUILDKITE_ARTIFACT_PATHS": "",
+            "BUILDKITE_ARTIFACT_UPLOAD_DESTINATION": "",
             "HP_BUILDKITE_CHECK": "repository",
             "HP_BUILDKITE_OS": "",
         }
@@ -93,6 +96,7 @@ class BuildkitePreBootstrapPolicyTests(unittest.TestCase):
                 "BUILDKITE_STEP_KEY": "upload-reviewed-pipeline",
                 "BUILDKITE_CLEAN_CHECKOUT": "false",
                 "BUILDKITE_SKIP_CHECKOUT": "true",
+                "BUILDKITE_TIMEOUT": "false",
                 "HP_BUILDKITE_CHECK": "",
                 "HP_BUILDKITE_OS": "",
             }
@@ -107,11 +111,27 @@ class BuildkitePreBootstrapPolicyTests(unittest.TestCase):
                 "BUILDKITE_STEP_KEY": "upload-reviewed-pipeline",
                 "BUILDKITE_CLEAN_CHECKOUT": "true",
                 "BUILDKITE_SKIP_CHECKOUT": "false",
+                "BUILDKITE_TIMEOUT": "false",
                 "HP_BUILDKITE_CHECK": "",
                 "HP_BUILDKITE_OS": "",
             }
         )
         self.assert_rejected(payload, "must skip", queue="hostpanel-upload")
+
+    def test_rejects_upload_timeout_mutation(self) -> None:
+        payload = self.base_payload()
+        payload.update(
+            {
+                "BUILDKITE_COMMAND": "/usr/local/libexec/hostpanel-upload-pipeline",
+                "BUILDKITE_STEP_KEY": "upload-reviewed-pipeline",
+                "BUILDKITE_CLEAN_CHECKOUT": "false",
+                "BUILDKITE_SKIP_CHECKOUT": "true",
+                "BUILDKITE_TIMEOUT": "10",
+                "HP_BUILDKITE_CHECK": "",
+                "HP_BUILDKITE_OS": "",
+            }
+        )
+        self.assert_rejected(payload, "timeout must be false", queue="hostpanel-upload")
 
     def test_accepts_same_repository_pull_request(self) -> None:
         self.assertEqual(self.run_policy(self.base_payload()), 0)
@@ -158,6 +178,71 @@ class BuildkitePreBootstrapPolicyTests(unittest.TestCase):
         payload["HP_BUILDKITE_CHECK"] = "shell"
         self.assert_rejected(payload, "does not match")
 
+    def test_rejects_artifact_paths_for_every_queue(self) -> None:
+        for queue in ("hostpanel-upload", "hostpanel-ci", "hostpanel-qemu"):
+            with self.subTest(queue=queue):
+                payload = self.base_payload()
+                if queue == "hostpanel-upload":
+                    payload.update(
+                        {
+                            "BUILDKITE_COMMAND": "/usr/local/libexec/hostpanel-upload-pipeline",
+                            "BUILDKITE_STEP_KEY": "upload-reviewed-pipeline",
+                            "BUILDKITE_CLEAN_CHECKOUT": "false",
+                            "BUILDKITE_SKIP_CHECKOUT": "true",
+                            "BUILDKITE_TIMEOUT": "false",
+                            "HP_BUILDKITE_CHECK": "",
+                        }
+                    )
+                elif queue == "hostpanel-qemu":
+                    payload.update(
+                        {
+                            "BUILDKITE_COMMAND": ".buildkite/scripts/run-qemu.sh",
+                            "BUILDKITE_STEP_KEY": "qemu-vm-acceptance",
+                            "BUILDKITE_BRANCH": "main",
+                            "BUILDKITE_PULL_REQUEST": "false",
+                            "BUILDKITE_PULL_REQUEST_REPO": "",
+                            "BUILDKITE_TIMEOUT": "180",
+                            "HP_BUILDKITE_CHECK": "",
+                        }
+                    )
+                payload["BUILDKITE_ARTIFACT_PATHS"] = "private/**/*"
+                self.assert_rejected(payload, "artifact paths are forbidden", queue=queue)
+
+    def test_rejects_artifact_upload_destination_for_every_queue(self) -> None:
+        payload = self.base_payload()
+        payload["BUILDKITE_ARTIFACT_UPLOAD_DESTINATION"] = "s3://attacker-bucket/path"
+        self.assert_rejected(payload, "artifact upload destination is forbidden")
+
+    def test_rejects_timeout_mutation_for_each_ci_timeout_class(self) -> None:
+        examples = {
+            "pipeline-contract": (".buildkite/scripts/run-pipeline-contract.sh", "", "", "10"),
+            "repository-regressions": (".buildkite/scripts/run-check.sh", "repository", "", "75"),
+            "installer-static": (".buildkite/scripts/run-check.sh", "shell", "", "30"),
+            "release-metadata": (".buildkite/scripts/run-check.sh", "metadata", "", "15"),
+            "production-validator": (
+                ".buildkite/scripts/run-check.sh",
+                "production-validator",
+                "",
+                "20",
+            ),
+            "qemu-contracts": (".buildkite/scripts/run-check.sh", "qemu-contracts", "", "35"),
+        }
+        for step_key, (command, check, os_name, expected_timeout) in examples.items():
+            with self.subTest(step_key=step_key):
+                payload = self.base_payload()
+                payload.update(
+                    {
+                        "BUILDKITE_STEP_KEY": step_key,
+                        "BUILDKITE_COMMAND": command,
+                        "HP_BUILDKITE_CHECK": check,
+                        "HP_BUILDKITE_OS": os_name,
+                        "BUILDKITE_TIMEOUT": expected_timeout,
+                    }
+                )
+                self.assertEqual(self.run_policy(payload), 0)
+                payload["BUILDKITE_TIMEOUT"] = str(int(expected_timeout) + 1)
+                self.assert_rejected(payload, "timeout does not match")
+
     def test_accepts_exact_os_step_mapping(self) -> None:
         payload = self.base_payload()
         payload.update(
@@ -165,6 +250,7 @@ class BuildkitePreBootstrapPolicyTests(unittest.TestCase):
                 "BUILDKITE_STEP_KEY": "os-ubuntu-2404",
                 "HP_BUILDKITE_CHECK": "installer-os",
                 "HP_BUILDKITE_OS": "ubuntu-24.04",
+                "BUILDKITE_TIMEOUT": "90",
             }
         )
         self.assertEqual(self.run_policy(payload), 0)
@@ -176,9 +262,22 @@ class BuildkitePreBootstrapPolicyTests(unittest.TestCase):
                 "BUILDKITE_STEP_KEY": "os-ubuntu-2404",
                 "HP_BUILDKITE_CHECK": "installer-os",
                 "HP_BUILDKITE_OS": "rocky-10",
+                "BUILDKITE_TIMEOUT": "90",
             }
         )
         self.assert_rejected(payload, "does not match")
+
+    def test_rejects_wrong_os_timeout(self) -> None:
+        payload = self.base_payload()
+        payload.update(
+            {
+                "BUILDKITE_STEP_KEY": "os-ubuntu-2404",
+                "HP_BUILDKITE_CHECK": "installer-os",
+                "HP_BUILDKITE_OS": "ubuntu-24.04",
+                "BUILDKITE_TIMEOUT": "91",
+            }
+        )
+        self.assert_rejected(payload, "timeout does not match")
 
     def test_accepts_webhook_main_qemu_job_without_pr_metadata(self) -> None:
         payload = self.base_payload()
@@ -189,11 +288,28 @@ class BuildkitePreBootstrapPolicyTests(unittest.TestCase):
                 "BUILDKITE_BRANCH": "main",
                 "BUILDKITE_PULL_REQUEST": "false",
                 "BUILDKITE_PULL_REQUEST_REPO": "",
+                "BUILDKITE_TIMEOUT": "180",
                 "HP_BUILDKITE_CHECK": "",
                 "HP_BUILDKITE_OS": "",
             }
         )
         self.assertEqual(self.run_policy(payload, queue="hostpanel-qemu"), 0)
+
+    def test_rejects_qemu_timeout_mutation(self) -> None:
+        payload = self.base_payload()
+        payload.update(
+            {
+                "BUILDKITE_COMMAND": ".buildkite/scripts/run-qemu.sh",
+                "BUILDKITE_STEP_KEY": "qemu-vm-acceptance",
+                "BUILDKITE_BRANCH": "main",
+                "BUILDKITE_PULL_REQUEST": "false",
+                "BUILDKITE_PULL_REQUEST_REPO": "",
+                "BUILDKITE_TIMEOUT": "179",
+                "HP_BUILDKITE_CHECK": "",
+                "HP_BUILDKITE_OS": "",
+            }
+        )
+        self.assert_rejected(payload, "timeout must be 180", queue="hostpanel-qemu")
 
     def test_rejects_qemu_environment_injection(self) -> None:
         payload = self.base_payload()

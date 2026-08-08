@@ -45,18 +45,19 @@ OS_STEPS = {
 }
 
 CI_STEPS = {
-    "pipeline-contract": (".buildkite/scripts/run-pipeline-contract.sh", "", ""),
-    "repository-regressions": (".buildkite/scripts/run-check.sh", "repository", ""),
-    "installer-static": (".buildkite/scripts/run-check.sh", "shell", ""),
-    "release-metadata": (".buildkite/scripts/run-check.sh", "metadata", ""),
+    "pipeline-contract": (".buildkite/scripts/run-pipeline-contract.sh", "", "", "10"),
+    "repository-regressions": (".buildkite/scripts/run-check.sh", "repository", "", "75"),
+    "installer-static": (".buildkite/scripts/run-check.sh", "shell", "", "30"),
+    "release-metadata": (".buildkite/scripts/run-check.sh", "metadata", "", "15"),
     "production-validator": (
         ".buildkite/scripts/run-check.sh",
         "production-validator",
         "",
+        "20",
     ),
-    "qemu-contracts": (".buildkite/scripts/run-check.sh", "qemu-contracts", ""),
+    "qemu-contracts": (".buildkite/scripts/run-check.sh", "qemu-contracts", "", "35"),
     **{
-        key: (".buildkite/scripts/run-check.sh", "installer-os", os_name)
+        key: (".buildkite/scripts/run-check.sh", "installer-os", os_name, "90")
         for key, os_name in OS_STEPS.items()
     },
 }
@@ -179,6 +180,9 @@ def main() -> int:
     plugins = value("BUILDKITE_PLUGINS").strip()
     clean_checkout = value("BUILDKITE_CLEAN_CHECKOUT").lower()
     skip_checkout = value("BUILDKITE_SKIP_CHECKOUT").lower()
+    timeout = value("BUILDKITE_TIMEOUT")
+    artifact_paths = value("BUILDKITE_ARTIFACT_PATHS")
+    artifact_destination = value("BUILDKITE_ARTIFACT_UPLOAD_DESTINATION")
     requested_check = value("HP_BUILDKITE_CHECK")
     requested_os = value("HP_BUILDKITE_OS")
 
@@ -198,6 +202,10 @@ def main() -> int:
         fail("job belongs to a different Buildkite pipeline")
     if plugins not in {"", "[]", "null"}:
         fail("plugins are forbidden")
+    if artifact_paths:
+        fail("artifact paths are forbidden for HostPanel jobs")
+    if artifact_destination:
+        fail("artifact upload destination is forbidden for HostPanel jobs")
     for name in DANGEROUS_ENVIRONMENT_VARIABLES:
         if value(name):
             fail(f"dangerous environment variable is forbidden: {name}")
@@ -217,6 +225,8 @@ def main() -> int:
             fail("upload queue received an unexpected step")
         if command != "/usr/local/libexec/hostpanel-upload-pipeline":
             fail("upload queue received an unexpected command")
+        if timeout != "false":
+            fail("upload bootstrap timeout must be false because no timeout is configured")
         if skip_checkout != "true":
             fail("upload queue must skip repository checkout")
         if clean_checkout not in {"", "false"}:
@@ -231,9 +241,11 @@ def main() -> int:
         expected = CI_STEPS.get(step_key)
         if expected is None:
             fail("CI queue received an unexpected step")
-        expected_command, expected_check, expected_os = expected
+        expected_command, expected_check, expected_os, expected_timeout = expected
         if command != expected_command:
             fail("CI queue received an unexpected command")
+        if timeout != expected_timeout:
+            fail("CI step timeout does not match the reviewed step key")
         if (requested_check, requested_os) != (expected_check, expected_os):
             fail("CI step environment does not match the reviewed step key")
     else:
@@ -245,6 +257,8 @@ def main() -> int:
             fail("QEMU queue received an unexpected step")
         if command != ".buildkite/scripts/run-qemu.sh":
             fail("QEMU queue received an unexpected command")
+        if timeout != "180":
+            fail("QEMU step timeout must be 180 minutes")
         if branch != "main" or pull_request != "false":
             fail("QEMU queue only accepts non-PR main builds")
         if requested_check or requested_os:
