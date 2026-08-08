@@ -11,11 +11,13 @@ on:
       - app/static/hostpanel-logo.svg
       - localization-overlay/**
       - tools/patch_panel_ui.py
+      - tools/patch_product_fixes.py
       - bootstrap-install.sh
       - tests/test_panel_redesign.py
       - tests/test_hostpanel_brand.py
       - tests/test_panel_future_locales.py
       - tests/test_panel_patcher_section_bounds.py
+      - tests/test_product_fixes.py
       - tests/test_playwright_browser_compat.py
       - tests/test_ui_workflow_security.py
       - tests/test_localization_bootstrap_wiring.py
@@ -36,11 +38,13 @@ on:
       - app/static/hostpanel-logo.svg
       - localization-overlay/**
       - tools/patch_panel_ui.py
+      - tools/patch_product_fixes.py
       - bootstrap-install.sh
       - tests/test_panel_redesign.py
       - tests/test_hostpanel_brand.py
       - tests/test_panel_future_locales.py
       - tests/test_panel_patcher_section_bounds.py
+      - tests/test_product_fixes.py
       - tests/test_playwright_browser_compat.py
       - tests/test_ui_workflow_security.py
       - tests/test_localization_bootstrap_wiring.py
@@ -119,6 +123,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_hostpanel_brand.py' -v
           python3 -m unittest discover -s tests -p 'test_panel_future_locales.py' -v
           python3 -m unittest discover -s tests -p 'test_panel_patcher_section_bounds.py' -v
+          python3 -m unittest discover -s tests -p 'test_product_fixes.py' -v
           python3 -m unittest discover -s tests -p 'test_playwright_browser_compat.py' -v
           python3 -m unittest discover -s tests -p 'test_ui_workflow_security.py' -v
           python3 -m unittest discover -s tests -p 'test_localization_bootstrap_wiring.py' -v
@@ -167,6 +172,7 @@ jobs:
           install -m 0644 app/static/hostpanel-brand.css "$UI_ROOT/app/static/hostpanel-brand.css"
           install -m 0644 app/static/hostpanel-mark.svg "$UI_ROOT/app/static/hostpanel-mark.svg"
           install -m 0644 app/static/hostpanel-logo.svg "$UI_ROOT/app/static/hostpanel-logo.svg"
+          python3 tools/patch_product_fixes.py "$UI_ROOT"
           python3 tools/patch_panel_ui.py "$UI_ROOT/app/templates/panel.html"
           python3 localization-overlay/apply_localization_overlay_reviewed.py \
             "$UI_ROOT" localization-overlay

@@ -153,6 +153,15 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
     });
   }
 
+  function applyRoleVisibility(){
+    const isAdmin=document.body.dataset.role==='admin';
+    document.querySelectorAll('[data-admin-only]').forEach(element=>{
+      element.hidden=!isAdmin;
+      if(isAdmin)element.removeAttribute('aria-hidden');
+      else element.setAttribute('aria-hidden','true');
+    });
+  }
+
   function bindPageLinks(){
     document.querySelectorAll('[data-hp-page]').forEach(control=>{
       const page=control.getAttribute('data-hp-page');
@@ -236,6 +245,8 @@ if(typeof window.storageSet!=='function')window.storageSet=()=>{};
   function boot(){
     document.body.classList.add('hp-redesign');
     document.body.dataset.uiVersion = '3.0.0';
+    applyRoleVisibility();
+    for(const id of ['uptime','dashboardUpdated'])byId(id)?.removeAttribute('data-i18n');
     setMeter('cpu','cpuMeter');
     setMeter('ram','ramMeter');
     setMeter('disk','diskMeter');
