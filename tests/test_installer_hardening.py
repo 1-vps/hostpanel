@@ -191,6 +191,67 @@ class InstallerHardeningTests(unittest.TestCase):
         self.assertIn('HP_PANEL_ADMIN_CIDR', self.installer)
         self.assertIn('HP_ALLOW_PUBLIC_PANEL', self.installer)
 
+    def test_sftp_configuration_reload_fails_closed(self):
+        match = re.search(
+            r'''sshd -t >>"\$LOG" 2>&1.*?Could not activate the HostPanel SFTP configuration"''',
+            self.installer,
+            flags=re.S,
+        )
+        self.assertIsNotNone(match)
+        snippet = match.group(0)
+        self.assertNotIn('|| true', snippet)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            script = root / 'reload-test.sh'
+            log = root / 'reload.log'
+            script.write_text(
+                '#!/usr/bin/env bash\nset -euo pipefail\n'
+                'LOG="$1"\n'
+                'sshd(){ return 0; }\n'
+                'systemctl(){\n'
+                '  printf "%s\\n" "$*"\n'
+                '  [[ "${ALLOW_SSHD_FALLBACK:-no}" == yes && "${2:-}" == sshd ]]\n'
+                '}\n'
+                'die(){ printf "%s\\n" "$*" >&2; exit 97; }\n'
+                f'{snippet}\n',
+                encoding='utf-8',
+            )
+            result = subprocess.run(
+                ['bash', str(script), str(log)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 97, result.stdout)
+            self.assertIn(
+                'Could not activate the HostPanel SFTP configuration',
+                result.stdout,
+            )
+            self.assertEqual(
+                log.read_text(encoding='utf-8').splitlines(),
+                ['reload ssh', 'reload sshd'],
+            )
+
+            log.unlink()
+            fallback_environment = os.environ.copy()
+            fallback_environment['ALLOW_SSHD_FALLBACK'] = 'yes'
+            fallback_result = subprocess.run(
+                ['bash', str(script), str(log)],
+                env=fallback_environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(fallback_result.returncode, 0, fallback_result.stdout)
+            self.assertEqual(
+                log.read_text(encoding='utf-8').splitlines(),
+                ['reload ssh', 'reload sshd'],
+            )
+
     def test_admin_password_is_not_in_python_arguments(self):
         self.assertIn('password = sys.stdin.read()', self.installer)
         self.assertNotRegex(
