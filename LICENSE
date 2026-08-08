@@ -1,191 +1,28 @@
-HostPanel End User License Agreement
-
-Version 1.0 — Effective [DATE] Applies to HostPanel version 3.x and all associated modules, plugins, and documentation
-
-IMPORTANT — READ CAREFULLY. This End User License Agreement ("Agreement") is a binding legal contract between you, either an individual or a legal entity ("Licensee", "you"), and [LEGAL ENTITY NAME], a company registered in [COUNTRY] under company number [COMPANY REG. NO.], with registered office at [REGISTERED ADDRESS] ("Licensor", "we", "us").
-
-By downloading, installing, activating a license key for, copying, or otherwise using the Software, you accept this Agreement in full. If you do not accept it, do not install or use the Software and request a refund in accordance with Section 10.
-
-If you are entering into this Agreement on behalf of a company or other legal entity, you represent that you have authority to bind that entity, and "Licensee" refers to that entity.
-
-1. Definitions
-
-1.1 "Software" means the HostPanel web hosting control panel in object and source form, including all files distributed by Licensor, its command-line tools, daemons, agents, APIs, templates, and Documentation, together with any Updates supplied under this Agreement.
-
-1.2 "Modules" means the billing-system integrations (including but not limited to WHMCS, Blesta, and ClientExec modules), whether distributed with the Software or separately, except to the extent any such module is accompanied by its own license file, in which case that license governs that module.
-
-1.3 "Documentation" means the installation, administration, and API documentation supplied by Licensor.
-
-1.4 "Licensed Server" means a single physical machine, virtual machine, or container instance on which the Software is installed and which is bound to a valid License Key.
-
-1.5 "License Key" means the unique credential issued by Licensor that activates the Software on a Licensed Server for the duration of a Subscription Term.
-
-1.6 "Subscription Term" means the period for which Licensee has paid the applicable Fees, as stated in the applicable order or invoice, including any renewal periods.
-
-1.7 "Licensing Service" means the Licensor-operated service at [hostpanel.online] or its successor endpoints, against which the Software validates License Keys.
-
-1.8 "End Users" means Licensee's own customers or personnel who access hosting accounts administered through the Software, without themselves receiving a copy of the Software.
-
-1.9 "Updates" means bug fixes, patches, security releases, and new versions of the Software that Licensor makes generally available to subscribers at no additional charge.
-
-1.10 "Third-Party Components" means software not authored by Licensor that is distributed with or required by the Software, as identified in the THIRD-PARTY-NOTICES file.
-
-2. Grant of License
-
-2.1 Grant. Subject to Licensee's continuous compliance with this Agreement and payment of all Fees, Licensor grants Licensee a limited, non-exclusive, non-transferable, non-sublicensable, revocable license, for the duration of the Subscription Term, to:
-
-    (a) install and run one instance of the Software on each Licensed Server for which a valid License Key has been issued;
-
-    (b) use the Software to administer hosting services provided by Licensee to its End Users, including in a commercial hosting business;
-
-    (c) make a reasonable number of copies solely for backup, disaster recovery, and archival purposes; and
-
-    (d) modify the Software's source code for Licensee's own internal use on Licensed Servers, provided that Section 3 is observed and that Licensor has no obligation to support any modified installation.
-
-2.2 Non-production instances. Licensee may install the Software on up to [TWO (2)] additional non-production instances per paid Licensed Server for development, staging, testing, or training purposes, provided those instances are not used to host live services for third parties.
-
-2.3 Source availability is not open source. The Software is written in an interpreted language and is therefore delivered in human-readable form. Delivery of readable source code confers no rights beyond those expressly granted in this Agreement. The Software is proprietary, commercially licensed software and is not open source, free software, or in the public domain.
-
-2.4 Reservation of rights. All rights not expressly granted are reserved by Licensor.
-
-3. Restrictions
-
-Except as expressly permitted in Section 2, and except to the extent such restriction is prohibited by mandatory applicable law (including Articles 5 and 6 of Directive 2009/24/EC on the legal protection of computer programs), Licensee shall not, and shall not permit any third party to:
-
-    (a) sell, resell, rent, lease, lend, distribute, publish, or otherwise make the Software available to any third party, whether or not for charge;
-
-    (b) install or run the Software on any server not covered by a valid License Key, or exceed the number of Licensed Servers paid for;
-
-    (c) disable, bypass, tamper with, spoof, emulate, or otherwise circumvent the License Key mechanism, the Licensing Service, or any technical protection or usage-metering measure in the Software;
-
-    (d) share, publish, or transfer a License Key to any third party;
-
-    (e) remove, obscure, or alter any copyright, trademark, license, or attribution notice contained in the Software;
-
-    (f) use the Software, or any part of it, to create, develop, or assist in the development of a product that competes with the Software;
-
-    (g) offer the Software to third parties as a hosted, managed, or "as-a-service" offering in which the third party obtains administrative control of a Software instance, other than the ordinary provision of hosting accounts to End Users as contemplated in Section 2.1(b);
-
-    (h) use the Software in violation of any applicable law, or to host, distribute, or facilitate unlawful content or activity; or
-
-    (i) publish, disclose, or make available the Software's source code, in whole or in substantial part, to any person other than Licensee's own personnel and contractors who are bound by confidentiality obligations no less protective than Section 7.
-
-4. License Keys, Activation, and Verification
-
-4.1 Activation. The Software requires activation against the Licensing Service and will periodically re-validate its License Key. Licensee shall maintain network connectivity sufficient to permit this validation.
-
-4.2 Data transmitted. During activation and validation, the Software transmits to the Licensing Service: the License Key, the Licensed Server's IP address and hostname, a hardware or installation fingerprint, the installed Software version, and the operating system version. Licensor processes this data solely to verify license entitlement, prevent unauthorized use, provide support, and produce aggregate usage statistics. Processing is described in Licensor's Privacy Policy at [URL].
-
-4.3 Grace period and degradation. If validation fails, the Software will continue to operate normally for a grace period of [SEVEN (7)] days. After the grace period, administrative functions may be progressively restricted. Hosted services, websites, mailboxes, and databases already provisioned on the Licensed Server will not be interrupted by license expiry or validation failure.
-
-4.4 Suspension of keys. Licensor may suspend or revoke a License Key where Fees are overdue by more than [FIFTEEN (15)] days, where Licensee materially breaches Section 3, or where Licensor reasonably suspects the key has been compromised or shared. Except where the breach is Section 3(c) or (d), Licensor will give Licensee at least seven (7) days' notice and an opportunity to cure before revocation.
-
-5. Fees, Taxes, and Renewal
-
-5.1 Fees. Licensee shall pay the fees set out in the applicable order, invoice, or published price list ("Fees"). Fees are payable in advance for each Subscription Term.
-
-5.2 Taxes and VAT. Fees are exclusive of VAT and any other applicable taxes or duties, which will be added where required. Where Licensee is a business established in an EU Member State other than Licensor's, Licensee shall provide a valid VAT identification number, and the reverse charge mechanism will apply. Licensee is responsible for the accuracy of any VAT number provided and for any liability arising from an invalid number.
-
-5.3 Automatic renewal. Unless cancelled before the end of the current Subscription Term, subscriptions renew automatically for successive periods of equal length at the then-current price. Licensee may cancel renewal at any time through the customer portal.
-
-5.4 Price changes. Licensor may change prices for renewal terms on not less than thirty (30) days' written notice before the renewal date. If Licensee does not accept the change, Licensee may cancel renewal before the renewal date.
-
-5.5 Late payment. Overdue amounts bear interest at the rate provided by applicable law on late payment in commercial transactions, calculated from the due date until payment.
-
-6. Ownership and Third-Party Components
-
-6.1 Ownership. The Software is licensed, not sold. Licensor and its licensors retain all right, title, and interest in and to the Software, including all copyrights, trade secrets, trademarks, and other intellectual property rights.
-
-6.2 Modifications. Any modification Licensee makes to the Software under Section 2.1(d) remains a derivative work of the Software. Licensee owns its own original code but may exercise rights in it only in a manner consistent with this Agreement, and may not distribute it in a form that includes or discloses the Software.
-
-6.3 Feedback. If Licensee provides suggestions, feature requests, or bug reports, Licensor may use them without restriction or obligation.
-
-6.4 Third-Party Components. Third-Party Components are licensed under their own terms, which are set out in the THIRD-PARTY-NOTICES file and which prevail over this Agreement in respect of those components. Nothing in this Agreement restricts any right Licensee has under an open source license covering a Third-Party Component.
-
-7. Confidentiality
-
-The Software's source code, architecture, and non-public documentation constitute Licensor's confidential information and trade secrets. Licensee shall protect them using at least the degree of care it applies to its own confidential information and not less than reasonable care, and shall disclose them only to personnel and contractors with a need to know who are bound by written confidentiality obligations. This Section does not apply to information that is or becomes public through no fault of Licensee, or that Licensee is required to disclose by law, provided Licensee gives Licensor prompt notice where lawful.
-
-8. Support and Updates
-
-8.1 During an active Subscription Term, Licensor will make Updates available and will provide support in accordance with the support policy published at [URL].
-
-8.2 Licensor has no obligation to support installations that are modified, that run unsupported operating systems or PHP versions, or whose License Key is expired or suspended.
-
-8.3 Licensor may discontinue support for a major version of the Software on not less than [SIX (6)] months' notice.
-
-9. Data Protection
-
-Where Licensor processes personal data on Licensee's behalf, the parties' respective obligations under Regulation (EU) 2016/679 (GDPR) are set out in the Data Processing Agreement at [URL], which is incorporated by reference. Licensee is the controller in respect of its End Users' data held within the Software; Licensor does not access that data except where necessary to provide support at Licensee's request.
-
-10. Term, Termination, and Refunds
-
-10.1 Term. This Agreement takes effect on first installation or activation and continues for as long as any Subscription Term remains active.
-
-10.2 Termination by Licensee. Licensee may terminate at any time by ceasing use of the Software and cancelling its subscription. Fees already paid are non-refundable except as stated in Section 10.4 or as required by law.
-
-10.3 Termination by Licensor. Licensor may terminate this Agreement on written notice if Licensee materially breaches it and fails to cure within thirty (30) days of notice, or immediately in the case of a breach of Section 3(a), 3(c), 3(d), or 3(f).
-
-10.4 Refund period. Licensee may request a full refund within [FOURTEEN (14)] days of first purchase of a License Key by contacting [support email]. Refunds are not available on renewals.
-
-10.5 Consumers — right of withdrawal. Where Licensee is a consumer resident in the EU, Licensee has a statutory right of withdrawal within fourteen (14) days under Directive 2011/83/EU. By downloading or activating the Software within that period, Licensee expressly requests immediate performance and acknowledges losing the right of withdrawal upon commencement of delivery of the digital content.
-
-10.6 Effect of termination. On termination or expiry, all licenses granted terminate, License Keys are deactivated, and Licensee shall cease all use of the Software and delete or destroy all copies, except that Licensee may retain archival backups it is required to keep by law. Sections 3, 6, 7, 11, 12, 13, and 15 survive termination.
-
-11. Warranty and Disclaimer
-
-11.1 Limited warranty. Licensor warrants that, for ninety (90) days from first delivery, the Software will perform substantially in accordance with the Documentation. Licensee's exclusive remedy for breach of this warranty is, at Licensor's option, correction of the Software or refund of the Fees paid for the affected Subscription Term.
-
-11.2 Disclaimer. EXCEPT AS EXPRESSLY STATED IN SECTION 11.1, AND TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, WHETHER EXPRESS, IMPLIED, OR STATUTORY, INCLUDING ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, ACCURACY, OR NON-INFRINGEMENT. LICENSOR DOES NOT WARRANT THAT THE SOFTWARE WILL BE UNINTERRUPTED, ERROR-FREE, OR SECURE AGAINST ALL ATTACKS.
-
-11.3 Security. Licensee is responsible for securing its own servers, operating systems, network, credentials, and backups, and for applying security Updates promptly. The Software is administrative software operating with elevated privileges; Licensee acknowledges the associated risk.
-
-11.4 Consumers. Nothing in this Section limits statutory rights that a consumer has under mandatory applicable law.
-
-12. Limitation of Liability
-
-12.1 TO THE MAXIMUM EXTENT PERMITTED BY LAW, LICENSOR SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, GOODWILL, BUSINESS, DATA, OR ANTICIPATED SAVINGS, ARISING OUT OF OR RELATING TO THIS AGREEMENT OR THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
-
-12.2 LICENSOR'S TOTAL AGGREGATE LIABILITY ARISING OUT OF OR RELATING TO THIS AGREEMENT SHALL NOT EXCEED THE TOTAL FEES PAID BY LICENSEE TO LICENSOR IN THE TWELVE (12) MONTHS IMMEDIATELY PRECEDING THE EVENT GIVING RISE TO THE CLAIM.
-
-12.3 Nothing in this Agreement excludes or limits liability for: death or personal injury caused by negligence; fraud or fraudulent misrepresentation; intentional misconduct or gross negligence; or any other liability that cannot lawfully be excluded or limited.
-
-12.4 Data loss. Licensee is solely responsible for maintaining independent, tested backups of all data on Licensed Servers. Licensor is not liable for loss or corruption of Licensee's or End Users' data.
-
-13. Indemnification
-
-13.1 By Licensor. Licensor will defend Licensee against any third-party claim that the unmodified Software, used in accordance with this Agreement, infringes that party's copyright or trade secret rights, and will pay damages finally awarded, provided Licensee gives prompt notice, reasonable cooperation, and sole control of the defence. If the Software becomes subject to such a claim, Licensor may at its option procure the right to continue use, modify the Software to be non-infringing, or terminate the license and refund Fees for the unexpired portion of the Subscription Term. This obligation does not apply to claims arising from modifications made by Licensee, combination with software not supplied by Licensor, or use in breach of this Agreement.
-
-13.2 By Licensee. Licensee will indemnify Licensor against any third-party claim arising from Licensee's use of the Software in breach of this Agreement or from content or services Licensee provides to its End Users.
-
-14. Audit
-
-Licensor may, on not less than thirty (30) days' written notice and not more than once in any twelve-month period, request that Licensee certify in writing the number of Licensed Servers on which the Software is installed. If an audit reveals underpayment exceeding five percent (5%), Licensee shall pay the shortfall together with Licensor's reasonable audit costs.
-
-15. General
-
-15.1 Governing law. This Agreement is governed by the laws of [Sweden], excluding its conflict-of-laws rules and the United Nations Convention on Contracts for the International Sale of Goods.
-
-15.2 Jurisdiction. The courts of [Stockholm, Sweden] have exclusive jurisdiction over any dispute arising out of this Agreement. Where Licensee is a consumer, this does not deprive Licensee of the protection of mandatory provisions of the law of Licensee's country of residence, nor of the right to bring proceedings in the courts of that country.
-
-15.3 Assignment. Licensee may not assign or transfer this Agreement or any License Key without Licensor's prior written consent, except to a successor of all or substantially all of its business on written notice to Licensor. Licensor may assign this Agreement freely.
-
-15.4 Export and sanctions. Licensee shall comply with all applicable export control and sanctions laws and shall not make the Software available to any person or in any jurisdiction where doing so is prohibited.
-
-15.5 Changes to this Agreement. Licensor may amend this Agreement for future Subscription Terms on not less than thirty (30) days' notice before renewal. Continued use after the renewal date constitutes acceptance. The version of this Agreement in force at the start of a Subscription Term governs that term.
-
-15.6 Entire agreement. This Agreement, together with any order form, the Data Processing Agreement, and the support policy, constitutes the entire agreement between the parties and supersedes all prior proposals and representations. Any conflicting or additional terms in Licensee's purchase order are rejected and have no effect.
-
-15.7 Severability. If any provision is held unenforceable, it shall be modified to the minimum extent necessary to make it enforceable, and the remaining provisions remain in full force.
-
-15.8 No waiver. Failure to enforce any provision is not a waiver of the right to enforce it later.
-
-15.9 Force majeure. Neither party is liable for delay or failure to perform caused by events beyond its reasonable control, excluding payment obligations.
-
-15.10 Language. This Agreement is concluded in English. Any translation is provided for convenience only, and the English version prevails.
-
-16. Contact
-
-[LEGAL ENTITY NAME] [REGISTERED ADDRESS] Company number: [COMPANY REG. NO.] VAT number: [VAT NO.] Email: [legal@hostpanel.online]
-
-Copyright © [YEAR] [LEGAL ENTITY NAME]. All rights reserved. HostPanel is a trademark of [LEGAL ENTITY NAME].
+BSD 3-Clause License
+
+Copyright (c) 2026, 1-vps
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
