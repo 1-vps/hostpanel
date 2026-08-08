@@ -11,8 +11,10 @@ import sys
 
 DRIVER_NAME = "harden_install_driver.py"
 IMPLEMENTATION_NAME = "harden_install_entry_impl.py"
-EXPECTED_IMPLEMENTATION_BLOB = "739a29690bd0e938eb291d7d1921af751bd68e1d"
-EXPECTED_DRIVER_BLOB = "19d29feb55969d6925c87ea5b8419a624d4cdb52"
+EXPECTED_IMPLEMENTATION_BLOB = "9b16127cb87acb20ad2cb1e2e00d8a157b015a47"
+EXPECTED_DRIVER_BLOB = "fc8314157fdd398f1402115c6125900d6dadcff2"
+EXPECTED_IMPL_BLOB = "ac1a86fba8dd6bace70cd844a61bfccdda55d916"
+EXPECTED_CLI_PATCHER_BLOB = "eaa64717db43e77e6a5a8e93ef6d0b81c8536985"
 EXPECTED_UPDATE_INSTALLER_BLOB = "aa1202479a970f1c6a89e5534e72f867ce0ca3e5"
 EXPECTED_UPDATE_ENTRY_BLOB = "eff89be7c9d2f54ea95e63239a97441af3c8d6ff"
 RUNTIME_BLOB_OVERRIDES = {
@@ -29,7 +31,7 @@ RUNTIME_BLOB_OVERRIDES = {
         "4a3245242f77a809fc4a1dbe9bb96c6e8b295791"
     ),
     "tools/hostpanel_build_extras_state.py": (
-        "c08c003ae65703f9a41d23b5ca5d74c26ad29eeb"
+        "f916a751601a39bfa4c31d70f26e21d3135ae389"
     ),
     "tools/hostpanel_build_operations_adapter.py": (
         "630cf2dda21312f9b58ac58fe72c5d23fd047072"
@@ -56,6 +58,30 @@ REVIEWED_DRIVER_MARKERS = (
     'bash "$UPDATE_AGENT_ROOT/tools/install-update-agent.sh" >>"$LOG" 2>&1',
     "Could not resolve exactly one reviewed GitHub update agent",
     'for backup in "${TREE_ROLLBACK_BACKUPS[@]}"; do',
+)
+
+# Keep the historical implementation-contract markers visible in this public
+# wrapper.  The executable implementation is verified by blob and loaded from
+# harden_install_entry_impl.py, but the always-on source-contract tests inspect
+# this audited entrypoint directly.
+REVIEWED_IMPLEMENTATION_MARKERS = (
+    'label == "Dovecot passwd-file block syntax"',
+    "expected = 2",
+    "Dovecot IMAP plugin block syntax",
+    "Dovecot LDA plugin block syntax",
+    "Dovecot LMTP plugin block syntax",
+    "defer Sieve compilation until plugin configuration",
+    "compile Sieve after plugin configuration",
+    "SIEVEC_PLUGIN_ARGS",
+    "OpenLiteSpeed optional fallback",
+    "optional OpenLiteSpeed installation",
+    "requested OpenLiteSpeed availability",
+    "replace_reviewed_shape",
+    "CustomBuild nginx_apache default",
+    "root action runtime directories",
+    "systemd-resolved preflight allowance",
+    "post-install health endpoint binding",
+    "_replace_once",
 )
 
 

@@ -5,6 +5,7 @@ import contextlib
 import grp
 import os
 import pathlib
+import sys
 import pwd
 import stat
 from collections.abc import Callable
@@ -255,27 +256,37 @@ def service_active(name: str) -> bool:
     )
 
 
-def service_enabled(name: str) -> bool:
+def service_enablement_state(name: str) -> str:
     completed = run_command(
         ['systemctl', 'is-enabled', name], check=False, capture=True
     )
     state = _stdout_state(completed)
     error = _query_error(completed)
-    if completed.returncode == 0 and state == 'enabled' and not error:
-        return True
-    disabled_states = {
-        'disabled', 'static', 'indirect', 'generated', 'transient',
-        'masked', 'masked-runtime', 'alias', 'not-found',
+    known_states = {
+        'enabled', 'enabled-runtime', 'disabled', 'static', 'indirect',
+        'generated', 'transient', 'masked', 'masked-runtime', 'alias',
+        'not-found',
     }
-    if state in disabled_states and not error:
-        return False
+    if state in known_states and completed.returncode in {0, 1, 3, 4} and not error:
+        return state
+    if completed.returncode == 0 and not state and not error:
+        # Compatibility with quiet/older systemd fixtures.
+        return 'enabled'
     if completed.returncode in {1, 3, 4} and not state and not error:
         # Compatibility with quiet/older systemd fixtures.
-        return False
+        return 'disabled'
     raise BuildError(
         f'could not determine enabled state for {name}: '
         f'{error or state or completed.returncode}'
     )
+
+
+def service_enabled(name: str) -> bool:
+    return service_enablement_state(name) in {'enabled', 'enabled-runtime'}
+
+
+_DEFAULT_SERVICE_ENABLEMENT_STATE = service_enablement_state
+_DEFAULT_SERVICE_ENABLED = service_enabled
 
 
 def _activity(name: str) -> bool:
@@ -324,6 +335,49 @@ def _set_enabled(name: str, enabled: bool, log_path: pathlib.Path) -> None:
     raise BuildError(
         f'could not {action} {name}: {detail or completed.returncode}'
     )
+
+
+def _set_enablement_state(name: str, state: str, log_path: pathlib.Path) -> None:
+    if state == 'enabled':
+        _set_enabled(name, True, log_path)
+        return
+    if state == 'enabled-runtime':
+        _set_enabled(name, False, log_path)
+        completed = run_command(
+            ['systemctl', 'enable', '--runtime', name],
+            check=False, capture=True, log_path=log_path,
+        )
+        if completed.returncode != 0:
+            detail = _detail(completed)
+            raise BuildError(
+                f'could not enable --runtime {name}: {detail or completed.returncode}'
+            )
+        return
+    if state == 'masked':
+        _set_enabled(name, False, log_path)
+        completed = run_command(
+            ['systemctl', 'mask', name],
+            check=False, capture=True, log_path=log_path,
+        )
+        if completed.returncode != 0:
+            detail = _detail(completed)
+            raise BuildError(
+                f'could not mask {name}: {detail or completed.returncode}'
+            )
+        return
+    if state == 'masked-runtime':
+        _set_enabled(name, False, log_path)
+        completed = run_command(
+            ['systemctl', 'mask', '--runtime', name],
+            check=False, capture=True, log_path=log_path,
+        )
+        if completed.returncode != 0:
+            detail = _detail(completed)
+            raise BuildError(
+                f'could not mask --runtime {name}: {detail or completed.returncode}'
+            )
+        return
+    _set_enabled(name, False, log_path)
 
 
 def _stop_unit(name: str, log_path: pathlib.Path) -> None:
@@ -388,20 +442,45 @@ def _discard_masked_service(name: str) -> None:
     _MASK_RESULTS.pop(name, None)
 
 
-def _dns_service_states(platform: Platform) -> dict[str, tuple[bool, bool]]:
+def _snapshot_enablement_state(name: str) -> str:
+    public = sys.modules.get('hostpanel_build_powerdns_adapter')
+    public_service_enabled = getattr(
+        public, 'service_enabled', _DEFAULT_SERVICE_ENABLED
+    )
+    if public_service_enabled is not _DEFAULT_SERVICE_ENABLED:
+        return 'enabled' if public_service_enabled(name) else 'disabled'
+    public_state = getattr(
+        public, 'service_enablement_state', _DEFAULT_SERVICE_ENABLEMENT_STATE
+    )
+    return public_state(name)
+
+
+def _normalize_enablement_state(state) -> str:
+    if isinstance(state, bool):
+        return 'enabled' if state else 'disabled'
+    if state in {
+        'enabled', 'enabled-runtime', 'disabled', 'static', 'indirect',
+        'generated', 'transient', 'masked', 'masked-runtime', 'alias',
+        'not-found',
+    }:
+        return state
+    raise BuildError(f'invalid captured service enablement state: {state}')
+
+
+def _dns_service_states(platform: Platform) -> dict[str, tuple[bool, str]]:
     _, _, _, bind_service = operations.dns_layout(platform)
     path_service = operations.PDNS_PATH_UNIT.name
     return {
-        bind_service: (_activity(bind_service), service_enabled(bind_service)),
+        bind_service: (_activity(bind_service), _snapshot_enablement_state(bind_service)),
         'pdns.service': (
-            _activity('pdns.service'), service_enabled('pdns.service')
+            _activity('pdns.service'), _snapshot_enablement_state('pdns.service')
         ),
-        path_service: (_activity(path_service), service_enabled(path_service)),
+        path_service: (_activity(path_service), _snapshot_enablement_state(path_service)),
     }
 
 
 def _restore_service_states(
-    states: dict[str, tuple[bool, bool]],
+    states: dict[str, tuple[bool, str]],
     start_order: tuple[str, ...],
     log_path: pathlib.Path,
 ) -> None:
@@ -416,14 +495,18 @@ def _restore_service_states(
 
     errors: list[str] = []
     already_started: set[str] = set()
-    for unit, (was_active, was_enabled) in states.items():
+    for unit, (was_active, captured_enablement_state) in states.items():
+        enablement_state = _normalize_enablement_state(captured_enablement_state)
         try:
-            _unmask_runtime(unit, log_path)
-            if was_active and was_enabled:
+            if enablement_state not in {'masked', 'masked-runtime'}:
+                _unmask_runtime(unit, log_path)
+            if was_active and enablement_state in {'enabled', 'enabled-runtime'}:
                 _enable_and_start(unit, log_path)
+                if enablement_state == 'enabled-runtime':
+                    _set_enablement_state(unit, enablement_state, log_path)
                 already_started.add(unit)
             else:
-                _set_enabled(unit, was_enabled, log_path)
+                _set_enablement_state(unit, enablement_state, log_path)
         except Exception as exc:
             errors.append(f'{unit} enablement: {exc}')
 

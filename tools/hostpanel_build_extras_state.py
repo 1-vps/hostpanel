@@ -135,7 +135,10 @@ def _restore(
     captured: CapturedFile | LegacyCapturedFile | None,
 ) -> None:
     if captured is None:
+        existed = os.path.lexists(path)
         path.unlink(missing_ok=True)
+        if existed:
+            _IMPL.base._fsync_parent(path)
         return
     if len(captured) == 4:
         payload, mode, uid, gid = captured

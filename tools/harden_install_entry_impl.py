@@ -13,8 +13,8 @@ import sys
 import tempfile
 
 DRIVER_NAME = "harden_install_driver.py"
-EXPECTED_DRIVER_BLOB = "19d29feb55969d6925c87ea5b8419a624d4cdb52"
-EXPECTED_UPDATE_INSTALLER_BLOB = "8b191c233fdff7f62c8b8ddf4a1077451e2961c1"
+EXPECTED_DRIVER_BLOB = "fc8314157fdd398f1402115c6125900d6dadcff2"
+EXPECTED_UPDATE_INSTALLER_BLOB = "aa1202479a970f1c6a89e5534e72f867ce0ca3e5"
 MAX_REVIEWED_RUNTIME_FILE_BYTES = 16 * 1024 * 1024
 
 CUSTOMBUILD_EXECUTABLES = (
@@ -71,11 +71,11 @@ CUSTOMBUILD_RUNTIME_BLOBS = {
     "tools/hostpanel_build_ssl.py": "61efab030ab08179eb6dc012748202b532e8e36c",
     "tools/hostpanel_build_extras.py": "cf96140db2079a2c4ee2cc2ab92a8a5eceaf996b",
     "tools/hostpanel_build_extras_impl.py": "062186e3a1cefb42dfab406e486119ada829a233",
-    "tools/hostpanel_build_extras_state.py": "73337ca3ad61f560c16c7a1f4a5e9dfd9ffc836f",
+    "tools/hostpanel_build_extras_state.py": "f916a751601a39bfa4c31d70f26e21d3135ae389",
     "tools/hostpanel_build_extras_state_impl.py": "bd578c71d6fd6515489ac091df8128e9abdb2bc5",
     "tools/hostpanel_build_entry.py": "d22cfa28518f771cfe02d1e68fdfc8c46e78d54b",
     "tools/hostpanel_build_powerdns_adapter.py": "80ffa4dabe0bad15747f76e056a0c5b29fc02aa1",
-    "tools/hostpanel_build_powerdns_adapter_impl.py": "ffb082ac070b10b050dce9cd289896a8f4d24b3b",
+    "tools/hostpanel_build_powerdns_adapter_impl.py": "d82e8c445b1448e758c925a17b147541721e23c3",
     "tools/hostpanel_build_mongodb_adapter.py": "9f2430fc3c34d6cd81d3d2b790c22881c551d921",
     "tools/hostpanel_build_web_impl.py": "297b4ec6eea991a118ca81a4134268433223d432",
     "tools/hostpanel_build_web_state.py": "1d2860751f119707d75a8cc1a303f23a8a871a53",
@@ -408,6 +408,7 @@ def _ensure_target_tools(root: pathlib.Path) -> pathlib.Path:
 
 def _publish_runtime_file(path: pathlib.Path, payload: bytes, mode: int) -> None:
     _trusted_directory(path.parent)
+    existing_xattrs: dict[str, bytes] | None = None
     if os.path.lexists(path):
         existing = path.lstat()
         if (
@@ -418,6 +419,7 @@ def _publish_runtime_file(path: pathlib.Path, payload: bytes, mode: int) -> None
             or stat.S_IMODE(existing.st_mode) & 0o022
         ):
             raise SystemExit(f"unsafe CustomBuild overlay target: {path}")
+        existing_xattrs = _capture_xattrs(path)
 
     fd, temporary = _open_temporary(path, mode)
     active_error: BaseException | None = None
@@ -432,7 +434,8 @@ def _publish_runtime_file(path: pathlib.Path, payload: bytes, mode: int) -> None
         os.fsync(fd)
         os.fchown(fd, os.geteuid(), os.getegid())
         os.fchmod(fd, mode)
-        _apply_xattrs(temporary, {})
+        if existing_xattrs is not None:
+            _apply_xattrs(temporary, existing_xattrs)
         os.fsync(fd)
         descriptor, fd = fd, -1
         os.close(descriptor)
