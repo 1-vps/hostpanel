@@ -23,7 +23,7 @@ TEST_PUBLIC_KEY = b"""-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA+KtLBsTyBCLkQe
 
 @unittest.skipUnless(shutil.which("openssl"), "openssl is required")
 class ReleaseManifestTests(unittest.TestCase):
-    def sign_checksums(self, root: pathlib.Path) -> None:
+    def sign_file(self, root: pathlib.Path, input_name: str, output_name: str) -> None:
         private = root / ".test-release-private.pem"
         private.write_bytes(TEST_PRIVATE_KEY)
         subprocess.run(
@@ -35,15 +35,18 @@ class ReleaseManifestTests(unittest.TestCase):
                 str(private),
                 "-rawin",
                 "-in",
-                str(root / "SHA256SUMS"),
+                str(root / input_name),
                 "-out",
-                str(root / "SHA256SUMS.sig"),
+                str(root / output_name),
             ],
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         private.unlink()
+
+    def sign_checksums(self, root: pathlib.Path) -> None:
+        self.sign_file(root, "SHA256SUMS", "SHA256SUMS.sig")
 
     def build_repository(self, root: pathlib.Path) -> dict[str, object]:
         archive_name = "hostpanel-v3.4.0-hardened-r5-source.tar.gz"
@@ -55,6 +58,7 @@ class ReleaseManifestTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.sign_checksums(root)
+        self.sign_file(root, archive_name, f"{archive_name}.sig")
         (root / "hostpanel-v3.4.0-hardened-r5-release.pub").write_bytes(TEST_PUBLIC_KEY)
         (root / "RELEASE_VERSION").write_text("3.4.1\n", encoding="utf-8")
         manifest: dict[str, object] = {
@@ -70,8 +74,9 @@ class ReleaseManifestTests(unittest.TestCase):
             },
             "source_artifacts": {
                 "archive": archive_name,
+                "archive_signature": f"{archive_name}.sig",
                 "checksum_manifest": "SHA256SUMS",
-                "signature": "SHA256SUMS.sig",
+                "checksum_signature": "SHA256SUMS.sig",
             },
             "platform": {
                 "architectures": ["x86_64", "aarch64"],
@@ -99,17 +104,17 @@ class ReleaseManifestTests(unittest.TestCase):
         }
         self.write_manifest(root, manifest)
         markers = (
-            "{{HOSTPANEL_RELEASE_VERSION}}=3.4.1\n"
-            "{{HOSTPANEL_SIGNED_BASE}}=3.4.0-hardened-r5\n"
-            "{{HOSTPANEL_RELEASE_STATUS}}=deployable-not-publishable\n"
-            "{{HOSTPANEL_PUBLICATION_ALLOWED}}=false\n"
+            "<!-- {{HOSTPANEL_RELEASE_VERSION}}=3.4.1 -->\n"
+            "<!-- {{HOSTPANEL_SIGNED_BASE}}=3.4.0-hardened-r5 -->\n"
+            "<!-- {{HOSTPANEL_RELEASE_STATUS}}=deployable-not-publishable -->\n"
+            "<!-- {{HOSTPANEL_PUBLICATION_ALLOWED}}=false -->\n"
         )
         (root / "README.md").write_text(
             markers
-            + "Current deployable release: **3.4.1**\n"
-            + "Authenticated signed base: **3.4.0-hardened-r5**\n"
-            + "Release channel: **candidate**\n"
-            + "Production publication: **blocked**\n"
+            + "- Current deployable release: **3.4.1**\n"
+            + "- Authenticated signed base: **3.4.0-hardened-r5**\n"
+            + "- Release channel: **candidate**\n"
+            + "- Production publication: **blocked**\n"
             + "A deployable build is not the same as an approved production publication.\n"
             + "- Ubuntu 22.04, 24.04, or 26.04\n"
             + "- Debian 12 or 13\n"
@@ -160,8 +165,38 @@ class ReleaseManifestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             self.build_repository(root)
-            (root / "hostpanel-v3.4.0-hardened-r5-source.tar.gz").write_bytes(b"tampered\n")
+            archive_name = "hostpanel-v3.4.0-hardened-r5-source.tar.gz"
+            (root / archive_name).write_bytes(b"tampered\n")
+            self.sign_file(root, archive_name, f"{archive_name}.sig")
             with self.assertRaisesRegex(release.ValidationError, "checksum mismatch"):
+                self.validate(root)
+
+    def test_archive_signature_is_required_and_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.build_repository(root)
+            (root / "hostpanel-v3.4.0-hardened-r5-source.tar.gz.sig").write_bytes(
+                b"x" * 64
+            )
+            with self.assertRaisesRegex(
+                release.ValidationError, "archive signature verification failed"
+            ):
+                self.validate(root)
+
+    def test_checksum_manifest_filename_matches_installer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            manifest = self.build_repository(root)
+            alternate = root / "SIGNED-CHECKSUMS"
+            alternate.write_bytes((root / "SHA256SUMS").read_bytes())
+            self.sign_file(root, alternate.name, "SIGNED-CHECKSUMS.sig")
+            modified = copy.deepcopy(manifest)
+            modified["source_artifacts"]["checksum_manifest"] = alternate.name
+            modified["source_artifacts"]["checksum_signature"] = "SIGNED-CHECKSUMS.sig"
+            self.write_manifest(root, modified)
+            with self.assertRaisesRegex(
+                release.ValidationError, "checksum_manifest must be SHA256SUMS"
+            ):
                 self.validate(root)
 
     def test_checksum_signature_is_verified_cryptographically(self) -> None:
@@ -298,6 +333,32 @@ class ReleaseManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(release.ValidationError, "visible release version"):
                 self.validate(root)
 
+    def test_commented_correct_release_does_not_hide_visible_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.build_repository(root)
+            readme = root / "README.md"
+            readme.write_text(
+                readme.read_text().replace(
+                    "- Current deployable release: **3.4.1**",
+                    "<!-- - Current deployable release: **3.4.1** -->\n"
+                    "- Current deployable release: **9.9.9**",
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(release.ValidationError, "visible release version"):
+                self.validate(root)
+
+    def test_duplicate_conflicting_marker_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.build_repository(root)
+            readme = root / "README.md"
+            with readme.open("a", encoding="utf-8") as handle:
+                handle.write("<!-- {{HOSTPANEL_RELEASE_VERSION}}=9.9.9 -->\n")
+            with self.assertRaisesRegex(release.ValidationError, "authoritative marker"):
+                self.validate(root)
+
     def test_visible_signed_base_declaration_is_validated(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -319,7 +380,7 @@ class ReleaseManifestTests(unittest.TestCase):
                 )
             )
             with self.assertRaisesRegex(
-                release.ValidationError, "Ubuntu platform versions"
+                release.ValidationError, "operating-system list"
             ):
                 self.validate(root)
 
@@ -335,8 +396,59 @@ class ReleaseManifestTests(unittest.TestCase):
                 )
             )
             with self.assertRaisesRegex(
-                release.ValidationError, "Ubuntu platform versions"
+                release.ValidationError, "operating-system list"
             ):
+                self.validate(root)
+
+    def test_extra_visible_architecture_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.build_repository(root)
+            readme = root / "README.md"
+            readme.write_text(
+                readme.read_text().replace(
+                    "- x86-64/AMD64 or ARM64/AArch64",
+                    "- x86-64/AMD64 or ARM64/AArch64 or RISC-V",
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(release.ValidationError, "architecture list"):
+                self.validate(root)
+
+    def test_extra_visible_operating_system_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.build_repository(root)
+            readme = root / "README.md"
+            with readme.open("a", encoding="utf-8") as handle:
+                handle.write("- Fedora 42\n")
+            with self.assertRaisesRegex(release.ValidationError, "operating-system list"):
+                self.validate(root)
+
+    def test_unknown_manifest_key_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            manifest = self.build_repository(root)
+            modified = copy.deepcopy(manifest)
+            modified["release"]["production_ready"] = True
+            self.write_manifest(root, modified)
+            with self.assertRaisesRegex(release.ValidationError, "unknown production_ready"):
+                self.validate(root)
+
+    def test_duplicate_json_key_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.build_repository(root)
+            manifest_path = root / "RELEASE-MANIFEST.json"
+            manifest_path.write_text(
+                manifest_path.read_text(encoding="utf-8").replace(
+                    '"schema_version": 1,',
+                    '"schema_version": 1,\n  "schema_version": 1,',
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(release.ValidationError, "duplicate JSON key"):
                 self.validate(root)
 
     def test_manifest_status_change_requires_visible_contract_update(self) -> None:
