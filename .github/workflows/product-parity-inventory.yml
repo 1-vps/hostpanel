@@ -1,0 +1,168 @@
+name: Product parity inventory
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/product-parity-inventory.yml
+      - RELEASE-MANIFEST.json
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/audit_product_parity.py
+      - tests/test_product_parity_inventory.py
+      - tests/test_product_parity_inventory_workflow.py
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/product-parity-inventory.yml
+      - RELEASE-MANIFEST.json
+      - tools/validate_release_manifest.py
+      - tests/test_release_manifest.py
+      - tools/audit_product_parity.py
+      - tests/test_product_parity_inventory.py
+      - tests/test_product_parity_inventory_workflow.py
+      - SHA256SUMS
+      - SHA256SUMS.sig
+      - 'hostpanel-*-source.tar.gz'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: product-parity-inventory-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "$actual_sha" == "$EXPECTED_SHA" ]] || {
+            printf 'Product parity checkout mismatch: expected %s, got %s\n' \
+              "$EXPECTED_SHA" "$actual_sha" >&2
+            exit 1
+          }
+
+      - name: Validate release and inventory implementation
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/validate_release_manifest.py \
+            tests/test_release_manifest.py \
+            tools/audit_product_parity.py \
+            tests/test_product_parity_inventory.py \
+            tests/test_product_parity_inventory_workflow.py
+          python3 -m unittest -v \
+            tests.test_release_manifest \
+            tests.test_product_parity_inventory \
+            tests.test_product_parity_inventory_workflow
+          python3 tools/validate_release_manifest.py
+
+      - name: Inventory the manifest-bound signed application source
+        run: |
+          set -euo pipefail
+          install -d -m 0700 artifacts/product-parity
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          root = pathlib.Path.cwd()
+          manifest = json.loads(
+              (root / "RELEASE-MANIFEST.json").read_text(encoding="utf-8")
+          )
+          artifacts = manifest.get("source_artifacts")
+          if not isinstance(artifacts, dict):
+              raise SystemExit("release manifest has no source_artifacts object")
+          archive_name = artifacts.get("archive")
+          checksum_name = artifacts.get("checksum_manifest")
+          for label, name in (
+              ("archive", archive_name),
+              ("checksum manifest", checksum_name),
+          ):
+              if (
+                  not isinstance(name, str)
+                  or not name
+                  or pathlib.Path(name).name != name
+                  or "/" in name
+                  or "\\" in name
+              ):
+                  raise SystemExit(f"unsafe manifest {label} name")
+          subprocess.run(
+              [
+                  sys.executable,
+                  "tools/audit_product_parity.py",
+                  "--root",
+                  str(root),
+                  "--archive",
+                  str(root / archive_name),
+                  "--sha256sums",
+                  str(root / checksum_name),
+                  "--output",
+                  "artifacts/product-parity/inventory.json",
+              ],
+              check=True,
+          )
+          PY
+          [[ "$(stat -c '%a' artifacts/product-parity/inventory.json)" == 600 ]]
+
+      - name: Validate and seal inventory evidence
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+
+          root = pathlib.Path.cwd()
+          inventory_path = root / "artifacts/product-parity/inventory.json"
+          payload = json.loads(inventory_path.read_text(encoding="utf-8"))
+          manifest = json.loads(
+              (root / "RELEASE-MANIFEST.json").read_text(encoding="utf-8")
+          )
+          expected_archive = manifest["source_artifacts"]["archive"]
+          if payload.get("schema") != 1:
+              raise SystemExit("unexpected product parity inventory schema")
+          if payload.get("archive", {}).get("name") != expected_archive:
+              raise SystemExit("inventory archive name does not match the release manifest")
+          safety = payload.get("safety", {})
+          if safety.get("member_count", 0) <= 0 or safety.get("text_files_scanned", 0) <= 0:
+              raise SystemExit("inventory did not scan the signed application")
+          discovered = payload.get("inventory", {})
+          for key in ("routes", "api_paths", "panel_pages", "command_candidates"):
+              values = discovered.get(key)
+              if not isinstance(values, list) or values != sorted(set(values)):
+                  raise SystemExit(f"inventory field is not deterministic: {key}")
+          PY
+          (
+            cd artifacts/product-parity
+            sha256sum inventory.json > inventory.sha256
+            sha256sum --check inventory.sha256
+          )
+          if find artifacts/product-parity -xdev -type l -print -quit | grep -q .; then
+            echo 'inventory evidence contains a symlink' >&2
+            exit 1
+          fi
+
+      - name: Upload product parity inventory
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: product-parity-inventory-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/product-parity
+          if-no-files-found: error
+          retention-days: 14
