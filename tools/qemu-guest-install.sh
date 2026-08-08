@@ -61,9 +61,9 @@ collect_failure_evidence(){
     printf '%s\n' '--- failed units after rollback ---'
     systemctl --failed --no-legend --plain 2>&1 || true
     printf '%s\n' '--- redacted installer errors ---'
-    if [[ -r /var/log/hostpanel-install.log ]]; then
+    if [[ -r /var/log/hostpanel-installer/install.log ]]; then
       grep -Eai '(^==>|error|failed|failure|fatal|denied|cannot|could not|invalid|not found|timed out|refused|rejected|syntax|openlitespeed|litespeed|lsws|unit .*failed)' \
-        /var/log/hostpanel-install.log \
+        /var/log/hostpanel-installer/install.log \
         | grep -Evai '(password|passwd|secret|token|credential|private[ _-]?key|api[ _-]?key|admin[ _-]?(user|login))' \
         | tail -n 280 || true
     else

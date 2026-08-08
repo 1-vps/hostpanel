@@ -410,4 +410,4 @@ printf '\nHostPanel %s installed from reviewed commit %s.\n' \
   "$REVIEWED_COMMIT_SHA"
 printf 'Base webserver: nginx_apache\n'
 printf 'CustomBuild: sudo hostpanel-build options\n'
-printf 'Installer log: /var/log/hostpanel-install.log\n'
+printf 'Installer log: /var/log/hostpanel-installer/install.log\n'
