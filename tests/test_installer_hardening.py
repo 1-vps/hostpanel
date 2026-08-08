@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import pathlib
 import re
 import subprocess
@@ -76,32 +77,61 @@ class InstallerHardeningTests(unittest.TestCase):
                 f"{helper}\nprepare_root_log \"$1\"\n",
                 encoding="utf-8",
             )
-            result = subprocess.run(
-                ["bash", str(script), str(log)],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-            self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("regular non-symlink file", result.stdout)
-            self.assertEqual(victim.read_text(encoding="utf-8"), "do not change")
-            self.assertEqual(victim.stat().st_mode & 0o777, 0o644)
-
             unsafe_parent = root / "unsafe"
             unsafe_parent.mkdir(mode=0o777)
             unsafe_parent.chmod(0o777)
             unsafe_log = unsafe_parent / "install.log"
-            result = subprocess.run(
-                ["bash", str(script), str(unsafe_log)],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-            self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("root-owned and not group/world-writable", result.stdout)
-            self.assertFalse(unsafe_log.exists())
+
+            command_prefix = []
+            restore_owner = False
+            if os.geteuid() != 0:
+                sudo = subprocess.run(
+                    ["sudo", "-n", "true"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                if sudo.returncode != 0:
+                    self.skipTest("root privileges are required for the root-log runtime test")
+                subprocess.run(
+                    ["sudo", "-n", "chown", "root:root", str(root)],
+                    check=True,
+                )
+                command_prefix = ["sudo", "-n"]
+                restore_owner = True
+
+            try:
+                result = subprocess.run(
+                    command_prefix + ["bash", str(script), str(log)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("regular non-symlink file", result.stdout)
+                self.assertEqual(victim.read_text(encoding="utf-8"), "do not change")
+                self.assertEqual(victim.stat().st_mode & 0o777, 0o644)
+
+                result = subprocess.run(
+                    command_prefix + ["bash", str(script), str(unsafe_log)],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("root-owned and not group/world-writable", result.stdout)
+                self.assertFalse(unsafe_log.exists())
+            finally:
+                if restore_owner:
+                    subprocess.run(
+                        [
+                            "sudo", "-n", "chown",
+                            f"{os.getuid()}:{os.getgid()}", str(root),
+                        ],
+                        check=True,
+                    )
 
     def test_failure_rollback_tracks_packages_and_managed_paths(self):
         self.assertIn('NEW_PACKAGES=()', self.installer)
