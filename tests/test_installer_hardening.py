@@ -101,28 +101,20 @@ class InstallerHardeningTests(unittest.TestCase):
                 restore_owner = True
 
             try:
-                result = subprocess.run(
+                symlink_result = subprocess.run(
                     command_prefix + ["bash", str(script), str(log)],
                     text=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     check=False,
                 )
-                self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertIn("regular non-symlink file", result.stdout)
-                self.assertEqual(victim.read_text(encoding="utf-8"), "do not change")
-                self.assertEqual(victim.stat().st_mode & 0o777, 0o644)
-
-                result = subprocess.run(
+                unsafe_parent_result = subprocess.run(
                     command_prefix + ["bash", str(script), str(unsafe_log)],
                     text=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     check=False,
                 )
-                self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertIn("root-owned and not group/world-writable", result.stdout)
-                self.assertFalse(unsafe_log.exists())
             finally:
                 if restore_owner:
                     subprocess.run(
@@ -132,6 +124,21 @@ class InstallerHardeningTests(unittest.TestCase):
                         ],
                         check=True,
                     )
+
+            self.assertNotEqual(
+                symlink_result.returncode, 0, symlink_result.stdout,
+            )
+            self.assertIn("regular non-symlink file", symlink_result.stdout)
+            self.assertEqual(victim.read_text(encoding="utf-8"), "do not change")
+            self.assertEqual(victim.stat().st_mode & 0o777, 0o644)
+            self.assertNotEqual(
+                unsafe_parent_result.returncode, 0, unsafe_parent_result.stdout,
+            )
+            self.assertIn(
+                "root-owned and not group/world-writable",
+                unsafe_parent_result.stdout,
+            )
+            self.assertFalse(unsafe_log.exists())
 
     def test_failure_rollback_tracks_packages_and_managed_paths(self):
         self.assertIn('NEW_PACKAGES=()', self.installer)
