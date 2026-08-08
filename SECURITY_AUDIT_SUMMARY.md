@@ -415,7 +415,7 @@ All 8 supported OSes have been validated:
    - Keep backup of previous installation (--reinstall)
 
 2. **Monitoring**
-   - Monitor /var/log/hostpanel-installer/install.log
+   - Monitor /var/log/hostpanel-install.log
    - Alert on installation failures
    - Verify all services started correctly
    - Run hostpanel-doctor post-installation

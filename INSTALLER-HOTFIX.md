@@ -19,7 +19,7 @@ behind `Could not install package-manager prerequisites`.
 - Removed the RHEL dependency on `redhat-lsb-core`.
 - Added apt/dnf lock, network, and metadata retries.
 - Failed operations now identify the package set and print the last 50 lines of
-  `/var/log/hostpanel-installer/install.log`.
+  `/var/log/hostpanel-install.log`.
 - Corrected the root invocation hint to use the locally extracted installer.
 
 ## Validation

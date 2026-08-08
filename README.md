@@ -100,7 +100,7 @@ Expected installed application version:
 Installer log:
 
 ```text
-/var/log/hostpanel-installer/install.log
+/var/log/hostpanel-install.log
 ```
 
 ## Least-privilege QEMU acceptance

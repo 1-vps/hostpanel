@@ -337,5 +337,5 @@ command.
 Installer log:
 
 ```text
-/var/log/hostpanel-installer/install.log
+/var/log/hostpanel-install.log
 ```

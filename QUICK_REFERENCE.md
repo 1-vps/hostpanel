@@ -297,7 +297,7 @@ All 8 OSes must pass before deployment:
 1. **Run** test-matrix.sh before deploying any version
 2. **Check** that --check passes on target OS
 3. **Run** --dry-run before production deployment
-4. **Monitor** /var/log/hostpanel-installer/install.log during install
+4. **Monitor** /var/log/hostpanel-install.log during install
 5. **Verify** all services started via hostpanel-doctor
 
 ---

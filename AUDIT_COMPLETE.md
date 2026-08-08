@@ -239,7 +239,7 @@ Examples include:
 
 3. **Monitor installation**:
    ```bash
-   tail -f /var/log/hostpanel-installer/install.log
+   tail -f /var/log/hostpanel-install.log
    ```
 
 4. **Verify completion**:
