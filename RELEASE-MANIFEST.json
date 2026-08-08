@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "product": "HostPanel",
+  "release": {
+    "version": "3.4.1",
+    "channel": "candidate",
+    "status": "deployable-not-publishable",
+    "signed_base": "3.4.0-hardened-r5",
+    "production_publish_allowed": false,
+    "blockers": [
+      {
+        "id": "hosted-release-gates",
+        "description": "Every required exact-head and production acceptance workflow must execute successfully."
+      },
+      {
+        "id": "legal-terms",
+        "description": "LICENSE contains unresolved legal and commercial placeholders and is not approved for publication."
+      },
+      {
+        "id": "signed-runtime-integration",
+        "description": "Pending platform foundations must be integrated into the signed runtime and validated on a production-equivalent VM."
+      }
+    ]
+  },
+  "source_artifacts": {
+    "archive": "hostpanel-v3.4.0-hardened-r5-source.tar.gz",
+    "archive_signature": "hostpanel-v3.4.0-hardened-r5-source.tar.gz.sig",
+    "checksum_manifest": "SHA256SUMS",
+    "checksum_signature": "SHA256SUMS.sig"
+  },
+  "platform": {
+    "architectures": ["x86_64", "aarch64"],
+    "operating_systems": [
+      "Ubuntu 22.04",
+      "Ubuntu 24.04",
+      "Ubuntu 26.04",
+      "Debian 12",
+      "Debian 13",
+      "Rocky Linux 9",
+      "Rocky Linux 10",
+      "AlmaLinux 9",
+      "AlmaLinux 10"
+    ],
+    "minimum_ram_mib": 2048,
+    "minimum_root_free_mib": 10240
+  },
+  "authoritative_documents": [
+    "README.md",
+    "CONFIGURATION.md",
+    "PRODUCTION_READINESS.md",
+    "RELEASE_VERSION"
+  ],
+  "historical_documents": [
+    "INDEX.md",
+    "AUDIT_COMPLETE.md",
+    "INSTALL_SH_BUG_AUDIT.md",
+    "SECURITY_AUDIT_SUMMARY.md",
+    "QUICK_REFERENCE.md"
+  ]
+}

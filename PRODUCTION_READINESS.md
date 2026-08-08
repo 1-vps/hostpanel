@@ -1,8 +1,14 @@
 # HostPanel production readiness
 
-This checklist applies to HostPanel `3.4.1` after the reviewed installer
-pipeline has passed. It does not replace validation on a real systemd VM using
-the intended kernel, firewall, storage, DNS, and mail environment.
+<!-- {{HOSTPANEL_RELEASE_VERSION}}=3.4.1 -->
+<!-- {{HOSTPANEL_SIGNED_BASE}}=3.4.0-hardened-r5 -->
+<!-- {{HOSTPANEL_RELEASE_STATUS}}=deployable-not-publishable -->
+<!-- {{HOSTPANEL_PUBLICATION_ALLOWED}}=false -->
+
+This checklist applies to deployable HostPanel release **3.4.1**, derived from
+signed base **3.4.0-hardened-r5**. It does not itself authorize production
+publication. The authoritative state and current blockers are defined in
+[`RELEASE-MANIFEST.json`](RELEASE-MANIFEST.json).
 
 The only documented installation entry point is the immutable automatic engine
 from [`SETUP.md`](SETUP.md):
@@ -13,6 +19,10 @@ auto-install.sh blob    db23963e101b9194994da2ff8077b40a6b1cb99c
 product commit          755dcd5e47b7c82404b267e8df4dec27626fe341
 installed version       3.4.1
 ```
+
+A release is not production-ready until every selected role and recovery path
+passes on the exact reviewed commit, operating system, and infrastructure intended
+for deployment, all hosted gates are green, and all legal terms are approved.
 
 ## Source and authentication prerequisites
 
@@ -27,33 +37,31 @@ file. Remove local authentication material on both success and failure.
 
 The immutable installer chain verifies the delegated launcher/product objects
 before root execution. Record the exact commits and Git blob IDs used for the
-acceptance run.
+acceptance run together with the signed-source checksum and signature result.
 
 ## Prepare a disposable VM
 
-Use a fresh VM of the exact target operating system. Keep provider-console access
-available and create a provider-level snapshot before installation. Do not begin
-with a production server or a host containing customer data.
+Use a fresh systemd VM of the exact target operating system. Keep provider-console
+access available and create a provider-level snapshot before installation. Do not
+start with a production server or a host containing customer data.
 
-Record:
+Record the operating-system image and kernel, public/private addresses, SSH port
+and host-key fingerprint, panel hostname and administrative CIDR, customer-data
+filesystem, selected roles, provider snapshot identifier, and the exact reviewed
+installer/product object identities.
 
-- operating-system image and kernel;
-- public and private addresses;
-- SSH port and strict host-key fingerprint;
-- panel hostname and administrative CIDR;
-- customer-data filesystem;
-- selected HostPanel roles;
-- provider snapshot identifier;
-- automatic-installer and product commits plus verified blob IDs.
+Supported systems and resource minimums come from `RELEASE-MANIFEST.json` and are
+validated by `tools/validate_release_manifest.py`.
 
 ## Install from the immutable automatic engine
 
 Run the reviewed `auto-install.sh` path from [`SETUP.md`](SETUP.md). The normal
-installation path does not accept a moving repository ref. It must complete both
-non-mutating preflight and installation through the pinned object chain.
+installation path does not accept a moving repository ref. Complete non-mutating
+preflight first, then installation through the pinned object chain with the same
+hostname, roles, and network policy.
 
-Preserve `/var/log/hostpanel-install.log` and the snapshot path printed by the
-installer. Confirm:
+Preserve `/var/log/hostpanel-install.log` and the root-owned installer snapshot.
+Confirm:
 
 ```bash
 test "$(tr -d '[:space:]' < /opt/hostpanel/VERSION)" = 3.4.1
@@ -74,109 +82,84 @@ sudo env \
 ```
 
 Resolve every failure before continuing. Warnings require explicit review even
-when they do not make the validator fail automatically. An installed
-OpenLiteSpeed binary or `lsws.service` must have an active and valid service
-state; it must not be accepted as an unexplained post-reboot warning.
+when they do not automatically fail validation. An installed OpenLiteSpeed binary
+or `lsws.service` must have an active and valid service state.
 
 ## Verify reboot persistence
 
-Record the current boot ID only after the initial checks pass:
-
-```bash
-sudo env \
-  HP_EXPECTED_VERSION=3.4.1 \
-  HP_PANEL_HOST=panel.example.com \
-  HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
-  bash /root/validate-production-vm.sh --prepare-reboot
-
-sudo reboot
-```
-
-Reconnect over the configured SSH port and run:
-
-```bash
-sudo env \
-  HP_EXPECTED_VERSION=3.4.1 \
-  HP_PANEL_HOST=panel.example.com \
-  HP_EXPECTED_PUBLIC_IP=192.0.2.20 \
-  bash /root/validate-production-vm.sh --post-reboot
-```
-
-The post-reboot mode requires a changed kernel boot ID before it accepts the
-reboot check.
+Record the current boot ID only after the initial checks pass, prepare the reboot
+marker with the validator, reboot, reconnect over the configured SSH port, and run
+`--post-reboot` with the same expected version, hostname, and public IP. The
+post-reboot mode must verify a changed kernel boot ID and persistent service,
+listener, firewall, certificate, and storage state.
 
 ## End-to-end role tests
 
-The validator confirms local state. Production acceptance also requires tests
-from a separate network:
+The local validator is necessary but insufficient. From a separate network, test:
 
-- panel login and session handling over trusted TLS;
-- customer website creation, TLS issuance, PHP execution, and log access;
-- database creation, authentication, backup, and restore;
-- authoritative DNS delegation and external query resolution;
-- inbound and outbound mail, submission, IMAP, SPF, DKIM, DMARC, and reverse DNS;
+- panel login, session policy, and step-up behavior over trusted TLS;
+- customer site creation, PHP execution, static files, redirects, logs, and TLS;
+- database creation, least-privilege authentication, backup, and restore;
+- authoritative DNS delegation, DNSSEC where enabled, and external resolution;
+- inbound/outbound mail, submission, IMAP, SPF, DKIM, DMARC, reverse DNS, and queue diagnostics;
 - scheduled backup completion and restoration into a disposable account;
 - quota enforcement on the actual customer-data filesystem;
 - SSH reconnection after firewall reload and reboot;
-- public IPv4 and IPv6 behavior where applicable.
+- public IPv4 and IPv6 behavior where applicable;
+- tenant isolation for every enabled UI, CLI, and API workflow.
 
 Do not treat local port checks as proof of external DNS delegation, trusted TLS,
-or mail deliverability.
+mail deliverability, or tenant isolation.
 
-## Destructive recovery tests
+## Backup and destructive recovery
 
-Restore and failure-injection tests must use a disposable VM, a confirmed
-provider snapshot, and separately reviewed root-owned scripts. The validator
-will not invent shell commands or execute arbitrary command strings. Review its
-`--help` output for accepted hook paths and safety gates.
+On a disposable VM with a confirmed provider snapshot, create representative
+application/database/mail/DNS/certificate state, back it up, inject a reviewed
+failure, restore it, verify ownership/permissions/quotas and external behavior,
+and exercise both installer rollback and provider-snapshot recovery. Destructive
+hooks must be separately reviewed root-owned scripts; the validator must never
+invent shell commands or execute arbitrary command strings.
 
-The manual `vps-acceptance` workflow is suitable only when its protected GitHub
-environment is configured. Before storing any provider secret in that
-environment, configure all of the following controls:
+## Hosted acceptance
 
-- allow deployments from the protected `main` branch only;
-- require at least one independent reviewer before environment secrets are
-  released to a job;
-- prevent the workflow author from approving their own protected deployment;
-- retain branch protection on `main`, including required checks and review;
-- periodically verify these settings because repository code cannot enforce or
-  inspect environment protection rules by itself.
+Every required exact-head Buildkite job must actually execute successfully.
+Static pipeline inspection or local test claims are not production evidence. The
+hardened Buildkite pipeline verifies repository regressions, release metadata,
+production-validator contracts, installer static checks, and supported-OS
+preflight on pull-request heads. QEMU VM acceptance runs for eligible `main`
+builds after those gates.
 
-Dispatch the workflow from `main` and enter the exact integrated 40-character
-commit SHA in `reviewed_commit_sha`. The selected commit—not a historical
-hard-coded release commit—must contain every installer, UI, localization, and
-validation change intended for release.
-
-The workflow must:
-
-- require the exact destructive confirmation phrase;
-- require snapshot confirmation;
-- reject dispatches whose workflow ref is not `refs/heads/main`;
-- check out and verify the operator-supplied reviewed commit rather than the
-  dispatch ref;
-- use strict SSH host verification;
-- expose the root password and known-host material only to the steps that need
-  them, never through job-wide `env`;
-- clean transient runner and remote Git authentication;
-- fail when external DNS, trusted HTTPS, or required public listeners do not
-  pass, rather than recording informational probe output;
-- upload only bounded non-sensitive evidence.
+Provider-backed VPS acceptance remains a separate manual production gate. Its
+protected GitHub environment must allow deployment only from protected `main`,
+require an independent reviewer, prevent self-approval, retain branch protection,
+and scope provider secrets to the smallest required steps.
 
 ## Acceptance evidence
 
 Retain:
 
+- exact reviewed commit and root-executed Git blob IDs;
+- signed source archive checksum and signature result;
+- successful exact-head Buildkite build and job identifiers;
 - installer and validator logs with secrets redacted;
-- exact Git commit and root-executed blob IDs;
-- signed source archive checksum;
-- VM image, kernel, filesystem, and addresses;
+- VM image, kernel, filesystems, roles, and addresses;
 - pre- and post-reboot boot IDs;
-- doctor, service, listener, and firewall status;
-- external web, DNS, TLS, and mail results;
-- backup, restore, quota, and rollback evidence;
-- provider snapshot identifiers.
+- doctor, service, listener, firewall, and certificate state;
+- external web, DNS, TLS, mail, and API results;
+- tenant-isolation and authorization results;
+- backup, restore, quota, rollback, and provider-snapshot evidence;
+- approved legal and commercial terms.
 
-A release is not production-ready until every selected role and recovery path
-passes on the exact operating system and infrastructure intended for deployment.
+## Publication gate
 
-Current deployable HostPanel version: **3.4.1**.
+Do not publish or market release `3.4.1` as production-ready while
+`RELEASE-MANIFEST.json` reports:
+
+```text
+status=deployable-not-publishable
+production_publish_allowed=false
+```
+
+A reviewed change must remove every blocker, update the status to
+`production-ready`, set publication permission to `true`, and pass the release
+consistency checks plus all production acceptance gates.

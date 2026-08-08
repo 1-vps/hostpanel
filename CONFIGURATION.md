@@ -1,6 +1,14 @@
 # HostPanel configuration
 
-This reference describes the reviewed installation controls for HostPanel `3.4.1`.
+<!-- {{HOSTPANEL_RELEASE_VERSION}}=3.4.1 -->
+<!-- {{HOSTPANEL_SIGNED_BASE}}=3.4.0-hardened-r5 -->
+<!-- {{HOSTPANEL_RELEASE_STATUS}}=deployable-not-publishable -->
+<!-- {{HOSTPANEL_PUBLICATION_ALLOWED}}=false -->
+
+This reference describes the reviewed installation controls for HostPanel `3.4.1`,
+derived from signed base **3.4.0-hardened-r5**. The authoritative machine-readable
+release state is [`RELEASE-MANIFEST.json`](RELEASE-MANIFEST.json).
+
 The only documented installation entry point is the immutable `auto-install.sh`
 engine described in [`SETUP.md`](SETUP.md). Do not execute a moving branch script
 as root.
@@ -168,4 +176,10 @@ sudo env \
   bash /root/validate-production-vm.sh --check
 ```
 
-Current deployable HostPanel version: **3.4.1**.
+## Release boundary
+
+Release `3.4.1` is deployable but production publication is blocked. Do not infer
+approval from a successful local installation. Publication requires every blocker
+in `RELEASE-MANIFEST.json` to be removed through reviewed evidence and the
+manifest status to become `production-ready` with
+`production_publish_allowed=true`.
