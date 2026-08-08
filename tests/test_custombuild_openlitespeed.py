@@ -169,6 +169,10 @@ class CustomBuildOpenLiteSpeedTests(unittest.TestCase):
                  mock.patch.object(web, 'OLS_MARKERS', pathlib.Path(directory) / 'state/domains'), \
                  mock.patch.object(web, 'OLS_LOGS', pathlib.Path(directory) / 'logs'), \
                  mock.patch.object(web, 'LSPHP_STATE', state), \
+                 mock.patch.object(web.os, 'geteuid', return_value=0), \
+                 mock.patch.object(web.os, 'chown'), \
+                 mock.patch.object(web.os, 'fchown'), \
+                 mock.patch.object(web, 'trusted_root_file', side_effect=lambda path: path.lstat()), \
                  mock.patch.object(web, 'run', side_effect=lambda command, check=True: commands.append(command) or types.SimpleNamespace(returncode=0, stdout='', stderr='')):
                 web.prepare_openlitespeed(options)
             self.assertIn(web.OLS_INCLUDE, (root / 'conf/httpd_config.conf').read_text())
@@ -208,6 +212,10 @@ class CustomBuildOpenLiteSpeedTests(unittest.TestCase):
                  mock.patch.object(web, 'OLS_MARKERS', state_root / 'domains'), \
                  mock.patch.object(web, 'OLS_LOGS', pathlib.Path(directory) / 'logs'), \
                  mock.patch.object(web, 'LSPHP_STATE', pathlib.Path(directory) / 'lsphp-versions'), \
+                 mock.patch.object(web.os, 'geteuid', return_value=0), \
+                 mock.patch.object(web.os, 'chown'), \
+                 mock.patch.object(web.os, 'fchown'), \
+                 mock.patch.object(web, 'trusted_root_file', side_effect=lambda path: path.lstat()), \
                  mock.patch.object(web, 'run', side_effect=config.BuildError('test failed')):
                 with self.assertRaisesRegex(config.BuildError, 'test failed'):
                     web.prepare_openlitespeed(options)

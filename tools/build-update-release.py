@@ -3,15 +3,33 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import pathlib
 import runpy
 import sys
 
-from build_update_release_impl import deployable_release_version
-from release_legal import validate_repository
-
 PUBLISH_WORKFLOW_NAME = "Publish signed HostPanel release"
+
+
+def _load_sibling(filename: str, module_name: str):
+    """Load a sibling even when this wrapper itself is imported by file path."""
+    path = pathlib.Path(__file__).with_name(filename)
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load release helper: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+validate_repository = _load_sibling(
+    "release_legal.py", "hostpanel_release_legal"
+).validate_repository
+deployable_release_version = _load_sibling(
+    "build_update_release_impl.py", "hostpanel_build_update_release_impl"
+).deployable_release_version
 
 
 def _repository_root(arguments: list[str]) -> pathlib.Path:
